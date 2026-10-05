@@ -424,24 +424,47 @@ app.get('/healthz', (_req: Request, res: Response) => {
 });
 
 async function startServer() {
-  const isProduction = process.env.NODE_ENV === 'production';
+  const distPath = path.resolve(process.cwd(), 'dist');
+  const hasDist = fs.existsSync(path.resolve(distPath, 'index.html'));
+  const isProduction = process.env.NODE_ENV === 'production' || hasDist;
 
-  if (!isProduction) {
+  if (isProduction && hasDist) {
+    console.log(`[SERVER] Mode Production actif - Fichiers servis depuis: ${distPath}`);
+
+    // Serve /assets with caching and prevent fallback to index.html on missing assets
+    app.use(
+      '/assets',
+      express.static(path.resolve(distPath, 'assets'), {
+        maxAge: '1y',
+        immutable: true,
+      })
+    );
+
+    // Serve root static files
+    app.use(
+      express.static(distPath, {
+        maxAge: '1h',
+      })
+    );
+
+    // SPA Catch-all route (serves index.html for frontend client routing)
+    app.get('*', (req: Request, res: Response, next) => {
+      if (req.path.startsWith('/api/') || req.path === '/healthz') {
+        return next();
+      }
+      res.sendFile(path.resolve(distPath, 'index.html'));
+    });
+  } else {
+    console.log('[SERVER] Mode Développement actif - Démarrage du middleware Vite.');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.resolve(distPath, 'index.html'));
-    });
   }
 
   const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[SERVER] LivraLink running at http://0.0.0.0:${PORT} (Mode: ${process.env.NODE_ENV || 'development'})`);
+    console.log(`[SERVER] LivraLink running at http://0.0.0.0:${PORT} (Mode: ${isProduction ? 'production' : 'development'})`);
   });
 
   // Graceful shutdown on Render / container stop

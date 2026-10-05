@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     region: frankfurt # ou oregon / ohio / singapore
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --legacy-peer-deps && npm run build
     startCommand: npm start
     healthCheckPath: /healthz
     envVars:
