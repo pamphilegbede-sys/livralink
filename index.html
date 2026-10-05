@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="fr" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>LivraLink - Plateforme logistique urbaine connectée</title>
+    <meta name="description" content="Plateforme logistique urbaine connectée pour le commerce social et les coursiers urbains." />
+    <meta property="og:title" content="LivraLink - Plateforme logistique urbaine connectée" />
+    <meta property="og:description" content="Connectez vos ventes WhatsApp, Instagram, TikTok et boutiques directement aux coursiers urbains certifiés." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- Environment Compatibility Script -->
+    <script>
+      (function() {
+        try {
+          var originalFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
+          var customFetch = originalFetch;
+          Object.defineProperty(window, 'fetch', {
+            get: function() {
+              return customFetch || originalFetch;
+            },
+            set: function(fn) {
+              customFetch = fn;
+            },
+            configurable: true,
+            enumerable: true
+          });
+        } catch (e) {
+          // Ignore if property is locked
+        }
+
+        window.addEventListener('error', function(event) {
+          if (event && event.message && event.message.includes('fetch of #<Window>')) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+      })();
+    </script>
+
+    <!-- Google Fonts: Plus Jakarta Sans -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,600&display=swap" rel="stylesheet" />
+
+    <!-- Material Symbols Outlined -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+  </head>
+  <body class="h-full bg-[#faf8ff] text-[#131b2e] antialiased selection:bg-[#1d4ed8] selection:text-white">
+    <div id="root" class="h-full min-h-screen"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

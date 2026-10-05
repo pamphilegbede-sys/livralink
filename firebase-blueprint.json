@@ -1,0 +1,49 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Données de profil utilisateur pour les marchands et livreurs LivraLink.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Identifiant unique Firebase Auth (UID)" },
+        "email": { "type": "string", "format": "email", "description": "Adresse email du compte" },
+        "fullName": { "type": "string", "maxLength": 128, "description": "Nom complet ou nom de la boutique" },
+        "phone": { "type": "string", "maxLength": 32, "description": "Numéro de téléphone / WhatsApp" },
+        "role": { "type": "string", "enum": ["vendeur", "livreur", "admin"], "description": "Rôle métier" },
+        "avatarUrl": { "type": "string", "description": "Photo de profil ou logo" },
+        "storeName": { "type": "string", "maxLength": 128, "description": "Nom commercial du vendeur" },
+        "vehicleType": { "type": "string", "maxLength": 64, "description": "Type de véhicule du livreur" },
+        "createdAt": { "type": "string", "description": "Horodatage de création du compte" },
+        "updatedAt": { "type": "string", "description": "Horodatage de mise à jour" }
+      },
+      "required": ["uid", "email", "fullName", "phone", "role"]
+    },
+    "DeliveryOrder": {
+      "title": "DeliveryOrder",
+      "description": "Commande et expédition de livraison urbaine.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Code unique de la course (ex: #LL-4192)" },
+        "clientName": { "type": "string", "maxLength": 128, "description": "Nom du destinataire" },
+        "clientPhone": { "type": "string", "maxLength": 32, "description": "Téléphone du destinataire" },
+        "status": { "type": "string", "enum": ["en_attente", "assignee", "acceptee", "colis_recupere", "en_cours", "livree", "echec"], "description": "Statut opérationnel" },
+        "deliveryFee": { "type": "number", "description": "Tarif de livraison calculé" },
+        "itemValueCOD": { "type": "number", "description": "Montant paiement à la livraison (COD)" },
+        "merchantId": { "type": "string", "description": "UID du vendeur propriétaire" },
+        "courierId": { "type": "string", "description": "UID du coursier assigné" },
+        "createdAt": { "type": "string", "description": "Date de création de la course" }
+      },
+      "required": ["id", "clientName", "clientPhone", "status", "deliveryFee"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Collection des profils utilisateurs authentifiés."
+    },
+    "/deliveries/{deliveryId}": {
+      "schema": "DeliveryOrder",
+      "description": "Collection des livraisons et expéditions gérées par la plateforme."
+    }
+  }
+}
