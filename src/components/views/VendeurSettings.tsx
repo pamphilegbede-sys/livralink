@@ -3,6 +3,7 @@ import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
+import { BENIN_DEPARTMENTS, getLocationForCommune } from '../../config/maps';
 
 export const VendeurSettings: React.FC = () => {
   const { merchantSettings, setMerchantSettings, showToast, setCurrentView } = useApp();
@@ -11,6 +12,7 @@ export const VendeurSettings: React.FC = () => {
   const [managerName, setManagerName] = useState(merchantSettings.managerName);
   const [phone, setPhone] = useState(merchantSettings.phone);
   const [email, setEmail] = useState(merchantSettings.email);
+  const [storeCommune, setStoreCommune] = useState(merchantSettings.storeCommune || 'Cotonou - Haie Vive');
   const [defaultPickupAddress, setDefaultPickupAddress] = useState(merchantSettings.defaultPickupAddress);
   const [defaultExpress, setDefaultExpress] = useState(merchantSettings.defaultExpress);
   const [frequentZones, setFrequentZones] = useState<string[]>(merchantSettings.frequentZones);
@@ -28,7 +30,7 @@ export const VendeurSettings: React.FC = () => {
   const [channelSMS, setChannelSMS] = useState(merchantSettings.channelSMS);
   const [channelEmail, setChannelEmail] = useState(merchantSettings.channelEmail);
 
-  const availableZones = ['Cocody', 'Plateau', 'Marcory', 'Yopougon', 'Deux Plateaux', 'Treichville', 'Koumassi'];
+  const availableZones = ['Haie Vive', 'Cadjehoun', 'Akpakpa', 'Fidjrossè', 'Godomey', 'Calavi Centre', 'Porto-Novo'];
 
   const toggleZone = (zone: string) => {
     if (frequentZones.includes(zone)) {
@@ -39,13 +41,17 @@ export const VendeurSettings: React.FC = () => {
   };
 
   const handleSave = () => {
+    const coords = storeCommune ? getLocationForCommune(storeCommune) : undefined;
     setMerchantSettings((prev) => ({
       ...prev,
       storeName,
       managerName,
       phone,
       email,
+      storeCommune,
       defaultPickupAddress,
+      gpsCoordinates: coords ? `${coords.lat.toFixed(4)}° N, ${coords.lng.toFixed(4)}° E` : prev.gpsCoordinates,
+      storeCoordinates: coords ? [coords.lat, coords.lng] : prev.storeCoordinates,
       defaultExpress,
       frequentZones,
       permanentInstructions,
@@ -229,8 +235,31 @@ export const VendeurSettings: React.FC = () => {
                   />
                 </div>
 
-                <div className="sm:col-span-2">
-                  <label className="block font-bold text-slate-700 mb-1">Adresse de ramassage principale</label>
+                <div>
+                  <div className="flex justify-between mb-1">
+                    <label className="font-bold text-slate-700">Commune de la boutique (Bénin)</label>
+                    <span className="text-blue-600 font-bold text-[10px]">77 communes</span>
+                  </div>
+                  <select
+                    value={storeCommune}
+                    onChange={(e) => setStoreCommune(e.target.value)}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-600 outline-none bg-white font-medium"
+                  >
+                    <option value="">-- Choisir la commune --</option>
+                    {BENIN_DEPARTMENTS.map((dept) => (
+                      <optgroup key={dept.code} label={`📍 ${dept.name}`}>
+                        {dept.communes.map((commune) => (
+                          <option key={commune} value={commune}>
+                            {commune}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Adresse / Quartier physique de la boutique</label>
                   <div className="relative">
                     <span className="material-symbols-outlined absolute left-3 top-2.5 text-blue-600 text-lg">
                       location_on
@@ -239,6 +268,7 @@ export const VendeurSettings: React.FC = () => {
                       type="text"
                       value={defaultPickupAddress}
                       onChange={(e) => setDefaultPickupAddress(e.target.value)}
+                      placeholder="Ex: Haie Vive, Rue 320, face pharmacie"
                       className="w-full pl-9 pr-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-600 outline-none"
                     />
                   </div>
@@ -362,7 +392,7 @@ export const VendeurSettings: React.FC = () => {
                 <span className="text-[10px] uppercase font-bold text-blue-700">Inter-Zones</span>
                 <div className="text-2xl font-black text-slate-900">1 200 <span className="text-xs font-normal">FCFA</span></div>
                 <p className="text-xs text-slate-600 font-semibold">Distance : 5 à 10 km</p>
-                <p className="text-[10px] text-slate-400">Ex: Cocody ↔ Plateau / Marcory.</p>
+                <p className="text-[10px] text-slate-400">Ex: Haie Vive ↔ Calavi Centre / Akpakpa.</p>
               </div>
 
               <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
@@ -478,15 +508,15 @@ export const VendeurSettings: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 text-xs">
               <div className="p-4 rounded-2xl border-2 border-blue-600 bg-blue-50/50 relative space-y-2">
                 <span className="px-2 py-0.5 rounded bg-blue-600 text-white font-bold text-[10px]">Par défaut</span>
-                <h4 className="font-bold text-slate-900">MTN Mobile Money</h4>
-                <p className="text-slate-500">+225 05 •• •• 42</p>
+                <h4 className="font-bold text-slate-900">MTN Mobile Money Bénin</h4>
+                <p className="text-slate-500">+229 97 •• •• 42</p>
                 <span className="text-emerald-600 font-bold text-[11px] block">Débit direct sans frais</span>
               </div>
 
               <div className="p-4 rounded-2xl border border-slate-200 bg-white space-y-2">
                 <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-bold text-[10px]">Secondaire</span>
-                <h4 className="font-bold text-slate-900">Moov Money</h4>
-                <p className="text-slate-500">+225 01 •• •• 90</p>
+                <h4 className="font-bold text-slate-900">Moov Money Bénin</h4>
+                <p className="text-slate-500">+229 95 •• •• 90</p>
                 <span className="text-slate-400 text-[11px] block">Opérationnel</span>
               </div>
 

@@ -30,17 +30,17 @@ export const UrgentMissionModal: React.FC = () => {
             <div className="space-y-1">
               <p className="font-extrabold text-sm flex items-center gap-1.5 text-white">
                 <span className="w-2 h-2 rounded-full bg-emerald-300 shrink-0"></span>
-                Plateau CCIA ➔ Marcory Zone 4
+                Cotonou Haie Vive ➔ Abomey-Calavi Centre
               </p>
               <p className="text-xs text-amber-100 font-medium pl-3.5">
-                Docs juridiques (0.4 kg) • 6.2 km
+                Docs juridiques (0.4 kg) • 7.5 km (Tarif 100 F/km)
               </p>
               <p className="text-[11px] text-emerald-200 pl-3.5 font-bold">
-                📍 Collecte à 1.1 km de votre position actuelle
+                📍 Collecte à 1.1 km de votre position actuelle (Haie Vive)
               </p>
             </div>
             <div className="text-right shrink-0">
-              <div className="text-2xl font-black tracking-tight text-white leading-none">3 000 F</div>
+              <div className="text-2xl font-black tracking-tight text-white leading-none">750 F</div>
               <span className="text-[11px] text-amber-100 font-medium">Revenu net garanti</span>
             </div>
           </div>
@@ -48,16 +48,16 @@ export const UrgentMissionModal: React.FC = () => {
           {/* Breakdown notice */}
           <div className="p-3 bg-black/20 rounded-xl text-xs space-y-1 text-amber-100">
             <div className="flex justify-between">
-              <span>Prix de la livraison :</span>
-              <span className="font-bold text-white">3 000 FCFA</span>
+              <span>Prix de la livraison (7.5 km × 100 F/km) :</span>
+              <span className="font-bold text-white">750 FCFA</span>
             </div>
             <div className="flex justify-between">
-              <span>Commission LivraLink :</span>
-              <span className="font-bold text-emerald-300">0 FCFA (Offre MVP 0%)</span>
+              <span>Commission LivraLink Bénin :</span>
+              <span className="font-bold text-emerald-300">0 FCFA (Offre Spéciale 0%)</span>
             </div>
             <div className="flex justify-between border-t border-white/10 pt-1 font-bold text-white">
               <span>Votre gain net direct :</span>
-              <span className="text-emerald-300 font-black">3 000 FCFA</span>
+              <span className="text-emerald-300 font-black">3 750 FCFA</span>
             </div>
           </div>
         </div>

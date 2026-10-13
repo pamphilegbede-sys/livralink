@@ -4,6 +4,8 @@ import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
 import { DeliveryOrder } from '../../types';
+import { GoogleMapDelivery } from '../maps/GoogleMapDelivery';
+import { getLocationForCommune } from '../../config/maps';
 
 export const VendeurTracking: React.FC = () => {
   const {
@@ -14,14 +16,23 @@ export const VendeurTracking: React.FC = () => {
     setIsPODModalOpen,
     showToast,
     setCurrentView,
+    setCurrentRole,
+    acceptDelivery,
     updateDeliveryStatus,
   } = useApp();
 
-  const [activeCourseId, setActiveCourseId] = useState(selectedDelivery?.id || '#LL-4192');
+  const [activeCourseId, setActiveCourseId] = useState(selectedDelivery?.id || deliveries[0]?.id || '#LL-4192');
   const [activeFilter, setActiveFilter] = useState<'all' | 'en_cours' | 'en_attente' | 'livree' | 'echec'>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
-  const currentOrder = deliveries.find((d) => d.id === activeCourseId) || deliveries[0];
+  // Sync active course when selected delivery changes (e.g. after creating new order)
+  React.useEffect(() => {
+    if (selectedDelivery?.id) {
+      setActiveCourseId(selectedDelivery.id);
+    }
+  }, [selectedDelivery]);
+
+  const currentOrder = deliveries.find((d) => d.id === activeCourseId) || selectedDelivery || deliveries[0];
 
   const filteredDeliveries = deliveries.filter((order) => {
     if (activeFilter === 'en_cours' && !(order.status === 'en_cours' || order.status === 'acceptee' || order.status === 'colis_recupere')) return false;
@@ -48,13 +59,13 @@ export const VendeurTracking: React.FC = () => {
   };
 
   const handleShareTrackingLink = () => {
-    const trackingUrl = `https://livralink.ci/track/${currentOrder.id.replace('#', '')}`;
+    const trackingUrl = `https://livralink.bj/track/${currentOrder.id.replace('#', '')}`;
     navigator.clipboard.writeText(trackingUrl);
     showToast(`Lien de suivi client copié : ${trackingUrl}`, 'success');
   };
 
   const handleDirectWhatsApp = () => {
-    const msg = `Bonjour ${currentOrder.clientName}, votre colis LivraLink (${currentOrder.id}) est en cours de livraison par ${currentOrder.courier?.name || 'votre coursier'}. Suivi direct : https://livralink.ci/track/${currentOrder.id.replace('#', '')}`;
+    const msg = `Bonjour ${currentOrder.clientName}, votre colis LivraLink (${currentOrder.id}) est en cours de livraison par ${currentOrder.courier?.name || 'votre coursier'}. Suivi direct : https://livralink.bj/track/${currentOrder.id.replace('#', '')}`;
     openWhatsAppModal(currentOrder.clientPhone, currentOrder.clientName, msg);
   };
 
@@ -168,6 +179,75 @@ export const VendeurTracking: React.FC = () => {
                 </div>
               </div>
 
+              {/* Status Simulation & Testing Bar for Vendor */}
+              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+                <div className="flex items-center gap-1.5 text-slate-700 font-bold">
+                  <span className="material-symbols-outlined text-sm text-blue-600">tune</span>
+                  <span>Tests &amp; Progression de la course ({currentOrder.id}) :</span>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => updateDeliveryStatus(currentOrder.id, 'colis_recupere', 'Colis récupéré en boutique par le livreur')}
+                    className="px-2.5 py-1.5 rounded-xl bg-white border border-slate-200 hover:border-blue-400 text-slate-700 font-bold active:scale-95 transition-all text-[11px]"
+                  >
+                    📦 Colis récupéré
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateDeliveryStatus(currentOrder.id, 'en_cours', 'En transit vers le domicile du client')}
+                    className="px-2.5 py-1.5 rounded-xl bg-blue-50 border border-blue-200 hover:border-blue-400 text-blue-700 font-bold active:scale-95 transition-all text-[11px]"
+                  >
+                    🛵 En cours (Transit)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedDelivery(currentOrder);
+                      setIsPODModalOpen(true);
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 hover:border-emerald-400 text-emerald-800 font-bold active:scale-95 transition-all text-[11px]"
+                  >
+                    ✅ Valider livraison (POD)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateDeliveryStatus(currentOrder.id, 'echec', 'Client injoignable après multiples tentatives')}
+                    className="px-2.5 py-1.5 rounded-xl bg-red-50 border border-red-200 hover:border-red-400 text-red-700 font-bold active:scale-95 transition-all text-[11px]"
+                  >
+                    ⚠️ Signaler incident
+                  </button>
+                </div>
+              </div>
+
+              {/* Tracé Google Maps Bénin en direct */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                  <span className="flex items-center gap-1.5 text-blue-700">
+                    <span className="material-symbols-outlined text-base">map</span>
+                    <span>Trajet Google Maps &amp; Tarification (100 FCFA/km)</span>
+                  </span>
+                  <span className="text-slate-500">
+                    {currentOrder.pickupLocation.commune} ➔ {currentOrder.dropoffLocation.commune}
+                  </span>
+                </div>
+                <GoogleMapDelivery
+                  origin={
+                    currentOrder.pickupLocation?.coordinates
+                      ? { lat: currentOrder.pickupLocation.coordinates[0], lng: currentOrder.pickupLocation.coordinates[1] }
+                      : getLocationForCommune(currentOrder.pickupLocation?.commune || 'Cotonou - Haie Vive')
+                  }
+                  destination={
+                    currentOrder.dropoffLocation?.coordinates
+                      ? { lat: currentOrder.dropoffLocation.coordinates[0], lng: currentOrder.dropoffLocation.coordinates[1] }
+                      : getLocationForCommune(currentOrder.dropoffLocation?.commune || 'Cotonou - Cadjehoun')
+                  }
+                  originLabel={`Boutique: ${currentOrder.pickupLocation.name}`}
+                  destinationLabel={`Client: ${currentOrder.clientName}`}
+                  heightClass="h-[280px]"
+                />
+              </div>
+
               {/* Steps and Courier Details */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                 {/* 6 Steps Timeline (7 cols) */}
@@ -209,35 +289,78 @@ export const VendeurTracking: React.FC = () => {
 
                 {/* Courier & Location (5 cols) */}
                 <div className="lg:col-span-5 space-y-4">
-                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Coursier assigné</span>
-                      <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">
-                        {currentOrder.courier?.status === 'en_course' ? 'En livraison' : 'Disponible'}
-                      </span>
-                    </div>
+                  {currentOrder.courier ? (
+                    <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Coursier assigné</span>
+                        <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">
+                          {currentOrder.courier.status === 'en_course' ? 'En livraison' : 'Disponible'}
+                        </span>
+                      </div>
 
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-sm shadow-xs">
-                        {currentOrder.courier?.avatarInitials || 'LL'}
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-sm shadow-xs">
+                          {currentOrder.courier.avatarInitials}
+                        </div>
+                        <div>
+                          <div className="font-bold text-slate-900 text-xs">{currentOrder.courier.name}</div>
+                          <div className="text-[11px] text-slate-500">{currentOrder.courier.vehicle} • {currentOrder.courier.phone}</div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="font-bold text-slate-900 text-xs">{currentOrder.courier?.name || 'Coursier Express'}</div>
-                        <div className="text-[11px] text-slate-500">{currentOrder.courier?.vehicle || 'Moto 125cc'} • {currentOrder.courier?.phone}</div>
-                      </div>
-                    </div>
 
-                    <div className="pt-2 border-t border-slate-200/60 grid grid-cols-2 gap-2 text-center text-xs">
-                      <div className="p-2 bg-white rounded-xl border border-slate-100">
-                        <span className="text-[10px] text-slate-400 block">Note globale</span>
-                        <strong className="text-amber-600">★ {currentOrder.courier?.rating || 4.9}</strong>
-                      </div>
-                      <div className="p-2 bg-white rounded-xl border border-slate-100">
-                        <span className="text-[10px] text-slate-400 block">Courses réussies</span>
-                        <strong className="text-slate-900">{currentOrder.courier?.totalDeliveries || 350}+</strong>
+                      <div className="pt-2 border-t border-slate-200/60 grid grid-cols-2 gap-2 text-center text-xs">
+                        <div className="p-2 bg-white rounded-xl border border-slate-100">
+                          <span className="text-[10px] text-slate-400 block">Note globale</span>
+                          <strong className="text-amber-600">★ {currentOrder.courier.rating}</strong>
+                        </div>
+                        <div className="p-2 bg-white rounded-xl border border-slate-100">
+                          <span className="text-[10px] text-slate-400 block">Courses réussies</span>
+                          <strong className="text-slate-900">{currentOrder.courier.totalDeliveries}+</strong>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="p-4 rounded-2xl bg-amber-50/90 border-2 border-amber-300 space-y-3 shadow-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-bold text-amber-900 tracking-wider flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+                          <span>Attribution en cours</span>
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full bg-amber-200 text-amber-950 text-[10px] font-black">
+                          Diffusion ouverte
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-800 font-black flex items-center justify-center text-sm shadow-xs border border-amber-200">
+                          <span className="material-symbols-outlined text-xl">podcasts</span>
+                        </div>
+                        <div>
+                          <div className="font-bold text-slate-900 text-xs">Aucun livreur pré-assigné</div>
+                          <div className="text-[11px] text-amber-800 font-medium">Disponible pour tous les livreurs de la zone</div>
+                        </div>
+                      </div>
+
+                      <p className="text-[11px] text-slate-600 bg-white/80 p-2.5 rounded-xl border border-amber-200 leading-relaxed">
+                        Cette livraison est visible en temps réel par tous les livreurs connectés à proximité de <strong>{currentOrder.dropoffLocation.commune}</strong>. Dès qu'un livreur clique sur « Accepter », ses coordonnées apparaîtront ici.
+                      </p>
+
+                      <div className="pt-1 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCurrentRole('livreur');
+                            setCurrentView('livreur_dashboard');
+                            showToast('Bascule sur l\'espace livreur pour accepter la course', 'info');
+                          }}
+                          className="w-full py-2 px-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <span className="material-symbols-outlined text-sm">two_wheeler</span>
+                          <span>Voir &amp; Accepter côté livreur</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Destination Info */}
                   <div className="p-4 rounded-2xl bg-blue-50/60 border border-blue-100 space-y-2 text-xs">

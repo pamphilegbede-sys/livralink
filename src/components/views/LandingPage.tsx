@@ -192,12 +192,12 @@ export const LandingPage: React.FC = () => {
                 <div className="relative">
                   <span className="absolute -left-[31px] top-0.5 w-3.5 h-3.5 rounded-full bg-blue-600 ring-4 ring-blue-100"></span>
                   <p className="text-[10px] uppercase font-bold text-slate-400">EXPÉDITEUR (INSTAGRAM DM)</p>
-                  <p className="font-bold text-slate-900">Boutique Glamour Chic • Plateau</p>
+                  <p className="font-bold text-slate-900">Boutique Glamour Chic • Cotonou Haie Vive</p>
                 </div>
                 <div className="relative pt-1">
                   <span className="absolute -left-[31px] top-1.5 w-3.5 h-3.5 rounded-full bg-emerald-600 ring-4 ring-emerald-100"></span>
                   <p className="text-[10px] uppercase font-bold text-slate-400">DESTINATION CLIENT</p>
-                  <p className="font-bold text-slate-900">Amina K. • Cocody Angré 8e Tranche</p>
+                  <p className="font-bold text-slate-900">Amina K. • Cotonou Fidjrossè</p>
                 </div>
               </div>
 

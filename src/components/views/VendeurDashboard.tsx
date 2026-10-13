@@ -29,6 +29,7 @@ export const VendeurDashboard: React.FC = () => {
   const inProgressCount = deliveries.filter((d) => d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere').length;
   const deliveredCount = deliveries.filter((d) => d.status === 'livree').length;
   const failedCount = deliveries.filter((d) => d.status === 'echec').length;
+  const liveOrder = deliveries.find((d) => d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere');
 
   // Filtered deliveries
   const filteredDeliveries = deliveries.filter((order) => {
@@ -198,44 +199,78 @@ export const VendeurDashboard: React.FC = () => {
           </section>
 
           {/* 2. Live Operational Alert Banner */}
-          <section className="rounded-2xl border border-blue-200/80 bg-gradient-to-r from-blue-50/90 via-white to-white p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-3.5">
-              <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs shrink-0">
-                <span className="material-symbols-outlined text-xl">radar</span>
-              </div>
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs font-bold text-slate-900">
-                    Activité directe : Course #LL-4192 en cours d'acheminement
-                  </span>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                    À 4 min de la cliente
-                  </span>
+          {liveOrder ? (
+            <section className="rounded-2xl border border-blue-200/80 bg-gradient-to-r from-blue-50/90 via-white to-white p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                  <span className="material-symbols-outlined text-xl">radar</span>
                 </div>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Livreur David T. se dirige vers Cocody Danga • ETA 14:38 • Code OTP envoyé par SMS
-                </p>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-slate-900">
+                      Activité directe : Course {liveOrder.id} ({liveOrder.status === 'acceptee' ? 'Course acceptée' : liveOrder.status === 'colis_recupere' ? 'Colis récupéré' : 'En acheminement'})
+                    </span>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                      {liveOrder.courier ? `Livreur : ${liveOrder.courier.name}` : 'En attente de coursier'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {liveOrder.courier
+                      ? `Livreur ${liveOrder.courier.name} (${liveOrder.courier.vehicle}) • Destination : ${liveOrder.dropoffLocation.commune} • ${liveOrder.statusNote}`
+                      : `En attente d'acceptation par les livreurs de la zone (${liveOrder.dropoffLocation.commune})`}
+                  </p>
+                </div>
               </div>
-            </div>
 
-            <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
-              <button
-                onClick={() => setCurrentView('vendeur_tracking')}
-                className="px-3.5 py-1.5 text-xs font-semibold text-blue-700 bg-white border border-blue-200 rounded-lg hover:bg-slate-50 transition-colors"
-              >
-                Voir sur la carte
-              </button>
-              <button
-                onClick={() => {
-                  const target = deliveries.find((d) => d.id === '#LL-4192');
-                  if (target) handleWhatsAppAction(target);
-                }}
-                className="px-3.5 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
-              >
-                Aviser la cliente
-              </button>
-            </div>
-          </section>
+              <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                <button
+                  onClick={() => {
+                    setSelectedDelivery(liveOrder);
+                    setCurrentView('vendeur_tracking');
+                  }}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-blue-700 bg-white border border-blue-200 rounded-lg hover:bg-slate-50 transition-colors"
+                >
+                  Voir sur la carte
+                </button>
+                <button
+                  onClick={() => handleWhatsAppAction(liveOrder)}
+                  className="px-3.5 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                >
+                  Aviser la cliente
+                </button>
+              </div>
+            </section>
+          ) : (
+            <section className="rounded-2xl border border-emerald-200/80 bg-gradient-to-r from-emerald-50/70 via-white to-white p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                  <span className="material-symbols-outlined text-xl">electric_moped</span>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-slate-900">
+                      Flotte LivraLink Bénin prête &amp; connectée
+                    </span>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                      Tarif 100 F/km
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Toutes vos expéditions sont diffusées instantanément aux coursiers dès validation.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                <button
+                  onClick={() => setCurrentView('vendeur_new_delivery')}
+                  className="px-3.5 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                >
+                  + Nouvelle livraison
+                </button>
+              </div>
+            </section>
+          )}
 
           {/* 3. Deliveries Table and Filter Tabs */}
           <section className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden flex flex-col">

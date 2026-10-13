@@ -2,7 +2,7 @@ import React from 'react';
 import { useApp } from '../../context/AppContext';
 
 export const MobileBottomNav: React.FC = () => {
-  const { currentView, setCurrentView, currentRole } = useApp();
+  const { currentView, setCurrentView, currentRole, adminActiveTab, setAdminActiveTab } = useApp();
 
   if (currentRole === 'admin') {
     return (
@@ -12,26 +12,41 @@ export const MobileBottomNav: React.FC = () => {
       >
         <div className="max-w-md mx-auto grid grid-cols-5 h-14 text-center">
           <button
-            onClick={() => setCurrentView('admin_console')}
+            onClick={() => {
+              setCurrentView('admin_console');
+              setAdminActiveTab('overview');
+            }}
             className={`flex flex-col items-center justify-center py-1 transition-colors ${
-              currentView === 'admin_console' ? 'text-amber-400 font-bold' : 'text-slate-400 hover:text-white'
+              currentView === 'admin_console' && adminActiveTab === 'overview'
+                ? 'text-amber-400 font-bold'
+                : 'text-slate-400 hover:text-white'
             }`}
           >
             <span className="material-symbols-outlined text-[20px]">dashboard</span>
-            <span className="text-[10px] mt-0.5">Admin</span>
+            <span className="text-[10px] mt-0.5">Synthèse</span>
           </button>
 
           <button
-            onClick={() => setCurrentView('vendeur_dashboard')}
-            className="flex flex-col items-center justify-center py-1 text-slate-400 hover:text-white"
-            title="Voir vue Vendeur"
+            onClick={() => {
+              setCurrentView('admin_console');
+              setAdminActiveTab('deliveries');
+            }}
+            className={`flex flex-col items-center justify-center py-1 transition-colors ${
+              currentView === 'admin_console' && adminActiveTab === 'deliveries'
+                ? 'text-amber-400 font-bold'
+                : 'text-slate-400 hover:text-white'
+            }`}
+            title="Supervision Courses"
           >
-            <span className="material-symbols-outlined text-[20px]">storefront</span>
-            <span className="text-[10px] mt-0.5">Vendeur</span>
+            <span className="material-symbols-outlined text-[20px]">local_shipping</span>
+            <span className="text-[10px] mt-0.5">Courses</span>
           </button>
 
           <button
-            onClick={() => setCurrentView('admin_console')}
+            onClick={() => {
+              setCurrentView('admin_console');
+              setAdminActiveTab('overview');
+            }}
             className="flex flex-col items-center justify-center text-amber-400 py-1 transition-transform active:scale-95"
           >
             <div className="w-10 h-10 -mt-4 rounded-full bg-gradient-to-tr from-amber-500 to-amber-400 text-slate-950 flex items-center justify-center shadow-lg ring-4 ring-slate-900 font-bold">
@@ -41,21 +56,35 @@ export const MobileBottomNav: React.FC = () => {
           </button>
 
           <button
-            onClick={() => setCurrentView('livreur_dashboard')}
-            className="flex flex-col items-center justify-center py-1 text-slate-400 hover:text-white"
-            title="Voir vue Livreur"
+            onClick={() => {
+              setCurrentView('admin_console');
+              setAdminActiveTab('couriers');
+            }}
+            className={`flex flex-col items-center justify-center py-1 transition-colors ${
+              currentView === 'admin_console' && adminActiveTab === 'couriers'
+                ? 'text-amber-400 font-bold'
+                : 'text-slate-400 hover:text-white'
+            }`}
+            title="Gestion Livreurs"
           >
             <span className="material-symbols-outlined text-[20px]">two_wheeler</span>
-            <span className="text-[10px] mt-0.5">Livreur</span>
+            <span className="text-[10px] mt-0.5">Livreurs</span>
           </button>
 
           <button
-            onClick={() => setCurrentView('landing')}
-            className="flex flex-col items-center justify-center py-1 text-slate-400 hover:text-white"
-            title="Accueil"
+            onClick={() => {
+              setCurrentView('admin_console');
+              setAdminActiveTab('disputes');
+            }}
+            className={`flex flex-col items-center justify-center py-1 transition-colors ${
+              currentView === 'admin_console' && adminActiveTab === 'disputes'
+                ? 'text-red-400 font-bold'
+                : 'text-slate-400 hover:text-white'
+            }`}
+            title="Litiges & Support"
           >
-            <span className="material-symbols-outlined text-[20px]">home</span>
-            <span className="text-[10px] mt-0.5">Vitrine</span>
+            <span className="material-symbols-outlined text-[20px]">warning</span>
+            <span className="text-[10px] mt-0.5">Litiges</span>
           </button>
         </div>
       </nav>

@@ -22,6 +22,9 @@ export interface UserProfile {
   role: UserRole;
   avatarUrl?: string;
   storeName?: string;
+  storeCommune?: string;
+  storeAddress?: string;
+  storeCoordinates?: [number, number];
   vehicleType?: string;
   createdAt?: any;
   updatedAt?: any;
@@ -49,7 +52,7 @@ export const ALL_TEST_PROFILES: TestProfile[] = [
     password: 'SarahPassword2025!',
     role: 'vendeur',
     phone: '+229 97 12 34 56',
-    storeName: 'Sarah Chic Boutique Abidjan',
+    storeName: 'Sarah Chic Boutique Cotonou',
     description: 'Vendeuse Prêt-à-porter & Accessoires de Mode',
   },
   {
@@ -80,7 +83,7 @@ export const ALL_TEST_PROFILES: TestProfile[] = [
     role: 'livreur',
     phone: '+229 96 44 33 22',
     vehicleType: 'Moto Yamaha 125cc',
-    zone: 'Zone Cocody & Plateau',
+    zone: 'Zone Cotonou & Cadjehoun',
     description: 'Coursier Express Deux-Roues Urbain',
   },
   {
@@ -91,18 +94,18 @@ export const ALL_TEST_PROFILES: TestProfile[] = [
     role: 'livreur',
     phone: '+229 90 11 22 33',
     vehicleType: 'Vélo Cargo Électrique',
-    zone: 'Zone Plateau & Treichville',
+    zone: 'Zone Haie Vive & Akpakpa',
     description: 'Coursière Vélo Cargo Éco-Responsable',
   },
   {
     id: 6,
-    name: 'Bakary Express Abidjan',
+    name: 'Bakary Express Cotonou',
     email: 'bakary.express@gmail.com',
     password: 'BakaryFast2025!',
     role: 'livreur',
-    phone: '+225 07 48 12 34',
+    phone: '+229 97 48 12 34',
     vehicleType: 'Moto Honda 150cc Pro',
-    zone: 'Zone Plateau, Cocody & Riviera',
+    zone: 'Zone Cotonou, Haie Vive & Cadjehoun',
     description: 'Livreur Rapide Spécialiste Courses Urgentes (420 livraisons)',
   },
   {
@@ -111,9 +114,9 @@ export const ALL_TEST_PROFILES: TestProfile[] = [
     email: 'awa.veloce@gmail.com',
     password: 'AwaVeloce2025!',
     role: 'livreur',
-    phone: '+225 05 87 65 43',
+    phone: '+229 95 87 65 43',
     vehicleType: 'Scooter Électrique / Van Léger',
-    zone: 'Zone Marcory, Koumassi & Port-Bouët',
+    zone: 'Zone Akpakpa, Porto-Novo & Sèmè',
     description: 'Livreuse Premium Flotte & Colis Fragiles (385 livraisons)',
   },
 ];
@@ -188,13 +191,13 @@ export const getFirebaseAuthErrorMessage = (error: any): string => {
     return 'Le mot de passe est trop court. Il doit contenir au moins 6 caractères.';
   }
   if (code === 'auth/user-not-found') {
-    return 'Aucun compte trouvé avec cet e-mail. Veuillez vérifier vos identifiants ou créer un compte.';
+    return 'Aucun compte trouvé avec cette adresse e-mail. Cet utilisateur n\'existe pas. Veuillez vous inscrire ou vérifier votre saisie.';
   }
   if (code === 'auth/wrong-password') {
-    return 'Mot de passe incorrect. Vérifiez vos identifiants ou cliquez sur « Mot de passe oublié ».';
+    return 'Mot de passe incorrect. Veuillez vérifier votre mot de passe ou utiliser « Mot de passe oublié ».';
   }
   if (code === 'auth/invalid-credential') {
-    return 'Identifiants invalides. Veuillez vérifier votre adresse e-mail et votre mot de passe.';
+    return 'Identifiants invalides (adresse e-mail inexistante ou mot de passe incorrect).';
   }
   if (code === 'auth/user-disabled') {
     return 'Ce compte utilisateur a été désactivé par l\'administrateur.';
@@ -259,7 +262,13 @@ export const registerWithEmailPassword = async (
   password: string,
   role: UserRole,
   fullName: string,
-  phone: string
+  phone: string,
+  extraFields?: {
+    storeName?: string;
+    storeCommune?: string;
+    storeAddress?: string;
+    storeCoordinates?: [number, number];
+  }
 ): Promise<{ user: Partial<FirebaseUser>; profile: UserProfile }> => {
   const validation = validateAuthInputs(email, password, fullName, phone);
   if (!validation.isValid) {
@@ -313,7 +322,10 @@ export const registerWithEmailPassword = async (
     fullName: cleanName,
     phone: cleanPhone,
     role: role,
-    storeName: role === 'vendeur' ? cleanName : undefined,
+    storeName: role === 'vendeur' ? (extraFields?.storeName?.trim() || cleanName) : undefined,
+    storeCommune: role === 'vendeur' ? extraFields?.storeCommune?.trim() : undefined,
+    storeAddress: role === 'vendeur' ? extraFields?.storeAddress?.trim() : undefined,
+    storeCoordinates: role === 'vendeur' ? extraFields?.storeCoordinates : undefined,
     vehicleType: role === 'livreur' ? 'Moto 125cc' : undefined,
     createdAt: new Date().toISOString(),
   };
@@ -332,6 +344,15 @@ export const registerWithEmailPassword = async (
     if (profileData.storeName) {
       firestorePayload.storeName = profileData.storeName;
     }
+    if (profileData.storeCommune) {
+      firestorePayload.storeCommune = profileData.storeCommune;
+    }
+    if (profileData.storeAddress) {
+      firestorePayload.storeAddress = profileData.storeAddress;
+    }
+    if (profileData.storeCoordinates) {
+      firestorePayload.storeCoordinates = profileData.storeCoordinates;
+    }
     if (profileData.vehicleType) {
       firestorePayload.vehicleType = profileData.vehicleType;
     }
@@ -349,6 +370,7 @@ export const registerWithEmailPassword = async (
 
 /**
  * Login an existing user with Firebase Authentication and retrieve their Firestore profile.
+ * Strictly verifies that the email and password are valid and that the account exists.
  */
 export const loginWithEmailPassword = async (
   email: string,
@@ -369,36 +391,53 @@ export const loginWithEmailPassword = async (
     const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
     authUser = userCredential.user;
 
-    // 2. Fetch profile from Firestore or local cache
+    // 2. Fetch profile from Firestore
     profile = await getUserProfile(userCredential.user.uid);
+    if (!profile) {
+      // Build profile from authenticated user info
+      profile = {
+        uid: userCredential.user.uid,
+        email: cleanEmail,
+        fullName: userCredential.user.displayName || cleanEmail.split('@')[0],
+        phone: userCredential.user.phoneNumber || '+229 97 00 00 00',
+        role: fallbackRole,
+        storeName: fallbackRole === 'vendeur' ? userCredential.user.displayName || cleanEmail.split('@')[0] : undefined,
+        vehicleType: fallbackRole === 'livreur' ? 'Moto 125cc' : undefined,
+        createdAt: new Date().toISOString(),
+      };
+      saveStoredUser(cleanEmail, profile, btoa(password));
+    }
   } catch (firebaseErr: any) {
     console.warn('Firebase Auth Login note:', firebaseErr);
 
+    // If explicit wrong password from Firebase Auth
     if (firebaseErr?.code === 'auth/wrong-password') {
-      throw firebaseErr;
+      const err: any = new Error('Mot de passe incorrect. Veuillez vérifier votre mot de passe.');
+      err.code = 'auth/wrong-password';
+      throw err;
     }
 
-    // Check local stored users & test profiles
-    const stored = getStoredUsers();
-    const storedUser = stored[cleanEmail];
-
-    if (storedUser) {
-      if (storedUser.passwordHash === btoa(password)) {
-        profile = storedUser.profile;
-        authUser = {
-          uid: profile.uid,
-          email: profile.email,
-          displayName: profile.fullName,
-        };
-      } else {
-        const err: any = new Error('Mot de passe incorrect.');
-        err.code = 'auth/wrong-password';
-        throw err;
-      }
-    } else {
-      // Check test profiles directly
+    // If explicit user-not-found from Firebase Auth
+    if (firebaseErr?.code === 'auth/user-not-found') {
+      // Check if user exists in local registered store or pre-configured test profiles
+      const stored = getStoredUsers();
+      const storedUser = stored[cleanEmail];
       const testMatch = ALL_TEST_PROFILES.find((p) => p.email.toLowerCase() === cleanEmail);
-      if (testMatch) {
+
+      if (storedUser) {
+        if (storedUser.passwordHash === btoa(password)) {
+          profile = storedUser.profile;
+          authUser = {
+            uid: profile.uid,
+            email: profile.email,
+            displayName: profile.fullName,
+          };
+        } else {
+          const err: any = new Error('Mot de passe incorrect. Veuillez vérifier votre saisie.');
+          err.code = 'auth/wrong-password';
+          throw err;
+        }
+      } else if (testMatch) {
         if (testMatch.password === password) {
           profile = {
             uid: `test_uid_${testMatch.id}`,
@@ -417,48 +456,122 @@ export const loginWithEmailPassword = async (
           };
           saveStoredUser(cleanEmail, profile, btoa(password));
         } else {
-          const err: any = new Error('Mot de passe incorrect.');
+          const err: any = new Error('Mot de passe incorrect. Veuillez vérifier votre saisie.');
           err.code = 'auth/wrong-password';
           throw err;
         }
       } else {
-        // If it's a new courier or seller logging in with a new valid account
-        const autoUid = 'usr_' + Math.random().toString(36).substring(2, 10);
-        profile = {
-          uid: autoUid,
-          email: cleanEmail,
-          fullName: cleanEmail.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
-          phone: '+225 07 00 00 00',
-          role: fallbackRole,
-          vehicleType: fallbackRole === 'livreur' ? 'Moto 125cc' : undefined,
-          storeName: fallbackRole === 'vendeur' ? cleanEmail.split('@')[0] : undefined,
-          createdAt: new Date().toISOString(),
-        };
-        authUser = {
-          uid: autoUid,
-          email: cleanEmail,
-          displayName: profile.fullName,
-        };
-        saveStoredUser(cleanEmail, profile, btoa(password));
+        // User does not exist! REJECT STRICTLY!
+        const err: any = new Error('Aucun compte trouvé avec cette adresse e-mail. Cet utilisateur n\'existe pas. Veuillez vous inscrire ou vérifier votre saisie.');
+        err.code = 'auth/user-not-found';
+        throw err;
+      }
+    } else if (firebaseErr?.code === 'auth/invalid-credential') {
+      // Check stored users and test profiles
+      const stored = getStoredUsers();
+      const storedUser = stored[cleanEmail];
+      const testMatch = ALL_TEST_PROFILES.find((p) => p.email.toLowerCase() === cleanEmail);
+
+      if (storedUser) {
+        if (storedUser.passwordHash === btoa(password)) {
+          profile = storedUser.profile;
+          authUser = {
+            uid: profile.uid,
+            email: profile.email,
+            displayName: profile.fullName,
+          };
+        } else {
+          const err: any = new Error('Mot de passe incorrect. Veuillez vérifier votre mot de passe.');
+          err.code = 'auth/wrong-password';
+          throw err;
+        }
+      } else if (testMatch) {
+        if (testMatch.password === password) {
+          profile = {
+            uid: `test_uid_${testMatch.id}`,
+            email: testMatch.email,
+            fullName: testMatch.name,
+            phone: testMatch.phone,
+            role: testMatch.role,
+            vehicleType: testMatch.vehicleType,
+            storeName: testMatch.storeName,
+            createdAt: new Date().toISOString(),
+          };
+          authUser = {
+            uid: profile.uid,
+            email: profile.email,
+            displayName: profile.fullName,
+          };
+          saveStoredUser(cleanEmail, profile, btoa(password));
+        } else {
+          const err: any = new Error('Mot de passe incorrect. Veuillez vérifier votre saisie.');
+          err.code = 'auth/wrong-password';
+          throw err;
+        }
+      } else {
+        // User does not exist or credentials invalid! REJECT STRICTLY!
+        const err: any = new Error('Identifiants invalides. Aucun compte trouvé avec cet e-mail ou mot de passe incorrect.');
+        err.code = 'auth/invalid-credential';
+        throw err;
+      }
+    } else {
+      // For network failure or other exceptions: check if user exists in local accounts
+      const stored = getStoredUsers();
+      const storedUser = stored[cleanEmail];
+      const testMatch = ALL_TEST_PROFILES.find((p) => p.email.toLowerCase() === cleanEmail);
+
+      if (storedUser) {
+        if (storedUser.passwordHash === btoa(password)) {
+          profile = storedUser.profile;
+          authUser = {
+            uid: profile.uid,
+            email: profile.email,
+            displayName: profile.fullName,
+          };
+        } else {
+          const err: any = new Error('Mot de passe incorrect. Veuillez vérifier votre saisie.');
+          err.code = 'auth/wrong-password';
+          throw err;
+        }
+      } else if (testMatch) {
+        if (testMatch.password === password) {
+          profile = {
+            uid: `test_uid_${testMatch.id}`,
+            email: testMatch.email,
+            fullName: testMatch.name,
+            phone: testMatch.phone,
+            role: testMatch.role,
+            vehicleType: testMatch.vehicleType,
+            storeName: testMatch.storeName,
+            createdAt: new Date().toISOString(),
+          };
+          authUser = {
+            uid: profile.uid,
+            email: profile.email,
+            displayName: profile.fullName,
+          };
+          saveStoredUser(cleanEmail, profile, btoa(password));
+        } else {
+          const err: any = new Error('Mot de passe incorrect. Veuillez vérifier votre saisie.');
+          err.code = 'auth/wrong-password';
+          throw err;
+        }
+      } else {
+        // Account definitely does not exist! REJECT STRICTLY!
+        const err: any = new Error('Aucun compte trouvé avec cette adresse e-mail. Cet utilisateur n\'existe pas. Veuillez vous inscrire.');
+        err.code = 'auth/user-not-found';
+        throw err;
       }
     }
   }
 
-  // Fallback profile if none found
-  if (!profile && authUser) {
-    const stored = getStoredUsers();
-    const storedUser = stored[cleanEmail];
-    profile = storedUser?.profile || {
-      uid: authUser.uid || 'usr_' + Date.now(),
-      email: cleanEmail,
-      fullName: authUser.displayName || cleanEmail.split('@')[0],
-      phone: '+225 07 00 00 00',
-      role: fallbackRole,
-      vehicleType: fallbackRole === 'livreur' ? 'Moto 125cc' : undefined,
-    };
+  if (!authUser || !profile) {
+    const err: any = new Error('Échec de la connexion. Veuillez vérifier votre adresse e-mail et votre mot de passe.');
+    err.code = 'auth/invalid-credential';
+    throw err;
   }
 
-  return { user: authUser!, profile };
+  return { user: authUser, profile };
 };
 
 /**
@@ -640,7 +753,7 @@ export const verifyResetCodeAndSetPassword = async (
           uid: 'usr_' + Math.random().toString(36).substring(2, 10),
           email: cleanEmail,
           fullName: cleanEmail.split('@')[0],
-          phone: '+225 07 00 00 00',
+          phone: '+229 97 00 00 00',
           role: 'livreur',
           createdAt: new Date().toISOString(),
         },

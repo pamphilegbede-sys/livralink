@@ -130,8 +130,10 @@ export interface MerchantSettings {
   managerName: string;
   phone: string;
   email: string;
+  storeCommune?: string;
   defaultPickupAddress: string;
   gpsCoordinates: string;
+  storeCoordinates?: [number, number];
   defaultExpress: boolean;
   frequentZones: string[];
   permanentInstructions: string;

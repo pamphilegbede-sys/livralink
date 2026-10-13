@@ -249,11 +249,11 @@ export const VendeurReports: React.FC = () => {
                       1
                     </span>
                     <div>
-                      <div className="text-xs font-bold text-slate-900">Cocody (Angré, Riviera, 2 Plateaux)</div>
-                      <div className="text-[10px] text-slate-500">Délai moyen : 32 min</div>
+                      <div className="text-xs font-bold text-slate-900">Cotonou (Haie Vive, Cadjehoun, Fidjrossè)</div>
+                      <div className="text-[10px] text-slate-500">Délai moyen : 28 min</div>
                     </div>
                   </div>
-                  <span className="text-xs font-black text-blue-700">46% des colis</span>
+                  <span className="text-xs font-black text-blue-700">48% des colis</span>
                 </div>
 
                 <div className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-50 border border-slate-100">
@@ -262,11 +262,11 @@ export const VendeurReports: React.FC = () => {
                       2
                     </span>
                     <div>
-                      <div className="text-xs font-bold text-slate-900">Marcory &amp; Zone 4</div>
-                      <div className="text-[10px] text-slate-500">Délai moyen : 41 min</div>
+                      <div className="text-xs font-bold text-slate-900">Abomey-Calavi &amp; Godomey</div>
+                      <div className="text-[10px] text-slate-500">Délai moyen : 35 min</div>
                     </div>
                   </div>
-                  <span className="text-xs font-black text-slate-700">28% des colis</span>
+                  <span className="text-xs font-black text-slate-700">32% des colis</span>
                 </div>
 
                 <div className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-50 border border-slate-100">
@@ -275,11 +275,11 @@ export const VendeurReports: React.FC = () => {
                       3
                     </span>
                     <div>
-                      <div className="text-xs font-bold text-slate-900">Plateau &amp; Treichville</div>
-                      <div className="text-[10px] text-slate-500">Délai moyen : 45 min</div>
+                      <div className="text-xs font-bold text-slate-900">Cotonou Akpakpa &amp; Dantokpa</div>
+                      <div className="text-[10px] text-slate-500">Délai moyen : 38 min</div>
                     </div>
                   </div>
-                  <span className="text-xs font-black text-slate-700">18% des colis</span>
+                  <span className="text-xs font-black text-slate-700">20% des colis</span>
                 </div>
               </div>
             </div>

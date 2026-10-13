@@ -38,21 +38,25 @@ export const AdminConsole: React.FC = () => {
     adminLogout,
     userProfile,
     openGoogleModal,
-    setCurrentView
+    openWhatsAppModal,
+    setCurrentView,
+    setCurrentRole,
+    adminActiveTab: activeViewTab,
+    setAdminActiveTab: setActiveViewTab
   } = useApp();
-
-  // Navigation Tabs in Admin Console
-  const [activeViewTab, setActiveViewTab] = useState<
-    'overview' | 'couriers' | 'merchants' | 'deliveries' | 'disputes' | 'pricing' | 'tests' | 'audit' | 'security'
-  >('overview');
 
   // Whitelist management state
   const [newAdminEmailInput, setNewAdminEmailInput] = useState('');
   const [testUnauthorizedEmail, setTestUnauthorizedEmail] = useState('pirate.inconnu@gmail.com');
   const [securityTestResult, setSecurityTestResult] = useState<string | null>(null);
+  const [adminLoginEmailInput, setAdminLoginEmailInput] = useState('pamphile.gbede@gmail.com');
+  const [adminLoginError, setAdminLoginError] = useState<string | null>(null);
+  const [isLoggingInWithGoogle, setIsLoggingInWithGoogle] = useState(false);
 
   // Search & Filter state
   const [adminSearch, setAdminSearch] = useState('');
+  const [userTypeFilter, setUserTypeFilter] = useState<'all' | 'livreur' | 'vendeur'>('all');
+  const [kycStatusFilter, setKycStatusFilter] = useState<'all' | 'en_attente' | 'valide' | 'rejete'>('all');
   const [courierStatusFilter, setCourierStatusFilter] = useState<'all' | 'en_ligne' | 'en_course' | 'suspendu'>('all');
   const [merchantStatusFilter, setMerchantStatusFilter] = useState<'all' | 'actif' | 'suspendu' | 'en_attente_kyc'>('all');
   const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<'all' | 'en_attente' | 'assignee' | 'en_cours' | 'livree' | 'echec'>('all');
@@ -70,18 +74,31 @@ export const AdminConsole: React.FC = () => {
   const [assigningOrder, setAssigningOrder] = useState<DeliveryOrder | null>(null);
   const [selectedCourierForAssign, setSelectedCourierForAssign] = useState<string>('');
 
+  const [isAddDeliveryModalOpen, setIsAddDeliveryModalOpen] = useState(false);
+  const [inspectingDelivery, setInspectingDelivery] = useState<DeliveryOrder | null>(null);
+
+  // Form states for new Delivery Order
+  const [newOrderClientName, setNewOrderClientName] = useState('');
+  const [newOrderClientPhone, setNewOrderClientPhone] = useState('');
+  const [newOrderStoreName, setNewOrderStoreName] = useState('Boutique VIP Chic Cotonou');
+  const [newOrderPickupCommune, setNewOrderPickupCommune] = useState('Cotonou - Haie Vive');
+  const [newOrderDropoffCommune, setNewOrderDropoffCommune] = useState('Abomey-Calavi - Centre');
+  const [newOrderDropoffAddress, setNewOrderDropoffAddress] = useState('Carrefour Kpota, Abomey-Calavi');
+  const [newOrderCOD, setNewOrderCOD] = useState('25000');
+  const [newOrderFee, setNewOrderFee] = useState('2500');
+
   // Form states for new Courier
   const [newCourierName, setNewCourierName] = useState('');
   const [newCourierPhone, setNewCourierPhone] = useState('');
   const [newCourierVehicle, setNewCourierVehicle] = useState('Yamaha 125');
-  const [newCourierPlate, setNewCourierPlate] = useState('CI-4820-AB');
-  const [newCourierZone, setNewCourierZone] = useState('Cocody / Plateau');
+  const [newCourierPlate, setNewCourierPlate] = useState('BJ-4820-RB');
+  const [newCourierZone, setNewCourierZone] = useState('Cotonou / Calavi');
 
   // Form states for new Merchant
   const [newMerchantStore, setNewMerchantStore] = useState('');
   const [newMerchantManager, setNewMerchantManager] = useState('');
   const [newMerchantPhone, setNewMerchantPhone] = useState('');
-  const [newMerchantCommune, setNewMerchantCommune] = useState('Cocody');
+  const [newMerchantCommune, setNewMerchantCommune] = useState('Cotonou - Haie Vive');
   const [newMerchantChannel, setNewMerchantChannel] = useState<'WhatsApp' | 'Instagram' | 'TikTok' | 'E-commerce'>('WhatsApp');
 
   // Test Suite execution state
@@ -159,6 +176,39 @@ export const AdminConsole: React.FC = () => {
     setSelectedCourierForAssign('');
   };
 
+  const handleCreateDeliverySubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newOrderClientName.trim() || !newOrderClientPhone.trim()) {
+      showToast('Nom du client et téléphone requis.', 'error');
+      return;
+    }
+    const codVal = parseInt(newOrderCOD, 10) || 0;
+    const feeVal = parseInt(newOrderFee, 10) || 1500;
+    const created = createDelivery({
+      clientName: newOrderClientName.trim(),
+      clientPhone: newOrderClientPhone.trim(),
+      pickupLocation: {
+        name: newOrderStoreName.trim(),
+        commune: newOrderPickupCommune,
+        address: `${newOrderPickupCommune}, Cotonou, Bénin`,
+        coordinates: [6.37, 2.43]
+      },
+      dropoffLocation: {
+        name: 'Domicile Client',
+        commune: newOrderDropoffCommune,
+        address: newOrderDropoffAddress.trim(),
+        coordinates: [5.33, -4.01]
+      },
+      itemValueCOD: codVal,
+      deliveryFee: feeVal,
+      status: 'en_attente'
+    });
+    setNewOrderClientName('');
+    setNewOrderClientPhone('');
+    setIsAddDeliveryModalOpen(false);
+    showToast(`Course ${created.id} créée et enregistrée avec succès !`, 'success');
+  };
+
   const handleRunValidationSuite = async () => {
     setIsTestingInProgress(true);
     showToast('Lancement des tests et vérifications système...', 'info');
@@ -205,6 +255,20 @@ export const AdminConsole: React.FC = () => {
 
   // Security Guard: Check if user is authenticated with Google and whitelisted
   if (!isAdminAuthenticated) {
+    const handleDirectGoogleLogin = (e: React.FormEvent) => {
+      e.preventDefault();
+      setAdminLoginError(null);
+      setIsLoggingInWithGoogle(true);
+
+      setTimeout(() => {
+        setIsLoggingInWithGoogle(false);
+        const result = adminLoginWithGoogle(adminLoginEmailInput);
+        if (!result.success) {
+          setAdminLoginError(result.error || "Adresse Google non autorisée sur la Whitelist administrateur.");
+        }
+      }, 400);
+    };
+
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-white font-['Plus_Jakarta_Sans'] relative overflow-hidden selection:bg-amber-500 selection:text-slate-950">
         {/* Ambient Glows */}
@@ -225,10 +289,10 @@ export const AdminConsole: React.FC = () => {
               <span>ZONE SÉCURISÉE ADMIN • ACCÈS RESTREINT</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-              Console Superviseur LivraLink
+              Connexion Console Administrateur
             </h1>
             <p className="text-slate-400 text-xs sm:text-sm leading-relaxed max-w-md mx-auto">
-              L'accès à la console de supervision générale est strictement protégé. Seules les <strong className="text-amber-300 font-bold">adresses e-mails Google autorisées</strong> peuvent s'y connecter.
+              Pour accéder à la console générale de gestion LivraLink, vous devez <strong className="text-amber-300 font-bold">connecter votre compte administrateur via Google</strong>.
             </p>
           </div>
 
@@ -237,23 +301,35 @@ export const AdminConsole: React.FC = () => {
             <div className="flex items-center justify-between text-[11px] font-bold text-slate-400">
               <span className="flex items-center gap-1.5">
                 <span className="material-symbols-outlined text-sm text-emerald-400">verified</span>
-                <span>Super-Admin Principal Vérifié :</span>
+                <span>Super-Admin Autorisé :</span>
               </span>
               <span className="font-mono text-amber-400 bg-amber-950/50 px-2 py-0.5 rounded border border-amber-800/40">
                 pamphile.gbede@gmail.com
               </span>
             </div>
             <p className="text-[11px] text-slate-500 leading-normal">
-              Protégé par authentification Google OAuth 2.0 et liste blanche (Whitelist RBAC).
+              Contrôle strict RBAC &amp; Google OAuth 2.0 : seules les adresses enregistrées dans la whitelist ont accès à la supervision.
             </p>
           </div>
 
-          {/* Action buttons */}
-          <div className="space-y-3 pt-2">
-            {/* Primary Google Login */}
+          {/* Error message */}
+          {adminLoginError && (
+            <div className="p-3.5 rounded-2xl bg-red-500/10 border border-red-500/40 text-red-200 text-left flex items-start gap-2.5">
+              <span className="material-symbols-outlined text-red-400 text-lg shrink-0 mt-0.5">block</span>
+              <div className="text-xs">
+                <p className="font-bold text-red-300">⛔ Accès Refusé (403)</p>
+                <p className="text-[11px] text-red-200 mt-0.5 leading-relaxed">{adminLoginError}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Action buttons & Interactive Google Login Form */}
+          <div className="space-y-4 pt-1 text-left">
+            {/* Primary Google Login Button */}
             <button
+              type="button"
               onClick={() => openGoogleModal('admin')}
-              className="w-full py-3.5 px-6 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-2xl font-bold text-sm shadow-lg shadow-indigo-600/30 active:scale-[0.99] transition-all flex items-center justify-center gap-3"
+              className="w-full py-3.5 px-6 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-2xl font-bold text-sm shadow-lg shadow-indigo-600/30 active:scale-[0.99] transition-all flex items-center justify-center gap-3 cursor-pointer"
             >
               <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -261,29 +337,81 @@ export const AdminConsole: React.FC = () => {
                 <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
                 <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
               </svg>
-              <span>Se connecter avec Google (Super-Admin)</span>
+              <span>Choisir un compte Google (Super-Admin)</span>
             </button>
 
-            {/* Quick Login Button */}
-            <button
-              onClick={() => adminLoginWithGoogle('pamphile.gbede@gmail.com', 'Pamphile Gbede')}
-              className="w-full py-2.5 px-4 bg-slate-800/80 hover:bg-slate-800 text-amber-300 border border-slate-700 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2"
-            >
-              <span>👑 Déverrouiller en tant que Pamphile Gbede (Super-Admin)</span>
-            </button>
+            {/* Direct Google email connector */}
+            <form onSubmit={handleDirectGoogleLogin} className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-3">
+              <label className="block text-xs font-bold text-slate-300">
+                Ou connectez directement votre adresse Google certifiée :
+              </label>
+              <div className="relative">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                  <span className="material-symbols-outlined text-base">mail</span>
+                </span>
+                <input
+                  type="email"
+                  value={adminLoginEmailInput}
+                  onChange={(e) => {
+                    setAdminLoginEmailInput(e.target.value);
+                    setAdminLoginError(null);
+                  }}
+                  placeholder="pamphile.gbede@gmail.com"
+                  required
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white font-mono focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="submit"
+                  disabled={isLoggingInWithGoogle}
+                  className="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  {isLoggingInWithGoogle ? (
+                    <>
+                      <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                      <span>Vérification...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="material-symbols-outlined text-sm">lock_open</span>
+                      <span>Authentifier le compte Google</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdminLoginEmailInput('pamphile.gbede@gmail.com');
+                    adminLoginWithGoogle('pamphile.gbede@gmail.com', 'Pamphile Gbede');
+                  }}
+                  className="py-2 px-3 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold transition-colors whitespace-nowrap"
+                  title="Connexion rapide Super-Admin"
+                >
+                  👑 Super-Admin
+                </button>
+              </div>
+            </form>
 
             {/* Back to Home */}
-            <button
-              onClick={() => setCurrentView('landing')}
-              className="w-full py-2.5 px-4 text-slate-400 hover:text-slate-200 text-xs font-medium transition-colors"
-            >
-              ← Retourner à la page d'accueil
-            </button>
+            <div className="text-center pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentRole('vendeur');
+                  setCurrentView('landing');
+                }}
+                className="text-slate-400 hover:text-slate-200 text-xs font-medium transition-colors"
+              >
+                ← Quitter l'espace sécurisé et retourner à l'accueil
+              </button>
+            </div>
           </div>
 
           <div className="pt-2 border-t border-slate-800/80 text-[11px] text-slate-500 flex items-center justify-between">
-            <span>Protocole OAuth 2.0 &amp; RBAC Whitelist</span>
-            <span className="font-mono text-emerald-400">Verrouillé 🔒</span>
+            <span>Protocole Google OAuth 2.0 &amp; Whitelist RBAC</span>
+            <span className="font-mono text-amber-400">Verrouillé 🔒</span>
           </div>
         </div>
       </div>
@@ -382,109 +510,55 @@ export const AdminConsole: React.FC = () => {
               <div className="flex items-center gap-2 text-xs text-slate-500 font-semibold mb-1">
                 <span className="text-blue-600 font-bold">Plateforme LivraLink CI</span>
                 <span>›</span>
-                <span>Console Administrateur &amp; Superviseur National</span>
+                <span>Console Administrateur</span>
+                <span>›</span>
+                <span className="font-bold text-slate-900">
+                  {activeViewTab === 'overview' && 'Tableau de Bord & Vue d\'ensemble'}
+                  {activeViewTab === 'deliveries' && 'Supervision des Courses'}
+                  {activeViewTab === 'users' && 'Annuaire Utilisateurs'}
+                  {activeViewTab === 'kyc' && 'Vérifications KYC'}
+                  {activeViewTab === 'couriers' && 'Flotte Livreurs'}
+                  {activeViewTab === 'merchants' && 'Boutiques Vendeurs'}
+                  {activeViewTab === 'disputes' && 'Litiges & Support'}
+                  {activeViewTab === 'pricing' && 'Tarifs & Commissions'}
+                  {activeViewTab === 'tests' && 'Tests & Validations'}
+                  {activeViewTab === 'audit' && 'Journal d\'Audit'}
+                  {activeViewTab === 'security' && 'Whitelist & Sécurité'}
+                </span>
               </div>
               <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-                <span className="p-1.5 bg-blue-600 text-white rounded-xl material-symbols-outlined text-lg">
-                  admin_panel_settings
+                <span className={`p-1.5 text-white rounded-xl material-symbols-outlined text-lg ${
+                  activeViewTab === 'deliveries' ? 'bg-blue-600 shadow-sm' :
+                  activeViewTab === 'disputes' ? 'bg-red-600' :
+                  activeViewTab === 'kyc' ? 'bg-amber-600' :
+                  activeViewTab === 'tests' ? 'bg-indigo-600' : 'bg-slate-900'
+                }`}>
+                  {activeViewTab === 'deliveries' && 'local_shipping'}
+                  {activeViewTab === 'overview' && 'dashboard'}
+                  {activeViewTab === 'users' && 'group'}
+                  {activeViewTab === 'kyc' && 'verified_user'}
+                  {activeViewTab === 'couriers' && 'two_wheeler'}
+                  {activeViewTab === 'merchants' && 'storefront'}
+                  {activeViewTab === 'disputes' && 'warning'}
+                  {activeViewTab === 'pricing' && 'tune'}
+                  {activeViewTab === 'tests' && 'science'}
+                  {activeViewTab === 'audit' && 'history'}
+                  {activeViewTab === 'security' && 'shield_person'}
                 </span>
-                <span>Gestion Complète Administrateur</span>
+                <span>
+                  {activeViewTab === 'deliveries' && 'Supervision des Courses & Live Dispatch'}
+                  {activeViewTab === 'overview' && 'Tableau de Bord & Synthèse Générale'}
+                  {activeViewTab === 'users' && 'Annuaire Global des Utilisateurs'}
+                  {activeViewTab === 'kyc' && 'Centre d\'Accréditation KYC'}
+                  {activeViewTab === 'couriers' && 'Gestion Complète des Livreurs'}
+                  {activeViewTab === 'merchants' && 'Gestion des Boutiques Vendeurs'}
+                  {activeViewTab === 'disputes' && 'Centre de Résolution des Litiges'}
+                  {activeViewTab === 'pricing' && 'Configuration Tarifs & Commissions'}
+                  {activeViewTab === 'tests' && 'Suite de Tests & Validations'}
+                  {activeViewTab === 'audit' && 'Journal d\'Audit Système'}
+                  {activeViewTab === 'security' && 'Sécurité & Whitelist Super-Admin'}
+                </span>
               </h1>
-            </div>
-
-            {/* Main Tabs Selector */}
-            <div className="flex flex-wrap items-center gap-1.5 p-1 bg-white border border-slate-200 rounded-2xl shadow-xs text-xs font-bold overflow-x-auto">
-              <button
-                onClick={() => setActiveViewTab('overview')}
-                className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
-                  activeViewTab === 'overview' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <span className="material-symbols-outlined text-sm">dashboard</span>
-                <span>Vue d'ensemble</span>
-              </button>
-
-              <button
-                onClick={() => setActiveViewTab('couriers')}
-                className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
-                  activeViewTab === 'couriers' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <span className="material-symbols-outlined text-sm">two_wheeler</span>
-                <span>Livreurs ({couriers.length})</span>
-              </button>
-
-              <button
-                onClick={() => setActiveViewTab('merchants')}
-                className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
-                  activeViewTab === 'merchants' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <span className="material-symbols-outlined text-sm">storefront</span>
-                <span>Vendeurs ({merchants.length})</span>
-              </button>
-
-              <button
-                onClick={() => setActiveViewTab('deliveries')}
-                className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
-                  activeViewTab === 'deliveries' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <span className="material-symbols-outlined text-sm">local_shipping</span>
-                <span>Courses ({deliveries.length})</span>
-              </button>
-
-              <button
-                onClick={() => setActiveViewTab('disputes')}
-                className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
-                  activeViewTab === 'disputes' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <span className="material-symbols-outlined text-sm">warning</span>
-                <span>Litiges ({disputeCount})</span>
-              </button>
-
-              <button
-                onClick={() => setActiveViewTab('pricing')}
-                className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
-                  activeViewTab === 'pricing' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <span className="material-symbols-outlined text-sm">tune</span>
-                <span>Tarifs &amp; Comms</span>
-              </button>
-
-              <button
-                onClick={() => setActiveViewTab('tests')}
-                className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
-                  activeViewTab === 'tests' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <span className="material-symbols-outlined text-sm">science</span>
-                <span>Tests Système</span>
-              </button>
-
-              <button
-                onClick={() => setActiveViewTab('audit')}
-                className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
-                  activeViewTab === 'audit' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <span className="material-symbols-outlined text-sm">history</span>
-                <span>Audit</span>
-              </button>
-
-              <button
-                onClick={() => setActiveViewTab('security')}
-                className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
-                  activeViewTab === 'security'
-                    ? 'bg-gradient-to-r from-amber-600 to-amber-700 text-white shadow-xs ring-1 ring-amber-400'
-                    : 'bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100'
-                }`}
-              >
-                <span>🛡️</span>
-                <span>Whitelist &amp; Sécurité</span>
-              </button>
             </div>
           </div>
 
@@ -495,8 +569,14 @@ export const AdminConsole: React.FC = () => {
             <div className="space-y-6 animate-in fade-in duration-200">
               {/* 5 KPIs Row */}
               <section className="grid grid-cols-2 lg:grid-cols-5 gap-3.5">
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
-                  <span className="text-[10px] uppercase font-bold text-slate-400">Total Livraisons</span>
+                <div
+                  onClick={() => setActiveViewTab('deliveries')}
+                  className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1 hover:border-blue-400 hover:shadow-sm cursor-pointer transition-all active:scale-[0.99]"
+                >
+                  <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center justify-between">
+                    <span>Total Livraisons</span>
+                    <span className="material-symbols-outlined text-xs text-blue-500">arrow_forward</span>
+                  </span>
                   <div className="text-2xl font-black text-slate-900">{deliveries.length}</div>
                   <div className="text-[11px] text-slate-500 flex justify-between pt-1">
                     <span className="text-blue-600 font-bold">{activeDeliveriesCount} actives</span>
@@ -505,8 +585,14 @@ export const AdminConsole: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
-                  <span className="text-[10px] uppercase font-bold text-slate-400">Volume COD Traité</span>
+                <div
+                  onClick={() => setActiveViewTab('pricing')}
+                  className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1 hover:border-blue-400 hover:shadow-sm cursor-pointer transition-all active:scale-[0.99]"
+                >
+                  <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center justify-between">
+                    <span>Volume COD Traité</span>
+                    <span className="material-symbols-outlined text-xs text-blue-500">tune</span>
+                  </span>
                   <div className="text-xl font-black text-slate-900 truncate">
                     {totalVolumeGMV.toLocaleString('fr-FR')} <span className="text-xs font-normal">FCFA</span>
                   </div>
@@ -515,8 +601,14 @@ export const AdminConsole: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
-                  <span className="text-[10px] uppercase font-bold text-slate-400">Marchands Actifs</span>
+                <div
+                  onClick={() => setActiveViewTab('merchants')}
+                  className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1 hover:border-emerald-400 hover:shadow-sm cursor-pointer transition-all active:scale-[0.99]"
+                >
+                  <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center justify-between">
+                    <span>Marchands Actifs</span>
+                    <span className="material-symbols-outlined text-xs text-emerald-500">arrow_forward</span>
+                  </span>
                   <div className="text-2xl font-black text-emerald-700">
                     {merchants.filter(m => m.status === 'actif').length} <span className="text-xs text-slate-400">/ {merchants.length}</span>
                   </div>
@@ -525,8 +617,14 @@ export const AdminConsole: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
-                  <span className="text-[10px] uppercase font-bold text-slate-400">Flotte Coursiers</span>
+                <div
+                  onClick={() => setActiveViewTab('couriers')}
+                  className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1 hover:border-blue-400 hover:shadow-sm cursor-pointer transition-all active:scale-[0.99]"
+                >
+                  <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center justify-between">
+                    <span>Flotte Coursiers</span>
+                    <span className="material-symbols-outlined text-xs text-blue-500">arrow_forward</span>
+                  </span>
                   <div className="text-2xl font-black text-slate-900">
                     {activeCouriersCount} <span className="text-xs text-slate-400">/ {couriers.length}</span>
                   </div>
@@ -535,8 +633,14 @@ export const AdminConsole: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1 col-span-2 sm:col-span-1">
-                  <span className="text-[10px] uppercase font-bold text-slate-400">Taux de Succès POD</span>
+                <div
+                  onClick={() => setActiveViewTab(disputeCount > 0 ? 'disputes' : 'deliveries')}
+                  className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1 col-span-2 sm:col-span-1 hover:border-blue-400 hover:shadow-sm cursor-pointer transition-all active:scale-[0.99]"
+                >
+                  <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center justify-between">
+                    <span>Taux de Succès POD</span>
+                    <span className="material-symbols-outlined text-xs text-blue-500">verified</span>
+                  </span>
                   <div className="text-2xl font-black text-blue-700">
                     {deliveries.length > 0 ? Math.round((deliveredCount / deliveries.length) * 100) : 100}%
                   </div>
@@ -678,6 +782,321 @@ export const AdminConsole: React.FC = () => {
           )}
 
           {/* =========================================================================
+              TAB: GESTION DE TOUS LES UTILISATEURS (Livreurs + Vendeurs Réunis)
+             ========================================================================= */}
+          {activeViewTab === 'users' && (
+            <div className="space-y-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <span className="material-symbols-outlined text-blue-600">group</span>
+                    <span>Annuaire Global des Utilisateurs ({couriers.length + merchants.length})</span>
+                  </h2>
+                  <p className="text-xs text-slate-500">Supervision centralisée des livreurs indépendants et marchands partenaires</p>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl text-xs font-bold">
+                    <button
+                      onClick={() => setUserTypeFilter('all')}
+                      className={`px-2.5 py-1 rounded-lg ${userTypeFilter === 'all' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-600'}`}
+                    >
+                      Tous ({couriers.length + merchants.length})
+                    </button>
+                    <button
+                      onClick={() => setUserTypeFilter('livreur')}
+                      className={`px-2.5 py-1 rounded-lg ${userTypeFilter === 'livreur' ? 'bg-white text-emerald-700 shadow-2xs' : 'text-slate-600'}`}
+                    >
+                      🛵 Livreurs ({couriers.length})
+                    </button>
+                    <button
+                      onClick={() => setUserTypeFilter('vendeur')}
+                      className={`px-2.5 py-1 rounded-lg ${userTypeFilter === 'vendeur' ? 'bg-white text-purple-700 shadow-2xs' : 'text-slate-600'}`}
+                    >
+                      🏪 Vendeurs ({merchants.length})
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={() => setIsAddCourierModalOpen(true)}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1"
+                  >
+                    <span className="material-symbols-outlined text-sm">person_add</span>
+                    <span>+ Livreur</span>
+                  </button>
+                  <button
+                    onClick={() => setIsAddMerchantModalOpen(true)}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1"
+                  >
+                    <span className="material-symbols-outlined text-sm">store</span>
+                    <span>+ Boutique</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Table of all users */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
+                      <th className="py-3 px-3">Utilisateur</th>
+                      <th className="py-3 px-3">Rôle &amp; Type</th>
+                      <th className="py-3 px-3">Contact Téléphone</th>
+                      <th className="py-3 px-3">Zone / Commune</th>
+                      <th className="py-3 px-3">Activité &amp; Solde</th>
+                      <th className="py-3 px-3">Statut</th>
+                      <th className="py-3 px-3 text-right">Actions Superviseur</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {/* Couriers */}
+                    {(userTypeFilter === 'all' || userTypeFilter === 'livreur') &&
+                      filteredCouriers.map(c => (
+                        <tr key={'c_' + c.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-3 px-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center text-xs">
+                                {c.avatarInitials}
+                              </div>
+                              <div>
+                                <div className="font-bold text-slate-900 flex items-center gap-1">
+                                  <span>{c.name}</span>
+                                  {c.badge && (
+                                    <span className="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.2 rounded-full font-bold">
+                                      {c.badge}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] text-slate-400 font-mono">ID: {c.id}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1 w-fit">
+                              <span className="material-symbols-outlined text-xs">two_wheeler</span>
+                              <span>LIVREUR ({c.vehicle})</span>
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 font-semibold text-slate-800">{c.phone}</td>
+                          <td className="py-3 px-3 text-slate-700">{c.zone}</td>
+                          <td className="py-3 px-3">
+                            <div className="font-mono font-bold text-blue-700">
+                              {(c.walletBalanceFCFA || 0).toLocaleString('fr-FR')} FCFA
+                            </div>
+                            <span className="text-[10px] text-slate-400">Solde caution</span>
+                          </td>
+                          <td className="py-3 px-3">
+                            {c.status === 'en_ligne' && <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">🟢 En ligne</span>}
+                            {c.status === 'en_course' && <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">🔵 En course</span>}
+                            {c.status === 'suspendu' && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">🔴 Suspendu</span>}
+                          </td>
+                          <td className="py-3 px-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => setWalletModalCourier(c)}
+                                className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold"
+                              >
+                                Recharger
+                              </button>
+                              <button
+                                onClick={() => toggleCourierStatus(c.id)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
+                                  c.status === 'suspendu' ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-red-50 text-red-600 hover:bg-red-100'
+                                }`}
+                              >
+                                {c.status === 'suspendu' ? 'Activer' : 'Suspendre'}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+
+                    {/* Merchants */}
+                    {(userTypeFilter === 'all' || userTypeFilter === 'vendeur') &&
+                      filteredMerchants.map(m => (
+                        <tr key={'m_' + m.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-3 px-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white font-bold flex items-center justify-center text-xs">
+                                <span className="material-symbols-outlined text-sm">store</span>
+                              </div>
+                              <div>
+                                <div className="font-bold text-slate-900 flex items-center gap-1">
+                                  <span>{m.storeName}</span>
+                                  {m.isVerified && (
+                                    <span className="material-symbols-outlined text-blue-500 text-xs" title="Vérifié">verified</span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] text-slate-400">Gérant: {m.managerName}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200 flex items-center gap-1 w-fit">
+                              <span className="material-symbols-outlined text-xs">storefront</span>
+                              <span>VENDEUR ({m.channel})</span>
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 font-semibold text-slate-800">{m.phone}</td>
+                          <td className="py-3 px-3 text-slate-700">{m.commune}</td>
+                          <td className="py-3 px-3">
+                            <div className="font-mono font-bold text-slate-900">{m.totalOrders} courses</div>
+                            <span className="text-[10px] text-emerald-600 font-bold">{(m.totalVolumeFCFA || 0).toLocaleString('fr-FR')} F</span>
+                          </td>
+                          <td className="py-3 px-3">
+                            {m.status === 'actif' && <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">🟢 Actif</span>}
+                            {m.status === 'suspendu' && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">🔴 Bloqué</span>}
+                          </td>
+                          <td className="py-3 px-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => toggleMerchantVerification(m.id)}
+                                className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold"
+                              >
+                                {m.isVerified ? 'Badge ✓' : '+ Badge'}
+                              </button>
+                              <button
+                                onClick={() => toggleMerchantStatus(m.id)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
+                                  m.status === 'suspendu' ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-red-50 text-red-600 hover:bg-red-100'
+                                }`}
+                              >
+                                {m.status === 'suspendu' ? 'Débloquer' : 'Bloquer'}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* =========================================================================
+              TAB: VÉRIFICATIONS KYC (Centre de validation des pièces d'identité)
+             ========================================================================= */}
+          {activeViewTab === 'kyc' && (
+            <div className="space-y-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <span className="material-symbols-outlined text-amber-600">verified_user</span>
+                    <span>Centre d'Accréditation et Validation KYC ({kycRequests.length})</span>
+                  </h2>
+                  <p className="text-xs text-slate-500">Contrôle des pièces CNI, permis de conduire et certification des livreurs</p>
+                </div>
+
+                <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl text-xs font-bold">
+                  <button
+                    onClick={() => setKycStatusFilter('all')}
+                    className={`px-2.5 py-1 rounded-lg ${kycStatusFilter === 'all' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-600'}`}
+                  >
+                    Toutes ({kycRequests.length})
+                  </button>
+                  <button
+                    onClick={() => setKycStatusFilter('en_attente')}
+                    className={`px-2.5 py-1 rounded-lg ${kycStatusFilter === 'en_attente' ? 'bg-white text-amber-700 shadow-2xs' : 'text-slate-600'}`}
+                  >
+                    🟡 En attente ({kycRequests.filter(k => k.status === 'en_attente').length})
+                  </button>
+                  <button
+                    onClick={() => setKycStatusFilter('valide')}
+                    className={`px-2.5 py-1 rounded-lg ${kycStatusFilter === 'valide' ? 'bg-white text-emerald-700 shadow-2xs' : 'text-slate-600'}`}
+                  >
+                    🟢 Validées ({kycRequests.filter(k => k.status === 'valide').length})
+                  </button>
+                </div>
+              </div>
+
+              {/* KYC Requests Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {kycRequests
+                  .filter(k => kycStatusFilter === 'all' || k.status === kycStatusFilter)
+                  .map(kyc => (
+                    <div
+                      key={kyc.id}
+                      className={`p-5 rounded-2xl border transition-all ${
+                        kyc.status === 'en_attente'
+                          ? 'bg-amber-50/40 border-amber-200 shadow-2xs'
+                          : 'bg-white border-slate-200'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-700 font-bold flex items-center justify-center border border-amber-300/40">
+                            <span className="material-symbols-outlined text-xl">badge</span>
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-sm text-slate-900 flex items-center gap-1.5">
+                              <span>{kyc.fullName}</span>
+                              <span className="text-[10px] font-mono text-slate-400 font-normal">({kyc.idNumber || 'CNI-CI-2024'})</span>
+                            </h3>
+                            <p className="text-xs text-slate-500">📱 {kyc.phone} • 🛵 {kyc.vehicleType || 'Moto 125cc'}</p>
+                          </div>
+                        </div>
+
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                          kyc.status === 'en_attente' ? 'bg-amber-100 text-amber-800' :
+                          kyc.status === 'valide' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                        }`}>
+                          {kyc.status === 'en_attente' ? '🟡 En Attente de Revue' : kyc.status === 'valide' ? '✅ KYC Validé' : '❌ Rejeté'}
+                        </span>
+                      </div>
+
+                      {/* Documents Preview Badges */}
+                      <div className="grid grid-cols-2 gap-2 p-3 bg-white rounded-xl border border-slate-200 text-xs mb-3">
+                        <div className="flex items-center justify-between p-2 rounded-lg bg-slate-50">
+                          <span className="font-semibold text-slate-700">Pièce CNI / Passeport</span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${kyc.documents.cni ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                            {kyc.documents.cni ? '✓ Fourni' : '✗ Manquant'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between p-2 rounded-lg bg-slate-50">
+                          <span className="font-semibold text-slate-700">Permis de Conduire</span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${kyc.documents.permis ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                            {kyc.documents.permis ? '✓ Fourni' : '✗ Manquant'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-2 pt-1">
+                        {kyc.status === 'en_attente' ? (
+                          <>
+                            <button
+                              onClick={() => approveKYC(kyc.id)}
+                              className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 transition-all active:scale-98"
+                            >
+                              <span className="material-symbols-outlined text-sm">verified</span>
+                              <span>Valider &amp; Activer le Livreur</span>
+                            </button>
+                            <button
+                              onClick={() => rejectKYC(kyc.id)}
+                              className="py-2 px-3 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition-all active:scale-98"
+                            >
+                              Refuser
+                            </button>
+                          </>
+                        ) : (
+                          <div className="w-full flex items-center justify-between text-xs text-slate-500 py-1">
+                            <span>Statut d'accréditation enregistré.</span>
+                            <button
+                              onClick={() => approveKYC(kyc.id)}
+                              className="text-blue-600 font-bold hover:underline"
+                            >
+                              Re-valider
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
+          {/* =========================================================================
               TAB 2: GESTION DES LIVREURS (Full Table & Actions)
              ========================================================================= */}
           {activeViewTab === 'couriers' && (
@@ -728,6 +1147,70 @@ export const AdminConsole: React.FC = () => {
                   </button>
                 </div>
               </div>
+
+              {/* Couriers Table Header */}
+              {/* KYC Requests Module */}
+              {kycRequests.length > 0 && (
+                <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200/80 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-amber-600 text-lg">verified_user</span>
+                      <h3 className="font-bold text-xs text-amber-950 uppercase tracking-wider">
+                        Demandes d'Accréditation KYC en Attente ({kycRequests.filter(k => k.status === 'en_attente').length})
+                      </h3>
+                    </div>
+                    <span className="text-[10px] text-amber-700 font-bold bg-amber-100 px-2 py-0.5 rounded-full">
+                      Vérification CNI / Permis
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {kycRequests.map(kyc => (
+                      <div key={kyc.id} className="p-3 bg-white rounded-xl border border-amber-200/60 shadow-2xs flex items-center justify-between gap-3 text-xs">
+                        <div className="space-y-0.5 min-w-0">
+                          <p className="font-bold text-slate-900 flex items-center gap-1.5 truncate">
+                            <span>{kyc.fullName}</span>
+                            <span className="text-[10px] text-slate-400 font-mono">({kyc.idNumber || 'En cours'})</span>
+                          </p>
+                          <p className="text-[11px] text-slate-500">{kyc.phone} • {kyc.vehicleType || 'Moto'}</p>
+                          <div className="flex gap-1 pt-1">
+                            <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold ${kyc.documents.cni ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500'}`}>
+                              CNI {kyc.documents.cni ? '✓' : '✗'}
+                            </span>
+                            <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold ${kyc.documents.permis ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500'}`}>
+                              Permis {kyc.documents.permis ? '✓' : '✗'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-1 shrink-0">
+                          {kyc.status === 'en_attente' ? (
+                            <>
+                              <button
+                                onClick={() => approveKYC(kyc.id)}
+                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold shadow-2xs transition-all active:scale-95 flex items-center justify-center gap-1"
+                              >
+                                <span className="material-symbols-outlined text-xs">check</span>
+                                <span>Valider</span>
+                              </button>
+                              <button
+                                onClick={() => rejectKYC(kyc.id)}
+                                className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-[10px] font-bold transition-all active:scale-95 flex items-center justify-center gap-1"
+                              >
+                                <span>Refuser</span>
+                              </button>
+                            </>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                              Validé ✓
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Couriers Table */}
               <div className="overflow-x-auto">
@@ -977,141 +1460,339 @@ export const AdminConsole: React.FC = () => {
               TAB 4: SUPERVISION DES LIVRAISONS & LIVE DISPATCH
              ========================================================================= */}
           {activeViewTab === 'deliveries' && (
-            <div className="space-y-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-                <div>
-                  <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <span className="material-symbols-outlined text-blue-600">local_shipping</span>
-                    <span>Live Dispatch &amp; Supervision des Livraisons ({filteredDeliveries.length})</span>
-                  </h2>
-                  <p className="text-xs text-slate-500">Assignation en direct, suivi des statuts et forçage de livraison</p>
+            <div className="space-y-6 animate-in fade-in duration-200">
+              {/* Deliveries Mini-KPIs Bar */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                <div
+                  onClick={() => setDeliveryStatusFilter('all')}
+                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+                    deliveryStatusFilter === 'all'
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-800 hover:border-blue-400'
+                  }`}
+                >
+                  <span className={`text-[10px] uppercase font-bold block ${deliveryStatusFilter === 'all' ? 'text-blue-100' : 'text-slate-400'}`}>
+                    Total Courses
+                  </span>
+                  <div className="text-xl font-black">{deliveries.length}</div>
+                  <span className={`text-[10px] ${deliveryStatusFilter === 'all' ? 'text-blue-100' : 'text-slate-500'}`}>
+                    Toutes communes
+                  </span>
                 </div>
 
-                <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl text-xs font-bold">
-                  <button
-                    onClick={() => setDeliveryStatusFilter('all')}
-                    className={`px-2.5 py-1 rounded-lg ${deliveryStatusFilter === 'all' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-600'}`}
-                  >
-                    Toutes
-                  </button>
-                  <button
-                    onClick={() => setDeliveryStatusFilter('en_attente')}
-                    className={`px-2.5 py-1 rounded-lg ${deliveryStatusFilter === 'en_attente' ? 'bg-white text-amber-700 shadow-2xs' : 'text-slate-600'}`}
-                  >
-                    🟡 En attente
-                  </button>
-                  <button
-                    onClick={() => setDeliveryStatusFilter('en_cours')}
-                    className={`px-2.5 py-1 rounded-lg ${deliveryStatusFilter === 'en_cours' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-600'}`}
-                  >
-                    🟢 En transit
-                  </button>
-                  <button
-                    onClick={() => setDeliveryStatusFilter('livree')}
-                    className={`px-2.5 py-1 rounded-lg ${deliveryStatusFilter === 'livree' ? 'bg-white text-emerald-700 shadow-2xs' : 'text-slate-600'}`}
-                  >
-                    ✅ Livrées
-                  </button>
-                  <button
-                    onClick={() => setDeliveryStatusFilter('echec')}
-                    className={`px-2.5 py-1 rounded-lg ${deliveryStatusFilter === 'echec' ? 'bg-white text-red-700 shadow-2xs' : 'text-slate-600'}`}
-                  >
+                <div
+                  onClick={() => setDeliveryStatusFilter('en_attente')}
+                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+                    deliveryStatusFilter === 'en_attente'
+                      ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-800 hover:border-amber-400'
+                  }`}
+                >
+                  <span className={`text-[10px] uppercase font-bold block ${deliveryStatusFilter === 'en_attente' ? 'text-slate-900' : 'text-amber-600'}`}>
+                    🟡 En Attente
+                  </span>
+                  <div className="text-xl font-black">
+                    {deliveries.filter(d => d.status === 'en_attente').length}
+                  </div>
+                  <span className={`text-[10px] ${deliveryStatusFilter === 'en_attente' ? 'text-slate-900' : 'text-slate-500'}`}>
+                    À assigner
+                  </span>
+                </div>
+
+                <div
+                  onClick={() => setDeliveryStatusFilter('en_cours')}
+                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+                    deliveryStatusFilter === 'en_cours'
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-800 hover:border-blue-400'
+                  }`}
+                >
+                  <span className={`text-[10px] uppercase font-bold block ${deliveryStatusFilter === 'en_cours' ? 'text-blue-100' : 'text-blue-600'}`}>
+                    🟢 En Transit
+                  </span>
+                  <div className="text-xl font-black">
+                    {deliveries.filter(d => d.status === 'en_cours' || d.status === 'assignee').length}
+                  </div>
+                  <span className={`text-[10px] ${deliveryStatusFilter === 'en_cours' ? 'text-blue-100' : 'text-slate-500'}`}>
+                    Livreur en route
+                  </span>
+                </div>
+
+                <div
+                  onClick={() => setDeliveryStatusFilter('livree')}
+                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+                    deliveryStatusFilter === 'livree'
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-800 hover:border-emerald-400'
+                  }`}
+                >
+                  <span className={`text-[10px] uppercase font-bold block ${deliveryStatusFilter === 'livree' ? 'text-emerald-100' : 'text-emerald-600'}`}>
+                    ✅ Livrées (POD)
+                  </span>
+                  <div className="text-xl font-black">
+                    {deliveries.filter(d => d.status === 'livree').length}
+                  </div>
+                  <span className={`text-[10px] ${deliveryStatusFilter === 'livree' ? 'text-emerald-100' : 'text-slate-500'}`}>
+                    Fonds sécurisés
+                  </span>
+                </div>
+
+                <div
+                  onClick={() => setDeliveryStatusFilter('echec')}
+                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+                    deliveryStatusFilter === 'echec'
+                      ? 'bg-red-600 text-white border-red-600 shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-800 hover:border-red-400'
+                  }`}
+                >
+                  <span className={`text-[10px] uppercase font-bold block ${deliveryStatusFilter === 'echec' ? 'text-red-100' : 'text-red-600'}`}>
                     🔴 Litiges
-                  </button>
+                  </span>
+                  <div className="text-xl font-black">
+                    {deliveries.filter(d => d.status === 'echec').length}
+                  </div>
+                  <span className={`text-[10px] ${deliveryStatusFilter === 'echec' ? 'text-red-100' : 'text-slate-500'}`}>
+                    Arbitrage requis
+                  </span>
                 </div>
               </div>
 
-              {/* Table */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
-                      <th className="py-3 px-3">ID Course</th>
-                      <th className="py-3 px-3">Expéditeur</th>
-                      <th className="py-3 px-3">Destinataire</th>
-                      <th className="py-3 px-3">Livreur</th>
-                      <th className="py-3 px-3">Montant COD / Frais</th>
-                      <th className="py-3 px-3">Statut</th>
-                      <th className="py-3 px-3 text-right">Actions Superviseur</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredDeliveries.map(order => (
-                      <tr key={order.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="py-3 px-3 font-mono font-bold text-blue-700">
-                          {order.id}
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="font-bold text-slate-900">{order.pickupLocation.name}</div>
-                          <span className="text-[10px] text-slate-400">{order.pickupLocation.commune}</span>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="font-semibold text-slate-800">{order.clientName}</div>
-                          <span className="text-[10px] text-slate-500">{order.dropoffLocation.commune}</span>
-                        </td>
-                        <td className="py-3 px-3">
-                          {order.courier ? (
-                            <div>
-                              <div className="font-bold text-slate-900">{order.courier.name}</div>
-                              <span className="text-[10px] text-slate-500">{order.courier.vehicle}</span>
-                            </div>
-                          ) : (
-                            <span className="text-amber-600 font-bold">Non assigné</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="font-bold text-slate-900">COD: {order.itemValueCOD.toLocaleString('fr-FR')} F</div>
-                          <span className="text-[10px] text-blue-600 font-bold">Frais: {order.deliveryFee.toLocaleString('fr-FR')} F</span>
-                        </td>
-                        <td className="py-3 px-3">
-                          {order.status === 'en_cours' && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">
-                              🟢 En transit
-                            </span>
-                          )}
-                          {order.status === 'assignee' && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-bold">
-                              🟣 Assignée
-                            </span>
-                          )}
-                          {order.status === 'en_attente' && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
-                              🟡 En attente
-                            </span>
-                          )}
-                          {order.status === 'echec' && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">
-                              🔴 Litige
-                            </span>
-                          )}
-                          {order.status === 'livree' && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                              ✅ Livrée (POD)
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3 px-3 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              onClick={() => setAssigningOrder(order)}
-                              className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-xs"
-                            >
-                              Assigner
-                            </button>
-                            {order.status === 'echec' && (
-                              <button
-                                onClick={() => setSelectedDisputeOrder(order.id)}
-                                className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold shadow-xs"
-                              >
-                                Résoudre Litige
-                              </button>
-                            )}
-                          </div>
-                        </td>
+              {/* Main Deliveries Card */}
+              <div className="space-y-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-blue-600">local_shipping</span>
+                      <span>Live Dispatch &amp; Supervision des Livraisons ({filteredDeliveries.length})</span>
+                    </h2>
+                    <p className="text-xs text-slate-500">Contrôle en direct des courses, assignation aux coursiers et validation POD</p>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={() => setIsAddDeliveryModalOpen(true)}
+                      className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1.5 transition-all active:scale-95"
+                    >
+                      <span className="material-symbols-outlined text-sm">add_circle</span>
+                      <span>+ Nouvelle Course Directe</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDeliveryStatusFilter('all');
+                        setAdminSearch('');
+                        showToast('Liste des courses actualisée', 'info');
+                      }}
+                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center gap-1"
+                      title="Réinitialiser les filtres"
+                    >
+                      <span className="material-symbols-outlined text-sm">refresh</span>
+                      <span>Actualiser</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Filter Chips Bar */}
+                <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl text-xs font-bold overflow-x-auto">
+                  <button
+                    onClick={() => setDeliveryStatusFilter('all')}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${deliveryStatusFilter === 'all' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-600'}`}
+                  >
+                    Toutes ({deliveries.length})
+                  </button>
+                  <button
+                    onClick={() => setDeliveryStatusFilter('en_attente')}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${deliveryStatusFilter === 'en_attente' ? 'bg-white text-amber-700 shadow-2xs' : 'text-slate-600'}`}
+                  >
+                    🟡 En attente ({deliveries.filter(d => d.status === 'en_attente').length})
+                  </button>
+                  <button
+                    onClick={() => setDeliveryStatusFilter('en_cours')}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${deliveryStatusFilter === 'en_cours' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-600'}`}
+                  >
+                    🟢 En transit ({deliveries.filter(d => d.status === 'en_cours' || d.status === 'assignee').length})
+                  </button>
+                  <button
+                    onClick={() => setDeliveryStatusFilter('livree')}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${deliveryStatusFilter === 'livree' ? 'bg-white text-emerald-700 shadow-2xs' : 'text-slate-600'}`}
+                  >
+                    ✅ Livrées ({deliveries.filter(d => d.status === 'livree').length})
+                  </button>
+                  <button
+                    onClick={() => setDeliveryStatusFilter('echec')}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${deliveryStatusFilter === 'echec' ? 'bg-white text-red-700 shadow-2xs' : 'text-slate-600'}`}
+                  >
+                    🔴 Litiges ({deliveries.filter(d => d.status === 'echec').length})
+                  </button>
+                </div>
+
+                {/* Table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
+                        <th className="py-3 px-3">ID &amp; Détails</th>
+                        <th className="py-3 px-3">Expéditeur (Boutique)</th>
+                        <th className="py-3 px-3">Destinataire (Client)</th>
+                        <th className="py-3 px-3">Coursier Assigné</th>
+                        <th className="py-3 px-3">Montant COD / Frais</th>
+                        <th className="py-3 px-3">Statut Course</th>
+                        <th className="py-3 px-3 text-right">Actions Superviseur</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredDeliveries.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="text-center py-10 text-slate-400">
+                            Aucune course trouvée avec les filtres actuels.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredDeliveries.map(order => (
+                          <tr key={order.id} className="hover:bg-slate-50 transition-colors">
+                            <td className="py-3 px-3">
+                              <button
+                                onClick={() => setInspectingDelivery(order)}
+                                className="font-mono font-bold text-blue-700 hover:underline flex items-center gap-1"
+                              >
+                                <span>{order.id}</span>
+                                <span className="material-symbols-outlined text-xs">visibility</span>
+                              </button>
+                              <span className="text-[10px] text-slate-400">Créée le {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            </td>
+
+                            <td className="py-3 px-3">
+                              <div className="font-bold text-slate-900">{order.pickupLocation.name}</div>
+                              <span className="text-[10px] text-slate-500">{order.pickupLocation.commune}</span>
+                            </td>
+
+                            <td className="py-3 px-3">
+                              <div className="font-semibold text-slate-800 flex items-center gap-1">
+                                <span>{order.clientName}</span>
+                                <button
+                                  onClick={() => openWhatsAppModal(order.clientPhone, order.clientName, `Bonjour ${order.clientName}, suivi de votre livraison LivraLink ${order.id}.`)}
+                                  className="text-emerald-600 hover:text-emerald-700"
+                                  title="Ouvrir WhatsApp client"
+                                >
+                                  <span className="material-symbols-outlined text-xs">chat</span>
+                                </button>
+                              </div>
+                              <span className="text-[10px] text-slate-500">{order.dropoffLocation.commune} • {order.clientPhone}</span>
+                            </td>
+
+                            <td className="py-3 px-3">
+                              {order.courier ? (
+                                <div className="flex items-center gap-2">
+                                  <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-700 font-bold flex items-center justify-center text-[10px]">
+                                    {order.courier.avatarInitials || '🛵'}
+                                  </div>
+                                  <div>
+                                    <div className="font-bold text-slate-900">{order.courier.name}</div>
+                                    <span className="text-[10px] text-slate-500">{order.courier.vehicle}</span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => setAssigningOrder(order)}
+                                  className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 transition-colors"
+                                >
+                                  ⚠️ Non assigné (Cliquer)
+                                </button>
+                              )}
+                            </td>
+
+                            <td className="py-3 px-3">
+                              <div className="font-bold text-slate-900">COD: {order.itemValueCOD.toLocaleString('fr-FR')} F</div>
+                              <span className="text-[10px] text-blue-600 font-bold">Frais: {order.deliveryFee.toLocaleString('fr-FR')} F</span>
+                            </td>
+
+                            <td className="py-3 px-3">
+                              {order.status === 'en_cours' && (
+                                <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold inline-flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse"></span>
+                                  <span>En transit</span>
+                                </span>
+                              )}
+                              {order.status === 'assignee' && (
+                                <span className="px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-bold">
+                                  🟣 Assignée
+                                </span>
+                              )}
+                              {order.status === 'en_attente' && (
+                                <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
+                                  🟡 En attente
+                                </span>
+                              )}
+                              {order.status === 'echec' && (
+                                <span className="px-2.5 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">
+                                  🔴 Litige
+                                </span>
+                              )}
+                              {order.status === 'livree' && (
+                                <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                                  ✅ Livrée (POD)
+                                </span>
+                              )}
+                            </td>
+
+                            <td className="py-3 px-3 text-right">
+                              <div className="flex items-center justify-end gap-1 flex-wrap">
+                                <button
+                                  onClick={() => setAssigningOrder(order)}
+                                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-2xs"
+                                  title="Assigner un livreur"
+                                >
+                                  Assigner
+                                </button>
+                                
+                                {order.status !== 'livree' && (
+                                  <button
+                                    onClick={() => {
+                                      updateDeliveryStatus(order.id, 'livree', 'Forçage administrateur POD');
+                                      showToast(`Course ${order.id} marquée livrée avec succès !`, 'success');
+                                    }}
+                                    className="px-2 py-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-xs font-bold"
+                                    title="Forcer la validation de la livraison"
+                                  >
+                                    ✓ Livré
+                                  </button>
+                                )}
+
+                                {order.status === 'echec' ? (
+                                  <button
+                                    onClick={() => setSelectedDisputeOrder(order.id)}
+                                    className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold shadow-2xs"
+                                    title="Résoudre l'incident"
+                                  >
+                                    Arbitrer
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => {
+                                      updateDeliveryStatus(order.id, 'echec', 'Incident signalé par le superviseur');
+                                      showToast(`Course ${order.id} placée en litige`, 'info');
+                                    }}
+                                    className="px-2 py-1 bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 rounded-lg text-xs font-semibold"
+                                    title="Signaler incident"
+                                  >
+                                    Incident
+                                  </button>
+                                )}
+
+                                <button
+                                  onClick={() => setInspectingDelivery(order)}
+                                  className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg"
+                                  title="Voir fiche complète"
+                                >
+                                  <span className="material-symbols-outlined text-sm">open_in_new</span>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
@@ -1670,7 +2351,7 @@ export const AdminConsole: React.FC = () => {
                   required
                   value={newCourierPhone}
                   onChange={(e) => setNewCourierPhone(e.target.value)}
-                  placeholder="ex: +225 07 48 00 11 22"
+                  placeholder="ex: +229 97 48 00 11"
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
                 />
               </div>
@@ -1692,7 +2373,7 @@ export const AdminConsole: React.FC = () => {
                     type="text"
                     value={newCourierPlate}
                     onChange={(e) => setNewCourierPlate(e.target.value)}
-                    placeholder="CI-8492-AB"
+                    placeholder="BJ-8492-RB"
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
                   />
                 </div>
@@ -1704,7 +2385,7 @@ export const AdminConsole: React.FC = () => {
                   type="text"
                   value={newCourierZone}
                   onChange={(e) => setNewCourierZone(e.target.value)}
-                  placeholder="Cocody / Plateau / Marcory"
+                  placeholder="Cotonou / Calavi / Akpakpa"
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
                 />
               </div>
@@ -1754,7 +2435,7 @@ export const AdminConsole: React.FC = () => {
                   required
                   value={newMerchantStore}
                   onChange={(e) => setNewMerchantStore(e.target.value)}
-                  placeholder="ex: Abidjan Mode VIP"
+                  placeholder="ex: Cotonou Chic VIP"
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-600 outline-none"
                 />
               </div>
@@ -1777,7 +2458,7 @@ export const AdminConsole: React.FC = () => {
                   required
                   value={newMerchantPhone}
                   onChange={(e) => setNewMerchantPhone(e.target.value)}
-                  placeholder="ex: +225 05 88 99 00 11"
+                  placeholder="ex: +229 95 88 99 00"
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-600 outline-none"
                 />
               </div>
@@ -1790,11 +2471,12 @@ export const AdminConsole: React.FC = () => {
                     onChange={(e) => setNewMerchantCommune(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-600 outline-none bg-white"
                   >
-                    <option value="Cocody">Cocody</option>
-                    <option value="Plateau">Plateau</option>
-                    <option value="Marcory">Marcory</option>
-                    <option value="Yopougon">Yopougon</option>
-                    <option value="Treichville">Treichville</option>
+                    <option value="Cotonou - Haie Vive">Cotonou - Haie Vive</option>
+                    <option value="Cotonou - Cadjehoun">Cotonou - Cadjehoun</option>
+                    <option value="Cotonou - Akpakpa">Cotonou - Akpakpa</option>
+                    <option value="Cotonou - Fidjrossè">Cotonou - Fidjrossè</option>
+                    <option value="Abomey-Calavi">Abomey-Calavi</option>
+                    <option value="Porto-Novo">Porto-Novo</option>
                   </select>
                 </div>
                 <div>
@@ -1955,6 +2637,235 @@ export const AdminConsole: React.FC = () => {
           orderId={selectedDisputeOrder}
           onClose={() => setSelectedDisputeOrder(null)}
         />
+      )}
+
+      {/* 6. Modal Créer Nouvelle Course Directe (Superviseur) */}
+      {isAddDeliveryModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                <span className="material-symbols-outlined text-blue-600 text-base">add_location_alt</span>
+                <span>Créer &amp; Injecter une Course dans le Réseau</span>
+              </h3>
+              <button
+                onClick={() => setIsAddDeliveryModalOpen(false)}
+                className="w-8 h-8 rounded-full hover:bg-slate-200 flex items-center justify-center text-slate-400"
+              >
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateDeliverySubmit} className="p-6 space-y-4 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Nom du Destinataire *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newOrderClientName}
+                    onChange={(e) => setNewOrderClientName(e.target.value)}
+                    placeholder="ex: Patrick Bédi"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Téléphone Destinataire *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newOrderClientPhone}
+                    onChange={(e) => setNewOrderClientPhone(e.target.value)}
+                    placeholder="ex: +229 97 11 22 33"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Boutique Expéditrice</label>
+                  <input
+                    type="text"
+                    value={newOrderStoreName}
+                    onChange={(e) => setNewOrderStoreName(e.target.value)}
+                    placeholder="Boutique VIP Chic"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Commune Expédition (Départ)</label>
+                  <select
+                    value={newOrderPickupCommune}
+                    onChange={(e) => setNewOrderPickupCommune(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none bg-white"
+                  >
+                    <option value="Cotonou - Haie Vive">Cotonou - Haie Vive</option>
+                    <option value="Cotonou - Cadjehoun">Cotonou - Cadjehoun</option>
+                    <option value="Cotonou - Akpakpa">Cotonou - Akpakpa</option>
+                    <option value="Cotonou - Fidjrossè">Cotonou - Fidjrossè</option>
+                    <option value="Abomey-Calavi">Abomey-Calavi</option>
+                    <option value="Porto-Novo">Porto-Novo</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Commune Livraison (Arrivée)</label>
+                  <select
+                    value={newOrderDropoffCommune}
+                    onChange={(e) => setNewOrderDropoffCommune(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none bg-white"
+                  >
+                    <option value="Cotonou - Cadjehoun">Cotonou - Cadjehoun</option>
+                    <option value="Cotonou - Haie Vive">Cotonou - Haie Vive</option>
+                    <option value="Cotonou - Akpakpa">Cotonou - Akpakpa</option>
+                    <option value="Cotonou - Fidjrossè">Cotonou - Fidjrossè</option>
+                    <option value="Abomey-Calavi">Abomey-Calavi</option>
+                    <option value="Porto-Novo">Porto-Novo</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Adresse Détaillée</label>
+                  <input
+                    type="text"
+                    value={newOrderDropoffAddress}
+                    onChange={(e) => setNewOrderDropoffAddress(e.target.value)}
+                    placeholder="Boulevard VGE, Immeuble Horizon"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Valeur Marchandise COD (FCFA)</label>
+                  <input
+                    type="number"
+                    step="500"
+                    value={newOrderCOD}
+                    onChange={(e) => setNewOrderCOD(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Frais de Livraison (FCFA)</label>
+                  <input
+                    type="number"
+                    step="500"
+                    value={newOrderFee}
+                    onChange={(e) => setNewOrderFee(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none font-mono font-bold text-blue-700"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddDeliveryModalOpen(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-700 hover:bg-slate-50"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-xs"
+                >
+                  Valider &amp; Injecter Course
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 7. Modal Inspection Fiche Course */}
+      {inspectingDelivery && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800 space-y-4">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 bg-blue-600 text-white rounded-lg material-symbols-outlined text-sm">
+                  local_shipping
+                </span>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 font-mono">Fiche Course {inspectingDelivery.id}</h3>
+                  <p className="text-[10px] text-slate-400">Traçabilité complète Superviseur</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setInspectingDelivery(null)}
+                className="w-8 h-8 rounded-full hover:bg-slate-200 flex items-center justify-center text-slate-400"
+              >
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
+
+            <div className="px-6 pb-6 space-y-4 text-xs">
+              <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Expéditeur</span>
+                  <p className="font-bold text-slate-900">{inspectingDelivery.pickupLocation.name}</p>
+                  <p className="text-slate-500 text-[11px]">{inspectingDelivery.pickupLocation.commune}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Destinataire</span>
+                  <p className="font-bold text-slate-900">{inspectingDelivery.clientName}</p>
+                  <p className="text-slate-500 text-[11px]">{inspectingDelivery.dropoffLocation.commune} • {inspectingDelivery.clientPhone}</p>
+                </div>
+              </div>
+
+              <div className="p-3 bg-blue-50 rounded-2xl border border-blue-100 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-blue-900 block">Livreur Assigné</span>
+                  <p className="font-bold text-slate-900 text-xs">
+                    {inspectingDelivery.courier ? `${inspectingDelivery.courier.name} (${inspectingDelivery.courier.vehicle})` : '⚠️ Aucun coursier pour le moment'}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] uppercase font-bold text-blue-900 block">Montants</span>
+                  <p className="font-bold text-slate-900">COD: {inspectingDelivery.itemValueCOD.toLocaleString('fr-FR')} F</p>
+                  <p className="text-blue-700 font-bold text-[11px]">Frais: {inspectingDelivery.deliveryFee.toLocaleString('fr-FR')} F</p>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Statut Actuel</span>
+                <div className="flex items-center justify-between p-2.5 rounded-xl border border-slate-200">
+                  <span className="font-bold text-slate-800 capitalize">{inspectingDelivery.status.replace('_', ' ')}</span>
+                  <span className="text-[10px] text-slate-500 font-mono">Date: {new Date(inspectingDelivery.createdAt).toLocaleDateString('fr-FR')}</span>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    openWhatsAppModal(
+                      inspectingDelivery.clientPhone,
+                      inspectingDelivery.clientName,
+                      `Bonjour ${inspectingDelivery.clientName}, point de situation de votre course LivraLink ${inspectingDelivery.id}.`
+                    );
+                    setInspectingDelivery(null);
+                  }}
+                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center justify-center gap-1.5 shadow-2xs"
+                >
+                  <span className="material-symbols-outlined text-sm">chat</span>
+                  <span>WhatsApp Client</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInspectingDelivery(null)}
+                  className="px-4 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-700 hover:bg-slate-50"
+                >
+                  Fermer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Mobile Bottom Navigation */}

@@ -36,6 +36,7 @@ export const LoginVendeurPage: React.FC = () => {
         setCurrentRole('vendeur');
         setCurrentView('vendeur_dashboard');
         if (profile) {
+          setUserProfile(profile);
           setMerchantSettings((prev) => ({
             ...prev,
             managerName: profile.fullName || prev.managerName,
@@ -53,12 +54,6 @@ export const LoginVendeurPage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleWhatsAppOTP = () => {
-    setCurrentRole('vendeur');
-    setCurrentView('vendeur_dashboard');
-    showToast('Connexion rapide WhatsApp OTP réussie !', 'success');
   };
 
   const handleGoogleLogin = async () => {
@@ -186,12 +181,12 @@ export const LoginVendeurPage: React.FC = () => {
                 </div>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                  En cours vers Cocody
+                  En cours vers Cotonou Fidjrossè
                 </span>
               </div>
               <div className="space-y-1.5 text-xs">
                 <div className="flex justify-between text-slate-600">
-                  <span>Ramassage : Plateau (14h15)</span>
+                  <span>Ramassage : Haie Vive, Cotonou (14h15)</span>
                   <span className="font-bold text-blue-700">ETA 18 min</span>
                 </div>
                 <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden flex">
@@ -272,7 +267,7 @@ export const LoginVendeurPage: React.FC = () => {
               <div className="relative py-0.5 flex items-center justify-center">
                 <div className="border-t border-slate-200 w-full"></div>
                 <span className="bg-white px-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest absolute">
-                  OU AVEC EMAIL / WHATSAPP
+                  OU AVEC VOTRE ADRESSE E-MAIL
                 </span>
               </div>
 
@@ -411,15 +406,6 @@ export const LoginVendeurPage: React.FC = () => {
                       <span className="material-symbols-outlined text-base">arrow_forward</span>
                     </>
                   )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleWhatsAppOTP}
-                  className="w-full py-2.5 px-4 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
-                >
-                  <span className="material-symbols-outlined text-base text-emerald-600">chat</span>
-                  <span>Connexion rapide avec WhatsApp OTP</span>
                 </button>
               </form>
 

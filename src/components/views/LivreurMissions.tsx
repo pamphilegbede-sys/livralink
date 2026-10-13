@@ -14,6 +14,8 @@ export const LivreurMissions: React.FC = () => {
     setSelectedDelivery,
     openWhatsAppModal,
     updateDeliveryStatus,
+    acceptDelivery,
+    refuseDelivery,
     showToast,
   } = useApp();
 
@@ -22,7 +24,7 @@ export const LivreurMissions: React.FC = () => {
 
   const filteredOrders = deliveries.filter((d) => {
     if (activeTab === 'en_cours' && !(d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere')) return false;
-    if (activeTab === 'en_attente' && !(d.status === 'en_attente' || d.status === 'assignee')) return false;
+    if (activeTab === 'en_attente' && !(d.status === 'en_attente' || !d.courier)) return false;
     if (activeTab === 'livree' && d.status !== 'livree') return false;
 
     if (searchTerm.trim()) {
@@ -126,7 +128,7 @@ export const LivreurMissions: React.FC = () => {
                   activeTab === 'en_attente' ? 'bg-blue-600 text-white font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Disponibles ({deliveries.filter((d) => d.status === 'en_attente' || d.status === 'assignee').length})
+                Disponibles ({deliveries.filter((d) => d.status === 'en_attente' || !d.courier).length})
               </button>
               <button
                 type="button"
@@ -187,7 +189,7 @@ export const LivreurMissions: React.FC = () => {
                          order.status === 'echec' ? 'Échec' : 'En attente coursier'}
                       </span>
                       <span className="text-xs text-slate-500 font-medium">
-                        Créée à {new Date(order.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                        Créée à {order.createdAt?.length <= 8 ? order.createdAt : isNaN(new Date(order.createdAt).getTime()) ? order.createdAt : new Date(order.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
 
@@ -227,6 +229,28 @@ export const LivreurMissions: React.FC = () => {
                       <span className="material-symbols-outlined text-base">chat</span>
                       <span className="hidden sm:inline">WhatsApp</span>
                     </button>
+
+                    {(order.status === 'en_attente' || order.status === 'assignee' || !order.courier) && (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => refuseDelivery(order.id)}
+                          className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all active:scale-95"
+                        >
+                          Refuser
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            acceptDelivery(order.id);
+                          }}
+                          className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 transition-all flex items-center gap-1"
+                        >
+                          <span className="material-symbols-outlined text-sm">check_circle</span>
+                          <span>Accepter</span>
+                        </button>
+                      </div>
+                    )}
 
                     {order.status === 'acceptee' && (
                       <button

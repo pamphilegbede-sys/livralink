@@ -2,7 +2,23 @@ import React from 'react';
 import { useApp } from '../../context/AppContext';
 
 export const Sidebar: React.FC = () => {
-  const { currentView, setCurrentView, currentRole, setCurrentRole, merchantSettings, courierSettings, showToast, logout, openTestModal } = useApp();
+  const {
+    currentView,
+    setCurrentView,
+    currentRole,
+    setCurrentRole,
+    merchantSettings,
+    courierSettings,
+    showToast,
+    logout,
+    openTestModal,
+    adminActiveTab,
+    setAdminActiveTab,
+    deliveries,
+    couriers,
+    merchants,
+    kycRequests
+  } = useApp();
 
   const handleLogout = async () => {
     await logout();
@@ -57,7 +73,7 @@ export const Sidebar: React.FC = () => {
                 {courierSettings.isAvailable ? 'Disponible 🟢' : 'En pause ⏸️'}
               </span>
             </div>
-            <span className="text-[10px] font-bold text-blue-700">Abidjan Nord</span>
+            <span className="text-[10px] font-bold text-blue-700">Cotonou Littoral</span>
           </div>
         )}
 
@@ -215,44 +231,246 @@ export const Sidebar: React.FC = () => {
           {currentRole === 'admin' && (
             <>
               <button
-                onClick={() => setCurrentView('admin_console')}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 shadow-xs"
+                type="button"
+                onClick={() => {
+                  setCurrentRole('admin');
+                  setCurrentView('admin_console');
+                  setAdminActiveTab('overview');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs transition-all ${
+                  currentView === 'admin_console' && adminActiveTab === 'overview'
+                    ? 'bg-blue-600 text-white font-bold shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
+                }`}
               >
                 <span className="material-symbols-outlined text-xl">dashboard</span>
                 <span>Tableau de bord</span>
               </button>
 
               <button
-                onClick={() => setCurrentView('admin_console')}
-                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                type="button"
+                onClick={() => {
+                  setCurrentRole('admin');
+                  setCurrentView('admin_console');
+                  setAdminActiveTab('deliveries');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs transition-all ${
+                  currentView === 'admin_console' && adminActiveTab === 'deliveries'
+                    ? 'bg-blue-600 text-white font-bold shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
+                }`}
               >
                 <div className="flex items-center gap-3">
                   <span className="material-symbols-outlined text-xl">local_shipping</span>
                   <span>Supervision Courses</span>
                 </div>
-                <span className="px-1.5 py-0.2 rounded-full bg-blue-600 text-white text-[10px] font-bold">28</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                  currentView === 'admin_console' && adminActiveTab === 'deliveries'
+                    ? 'bg-white text-blue-700'
+                    : 'bg-blue-600 text-white'
+                }`}>
+                  {deliveries.length}
+                </span>
               </button>
 
               <button
-                onClick={() => setCurrentView('admin_console')}
-                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                type="button"
+                onClick={() => {
+                  setCurrentRole('admin');
+                  setCurrentView('admin_console');
+                  setAdminActiveTab('users');
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs transition-all ${
+                  currentView === 'admin_console' && adminActiveTab === 'users'
+                    ? 'bg-blue-600 text-white font-bold shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
+                }`}
               >
                 <div className="flex items-center gap-3">
-                  <span className="material-symbols-outlined text-xl">groups</span>
-                  <span>Utilisateurs</span>
+                  <span className="material-symbols-outlined text-xl">group</span>
+                  <span>Utilisateurs ({couriers.length + merchants.length})</span>
                 </div>
-                <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-100 text-amber-800">4 KYC</span>
+                <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                  currentView === 'admin_console' && adminActiveTab === 'users'
+                    ? 'bg-white text-blue-700'
+                    : 'bg-slate-100 text-slate-700'
+                }`}>
+                  Tous
+                </span>
               </button>
 
               <button
-                onClick={() => setCurrentView('admin_console')}
-                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                type="button"
+                onClick={() => {
+                  setCurrentRole('admin');
+                  setCurrentView('admin_console');
+                  setAdminActiveTab('kyc');
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs transition-all ${
+                  currentView === 'admin_console' && adminActiveTab === 'kyc'
+                    ? 'bg-amber-600 text-white font-bold shadow-xs'
+                    : 'text-amber-800 hover:bg-amber-50 hover:text-amber-950 font-medium'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="material-symbols-outlined text-xl">verified_user</span>
+                  <span>Vérifications KYC</span>
+                </div>
+                <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                  currentView === 'admin_console' && adminActiveTab === 'kyc'
+                    ? 'bg-white text-amber-800'
+                    : 'bg-amber-100 text-amber-800'
+                }`}>
+                  {kycRequests.filter(k => k.status === 'en_attente').length} En attente
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentRole('admin');
+                  setCurrentView('admin_console');
+                  setAdminActiveTab('couriers');
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs transition-all ${
+                  currentView === 'admin_console' && adminActiveTab === 'couriers'
+                    ? 'bg-blue-600 text-white font-bold shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="material-symbols-outlined text-xl">two_wheeler</span>
+                  <span>Flotte Livreurs</span>
+                </div>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                  currentView === 'admin_console' && adminActiveTab === 'couriers'
+                    ? 'bg-white text-blue-700'
+                    : 'bg-emerald-100 text-emerald-800'
+                }`}>
+                  {couriers.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentRole('admin');
+                  setCurrentView('admin_console');
+                  setAdminActiveTab('merchants');
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs transition-all ${
+                  currentView === 'admin_console' && adminActiveTab === 'merchants'
+                    ? 'bg-blue-600 text-white font-bold shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="material-symbols-outlined text-xl">storefront</span>
+                  <span>Boutiques Vendeurs</span>
+                </div>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                  currentView === 'admin_console' && adminActiveTab === 'merchants'
+                    ? 'bg-white text-blue-700'
+                    : 'bg-emerald-100 text-emerald-800'
+                }`}>
+                  {merchants.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentRole('admin');
+                  setCurrentView('admin_console');
+                  setAdminActiveTab('disputes');
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs transition-all ${
+                  currentView === 'admin_console' && adminActiveTab === 'disputes'
+                    ? 'bg-red-600 text-white font-bold shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
+                }`}
               >
                 <div className="flex items-center gap-3">
                   <span className="material-symbols-outlined text-xl text-red-500">warning</span>
                   <span>Litiges &amp; Support</span>
                 </div>
-                <span className="px-1.5 py-0.2 rounded-full bg-red-100 text-red-700 text-[10px] font-bold">2</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                  currentView === 'admin_console' && adminActiveTab === 'disputes'
+                    ? 'bg-white text-red-700'
+                    : 'bg-red-100 text-red-700'
+                }`}>
+                  {deliveries.filter(d => d.status === 'echec').length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentRole('admin');
+                  setCurrentView('admin_console');
+                  setAdminActiveTab('pricing');
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs transition-all ${
+                  currentView === 'admin_console' && adminActiveTab === 'pricing'
+                    ? 'bg-blue-600 text-white font-bold shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
+                }`}
+              >
+                <span className="material-symbols-outlined text-xl">tune</span>
+                <span>Tarifs &amp; Commissions</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentRole('admin');
+                  setCurrentView('admin_console');
+                  setAdminActiveTab('tests');
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs transition-all ${
+                  currentView === 'admin_console' && adminActiveTab === 'tests'
+                    ? 'bg-indigo-600 text-white font-bold shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
+                }`}
+              >
+                <span className="material-symbols-outlined text-xl text-indigo-600">science</span>
+                <span>Tests &amp; Validations</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentRole('admin');
+                  setCurrentView('admin_console');
+                  setAdminActiveTab('audit');
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs transition-all ${
+                  currentView === 'admin_console' && adminActiveTab === 'audit'
+                    ? 'bg-slate-800 text-white font-bold shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
+                }`}
+              >
+                <span className="material-symbols-outlined text-xl">history</span>
+                <span>Journal d'Audit</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentRole('admin');
+                  setCurrentView('admin_console');
+                  setAdminActiveTab('security');
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs transition-all ${
+                  currentView === 'admin_console' && adminActiveTab === 'security'
+                    ? 'bg-amber-600 text-white font-bold shadow-xs'
+                    : 'text-amber-800 hover:bg-amber-50 hover:text-amber-950 font-medium'
+                }`}
+              >
+                <span className="material-symbols-outlined text-xl text-amber-600">shield_person</span>
+                <span>Whitelist &amp; Sécurité</span>
               </button>
             </>
           )}
@@ -287,23 +505,43 @@ export const Sidebar: React.FC = () => {
         </button>
 
         {/* Profile Card */}
-        <div className="mt-2 pt-3 border-t border-slate-200 flex items-center gap-3 px-2">
-          <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs border border-blue-200 shrink-0">
-            {currentRole === 'vendeur' ? 'GC' : currentRole === 'livreur' ? 'DK' : 'AD'}
-          </div>
-          <div className="overflow-hidden min-w-0">
-            <p className="text-xs font-bold text-slate-900 truncate">
-              {currentRole === 'vendeur'
-                ? merchantSettings.storeName
-                : currentRole === 'livreur'
-                ? courierSettings.fullName
-                : 'Super Admin CI'}
-            </p>
-            <p className="text-[10px] font-bold text-emerald-600 truncate">
-              {currentRole === 'vendeur' ? 'Vendeur Certifié' : currentRole === 'livreur' ? 'Livreur ★ 4.9' : 'Superviseur National'}
-            </p>
-          </div>
-        </div>
+        {(() => {
+          const courierInitials = (courierSettings.fullName || 'Awa Véloce')
+            .split(' ')
+            .map((n) => n[0])
+            .filter(Boolean)
+            .join('')
+            .toUpperCase()
+            .slice(0, 2) || 'AV';
+
+          const vendorInitials = (merchantSettings.storeName || 'Boutique')
+            .split(' ')
+            .map((n) => n[0])
+            .filter(Boolean)
+            .join('')
+            .toUpperCase()
+            .slice(0, 2) || 'BT';
+
+          return (
+            <div className="mt-2 pt-3 border-t border-slate-200 flex items-center gap-3 px-2">
+              <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs border border-blue-200 shrink-0">
+                {currentRole === 'vendeur' ? vendorInitials : currentRole === 'livreur' ? courierInitials : 'AD'}
+              </div>
+              <div className="overflow-hidden min-w-0">
+                <p className="text-xs font-bold text-slate-900 truncate">
+                  {currentRole === 'vendeur'
+                    ? merchantSettings.storeName
+                    : currentRole === 'livreur'
+                    ? courierSettings.fullName
+                    : 'Super Admin CI'}
+                </p>
+                <p className="text-[10px] font-bold text-emerald-600 truncate">
+                  {currentRole === 'vendeur' ? 'Vendeur Certifié' : currentRole === 'livreur' ? 'Livreur ★ 4.9' : 'Superviseur National'}
+                </p>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </aside>
   );

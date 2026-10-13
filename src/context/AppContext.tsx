@@ -24,6 +24,7 @@ import {
   INITIAL_AUDIT_LOGS,
   PRICING_RULES
 } from '../data/mockData';
+import { calculateDeliveryPrice, calculateDistanceKm } from '../config/maps';
 
 export type AppView =
   | 'landing'
@@ -40,6 +41,19 @@ export type AppView =
   | 'livreur_wallet'
   | 'livreur_settings'
   | 'admin_console';
+
+export type AdminTab =
+  | 'overview'
+  | 'users'
+  | 'kyc'
+  | 'couriers'
+  | 'merchants'
+  | 'deliveries'
+  | 'disputes'
+  | 'pricing'
+  | 'tests'
+  | 'audit'
+  | 'security';
 
 export interface AdminTestResultItem {
   id: string;
@@ -85,10 +99,13 @@ interface AppContextType {
   
   // Interactive Actions
   createDelivery: (newOrder: Partial<DeliveryOrder>) => DeliveryOrder;
+  acceptDelivery: (orderId: string, customCourier?: Courier) => void;
+  refuseDelivery: (orderId: string, reason?: string) => void;
   updateDeliveryStatus: (orderId: string, newStatus: DeliveryStatus, note?: string) => void;
   assignCourierToDelivery: (orderId: string, courierId: string) => void;
   validatePOD: (orderId: string, method: 'otp' | 'photo' | 'signature', code?: string) => void;
   toggleCourierAvailability: () => void;
+  selectActiveCourier: (courierOrId: Courier | string) => void;
   approveKYC: (requestId: string) => void;
   rejectKYC: (requestId: string) => void;
   resolveDispute: (orderId: string, resolutionNote: string) => void;
@@ -133,6 +150,10 @@ interface AppContextType {
   setIsTestModalOpen: (open: boolean) => void;
   openTestModal: () => void;
   closeTestModal: () => void;
+  
+  // Admin Tabs State
+  adminActiveTab: AdminTab;
+  setAdminActiveTab: (tab: AdminTab) => void;
   
   // Admin Google Security & Whitelist
   authorizedAdminEmails: string[];
@@ -190,6 +211,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isGoogleModalOpen, setIsGoogleModalOpen] = useState(false);
   const [googleModalRole, setGoogleModalRole] = useState<'vendeur' | 'livreur' | 'admin'>('vendeur');
 
+  // Admin Active Tab state
+  const [adminActiveTab, setAdminActiveTab] = useState<AdminTab>('overview');
+
   // Authorized Admin Emails Whitelist (Primary: Pamphile.gbede@gmail.com)
   const [authorizedAdminEmails, setAuthorizedAdminEmails] = useState<string[]>(() => {
     try {
@@ -212,6 +236,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('livralink_authorized_admin_emails', JSON.stringify(authorizedAdminEmails));
   }, [authorizedAdminEmails]);
 
+  // Admin Google Security Session State (Must authenticate via Google to unlock)
+  const [isAdminSessionUnlocked, setIsAdminSessionUnlocked] = useState<boolean>(false);
+
   const isEmailAuthorizedAdmin = (email: string): boolean => {
     if (!email) return false;
     const clean = email.toLowerCase().trim();
@@ -219,6 +246,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const isAdminAuthenticated = Boolean(
+    isAdminSessionUnlocked &&
     userProfile?.role === 'admin' &&
     userProfile?.email &&
     isEmailAuthorizedAdmin(userProfile.email)
@@ -254,6 +282,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const adminLoginWithGoogle = (email: string, name?: string): { success: boolean; message?: string; error?: string } => {
     const clean = email.toLowerCase().trim();
     if (!isEmailAuthorizedAdmin(clean)) {
+      setIsAdminSessionUnlocked(false);
       addAuditLog('security', 'Accès Admin Refusé (403)', `Tentative d'accès non autorisée avec le compte Google : ${clean}`);
       return {
         success: false,
@@ -266,11 +295,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       uid: 'admin_google_' + clean.replace(/[^a-zA-Z0-9]/g, '_'),
       email: clean,
       fullName: adminName,
-      phone: '+225 07 48 12 34',
+      phone: '+229 97 48 12 34',
       role: 'admin',
       createdAt: new Date().toISOString()
     };
 
+    setIsAdminSessionUnlocked(true);
     setUserProfile(profile);
     setCurrentRole('admin');
     setCurrentView('admin_console');
@@ -280,6 +310,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const adminLogout = () => {
+    setIsAdminSessionUnlocked(false);
     setUserProfile(null);
     setCurrentRole('vendeur');
     setCurrentView('landing');
@@ -393,53 +424,288 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const createDelivery = (newOrderData: Partial<DeliveryOrder>): DeliveryOrder => {
     const nextNum = Math.floor(1000 + Math.random() * 9000);
     const newId = `#LL-${nextNum}`;
-    const calculatedFee = 2500;
-    const codVal = newOrderData.itemValueCOD || 25000;
+    const calculatedFee = typeof newOrderData.deliveryFee === 'number'
+      ? newOrderData.deliveryFee
+      : (newOrderData.pickupLocation?.coordinates && newOrderData.dropoffLocation?.coordinates
+          ? calculateDeliveryPrice(calculateDistanceKm(
+              { lat: newOrderData.pickupLocation.coordinates[0], lng: newOrderData.pickupLocation.coordinates[1] },
+              { lat: newOrderData.dropoffLocation.coordinates[0], lng: newOrderData.dropoffLocation.coordinates[1] }
+            ))
+          : 100);
+    const codVal = typeof newOrderData.itemValueCOD === 'number' ? newOrderData.itemValueCOD : 0;
     
+    const clientName = newOrderData.clientName?.trim() || 'Client';
+    const clientPhone = newOrderData.clientPhone?.trim() || '';
+    const clientNote = newOrderData.clientNote?.trim() || '';
+    const itemDesc = newOrderData.itemDescription?.trim() || 'Colis';
+    // Ne pas forcer un livreur automatiquement si non spécifié : la course doit rester disponible pour tous les livreurs
+    const courierObj = newOrderData.courier || undefined;
+    const initialStatus: DeliveryStatus = newOrderData.status || (courierObj ? 'assignee' : 'en_attente');
+
     const newOrder: DeliveryOrder = {
       id: newId,
-      clientName: newOrderData.clientName || 'Client Destinataire',
-      clientPhone: newOrderData.clientPhone || '+225 07 00 00 00 00',
-      clientNote: newOrderData.clientNote || 'Appeler avant départ pour confirmation',
-      isClientVerified: true,
+      clientName,
+      clientPhone,
+      clientNote,
+      isClientVerified: Boolean(clientPhone),
       channel: newOrderData.channel || 'WhatsApp',
       pickupLocation: newOrderData.pickupLocation || {
-        name: 'Boutique Glam Chic',
-        address: 'Boulevard Latrille, 8ème tranche',
-        commune: 'Cocody Angré'
+        name: merchantSettings.storeName || 'Boutique Vendeur',
+        address: merchantSettings.defaultPickupAddress || 'Haie Vive, Avenue Jean-Paul II, Cotonou',
+        commune: 'Cotonou - Haie Vive'
       },
       dropoffLocation: newOrderData.dropoffLocation || {
-        name: newOrderData.clientName || 'Destination finale',
-        address: 'Cocody Danga, Résidence Les Jardins',
-        commune: 'Cocody'
+        name: clientName,
+        address: 'Cotonou, Bénin',
+        commune: 'Cotonou - Haie Vive'
       },
-      itemDescription: newOrderData.itemDescription || 'Colis Marchandise',
-      itemWeightKg: newOrderData.itemWeightKg || 1.2,
+      itemDescription: itemDesc,
+      itemWeightKg: typeof newOrderData.itemWeightKg === 'number' ? newOrderData.itemWeightKg : 1,
       itemFormat: newOrderData.itemFormat || 'M',
-      isFragile: newOrderData.isFragile ?? true,
+      isFragile: Boolean(newOrderData.isFragile),
       itemValueCOD: codVal,
       deliveryFee: calculatedFee,
       totalCustomerPayable: codVal + calculatedFee,
-      courier: newOrderData.courier || selectedCourier,
-      status: 'assignee',
-      statusNote: `Assignée à ${newOrderData.courier?.name || selectedCourier.name}`,
+      courier: courierObj,
+      status: initialStatus,
+      statusNote: newOrderData.statusNote || (courierObj 
+        ? `Assignée à ${courierObj.name}`
+        : `Course publiée • Disponible pour tous les livreurs de la zone`),
       createdAt: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-      estimatedArrival: 'Dans ~25 min',
+      estimatedArrival: 'Dans ~20 min',
       timeline: [
         { id: 't1', stepNumber: 1, title: 'Commande créée', description: 'Enregistrée avec succès', timestamp: 'Maintenant', status: 'completed' },
-        { id: 't2', stepNumber: 2, title: 'Livreur assigné', description: `Attribuée à ${newOrderData.courier?.name || selectedCourier.name}`, timestamp: 'Maintenant', status: 'completed' },
-        { id: 't3', stepNumber: 3, title: 'Mission acceptée', description: 'En attente de prise en charge', status: 'active' },
-        { id: 't4', stepNumber: 4, title: 'Colis récupéré', description: 'Point de collecte', status: 'pending' },
-        { id: 't5', stepNumber: 5, title: 'En cours de livraison', description: 'En transit', status: 'pending' },
+        { 
+          id: 't2', 
+          stepNumber: 2, 
+          title: courierObj ? 'Livreur assigné' : 'Diffusion de la course', 
+          description: courierObj ? `Attribuée à ${courierObj.name}` : 'Diffusée en temps réel à tous les coursiers disponibles dans la zone', 
+          timestamp: 'Maintenant', 
+          status: 'completed' 
+        },
+        { 
+          id: 't3', 
+          stepNumber: 3, 
+          title: courierObj ? 'Mission acceptée' : 'En attente d\'acceptation', 
+          description: courierObj ? 'En attente de prise en charge' : 'En attente qu\'un coursier disponible accepte la course', 
+          status: 'active' 
+        },
+        { id: 't4', stepNumber: 4, title: 'Colis récupéré', description: 'Point de collecte boutique', status: 'pending' },
+        { id: 't5', stepNumber: 5, title: 'En cours de livraison', description: 'En transit vers client', status: 'pending' },
         { id: 't6', stepNumber: 6, title: 'Preuve de livraison (POD)', description: 'OTP ou photo', status: 'pending' }
       ]
     };
 
     setDeliveries(prev => [newOrder, ...prev]);
     setSelectedDelivery(newOrder);
-    addAuditLog('system', 'Nouvelle course créée', `Commande ${newId} générée via ${newOrder.channel}`);
-    showToast(`Commande ${newId} créée et assignée à ${newOrder.courier?.name} !`, 'success');
+    addAuditLog('system', 'Nouvelle course créée', `Commande ${newId} pour ${clientName} (${newOrder.dropoffLocation.commune})`);
+    if (courierObj) {
+      showToast(`Commande ${newId} créée et assignée à ${courierObj.name}.`, 'success');
+    } else {
+      showToast(`Commande ${newId} publiée avec succès ! Disponible pour tous les livreurs de la zone.`, 'success');
+    }
     return newOrder;
+  };
+
+  const selectActiveCourier = (courierOrId: Courier | string) => {
+    const courierObj = typeof courierOrId === 'string'
+      ? couriers.find(c => c.id === courierOrId || c.name.toLowerCase() === courierOrId.toLowerCase())
+      : courierOrId;
+    if (courierObj) {
+      setSelectedCourier(courierObj);
+      setCourierSettings(prev => ({
+        ...prev,
+        fullName: courierObj.name,
+        phone: courierObj.phone,
+        email: courierObj.email || prev.email,
+        vehicleType: courierObj.vehicle || prev.vehicleType,
+        vehiclePlate: courierObj.vehiclePlate || prev.vehiclePlate,
+        parkingBaseAddress: courierObj.zone || prev.parkingBaseAddress,
+      }));
+      if (userProfile && userProfile.role === 'livreur') {
+        setUserProfile(prev => prev ? ({ ...prev, fullName: courierObj.name, phone: courierObj.phone }) : null);
+      }
+      showToast(`Profil livreur actif : ${courierObj.name}`, 'info');
+    }
+  };
+
+  const acceptDelivery = (orderId: string, customCourier?: Courier) => {
+    // 1. Déterminer l'identité exacte du livreur connecté qui accepte la mission
+    let courier: Courier;
+
+    if (customCourier) {
+      courier = customCourier;
+    } else {
+      // Priorité absolue : le compte du livreur connecté ou sélectionné dans l'espace livreur
+      let activeName: string;
+      let activePhone: string;
+      let activeEmail: string;
+      let activeVehicle: string;
+      let activePlate: string;
+
+      if (userProfile && userProfile.role === 'livreur' && userProfile.fullName) {
+        activeName = userProfile.fullName;
+        activePhone = userProfile.phone || courierSettings.phone || '+229 95 87 65 43';
+        activeEmail = userProfile.email || courierSettings.email || 'awa.veloce@gmail.com';
+        activeVehicle = userProfile.vehicleType || courierSettings.vehicleType || 'Scooter Électrique / Moto';
+        activePlate = courierSettings.vehiclePlate || 'BJ-6621-RB';
+      } else if (selectedCourier && selectedCourier.name) {
+        activeName = selectedCourier.name;
+        activePhone = selectedCourier.phone || courierSettings.phone || '+229 95 87 65 43';
+        activeEmail = selectedCourier.email || courierSettings.email || 'awa.veloce@gmail.com';
+        activeVehicle = selectedCourier.vehicle || courierSettings.vehicleType || 'Scooter Électrique / Moto';
+        activePlate = selectedCourier.vehiclePlate || courierSettings.vehiclePlate || 'BJ-6621-RB';
+      } else {
+        activeName = courierSettings.fullName || 'Awa Véloce Livraisons';
+        activePhone = courierSettings.phone || '+229 95 87 65 43';
+        activeEmail = courierSettings.email || 'awa.veloce@gmail.com';
+        activeVehicle = courierSettings.vehicleType || 'Scooter Électrique';
+        activePlate = courierSettings.vehiclePlate || 'BJ-6621-RB';
+      }
+
+      const initials = activeName
+        .split(' ')
+        .map(n => n[0])
+        .filter(Boolean)
+        .join('')
+        .toUpperCase()
+        .substring(0, 2) || 'AV';
+
+      // Chercher s'il existe déjà un profil dans la liste des coursiers
+      const match = couriers.find(
+        c =>
+          c.name.trim().toLowerCase() === activeName.trim().toLowerCase() ||
+          (userProfile?.uid && c.id === userProfile.uid) ||
+          (c.email && c.email.toLowerCase() === activeEmail.toLowerCase()) ||
+          c.name.toLowerCase().includes(activeName.toLowerCase()) ||
+          activeName.toLowerCase().includes(c.name.toLowerCase())
+      );
+
+      if (match) {
+        courier = {
+          ...match,
+          name: activeName, // Toujours garantir le nom exact du compte livreur connecté !
+          phone: activePhone,
+          email: activeEmail,
+          avatarInitials: initials,
+          vehicle: activeVehicle || match.vehicle,
+          status: 'en_course',
+        };
+      } else {
+        courier = {
+          id: userProfile?.uid || `c-${Date.now()}`,
+          name: activeName,
+          phone: activePhone,
+          email: activeEmail,
+          avatarInitials: initials,
+          rating: 5.0,
+          totalDeliveries: 385,
+          vehicle: activeVehicle,
+          vehiclePlate: activePlate,
+          zone: courierSettings.parkingBaseAddress || 'Zone Cotonou & Alentours',
+          distanceKm: 0.9,
+          etaMinutes: 5,
+          status: 'en_course',
+          walletBalanceFCFA: 62000,
+          priceFCFA: 100,
+          commissionFCFA: 0,
+          netEarningFCFA: 100,
+          badge: 'Livreur Vérifié ★',
+          isKycVerified: true,
+          createdAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    // Synchroniser immédiatement le coursier sélectionné, les settings et la liste des coursiers disponibles
+    setSelectedCourier(courier);
+    setCourierSettings(prev => ({
+      ...prev,
+      fullName: courier.name,
+      phone: courier.phone,
+      email: courier.email || prev.email,
+      vehicleType: courier.vehicle || prev.vehicleType,
+    }));
+    setCouriers(prev => {
+      const exists = prev.some(c => c.name.toLowerCase() === courier.name.toLowerCase() || c.id === courier.id);
+      if (!exists) {
+        return [courier, ...prev];
+      }
+      return prev.map(c => (c.name.toLowerCase() === courier.name.toLowerCase() || c.id === courier.id ? courier : c));
+    });
+
+    const nowTime = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    let updatedDeliveryOrder: DeliveryOrder | null = null;
+
+    setDeliveries(prev =>
+      prev.map(ord => {
+        if (ord.id === orderId) {
+          const updatedTimeline = ord.timeline.map((step) => {
+            if (step.stepNumber === 2) {
+              return {
+                ...step,
+                status: 'completed' as const,
+                title: 'Livreur assigné',
+                description: `Attribuée à ${courier.name} (${courier.vehicle})`,
+                timestamp: nowTime
+              };
+            }
+            if (step.stepNumber === 3) {
+              return {
+                ...step,
+                status: 'completed' as const,
+                title: 'Course acceptée',
+                description: `Acceptée par le livreur ${courier.name} à ${nowTime}`,
+                timestamp: nowTime
+              };
+            }
+            if (step.stepNumber === 4) {
+              return {
+                ...step,
+                status: 'active' as const,
+                description: `Livreur (${courier.name}) en route vers le point de collecte`
+              };
+            }
+            return step;
+          });
+
+          updatedDeliveryOrder = {
+            ...ord,
+            courier,
+            status: 'acceptee' as const,
+            statusNote: `Course acceptée par le livreur (${courier.name}) • En route vers le point de collecte`,
+            timeline: updatedTimeline,
+          };
+          return updatedDeliveryOrder;
+        }
+        return ord;
+      })
+    );
+
+    // Mettre à jour immédiatement la livraison sélectionnée pour que le compte vendeur et le compte livreur voient instantanément le même coursier
+    if (updatedDeliveryOrder) {
+      setSelectedDelivery(updatedDeliveryOrder);
+    }
+
+    addAuditLog('system', `Course ${orderId} acceptée`, `Mission prise en charge par le coursier ${courier.name}`);
+    showToast(`🎉 Course ${orderId} acceptée avec succès par ${courier.name} ! Vous êtes assigné à cette livraison.`, 'success');
+  };
+
+  const refuseDelivery = (orderId: string, reason?: string) => {
+    setDeliveries(prev =>
+      prev.map(ord => {
+        if (ord.id === orderId) {
+          return {
+            ...ord,
+            status: 'en_attente' as const,
+            statusNote: reason || 'Course déclinée par le livreur • Disponible pour d\'autres coursiers',
+          };
+        }
+        return ord;
+      })
+    );
+    addAuditLog('system', `Course ${orderId} refusée`, `Déclinée par le coursier`);
+    showToast(`Course ${orderId} refusée. Elle reste dans la file des livraisons disponibles.`, 'info');
   };
 
   const updateDeliveryStatus = (orderId: string, newStatus: DeliveryStatus, note?: string) => {
@@ -551,14 +817,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const courier: Courier = {
       id,
       name: newCourier.name || 'Nouveau Livreur',
-      phone: newCourier.phone || '+225 07 00 00 00',
-      email: newCourier.email || `${id}@livralink.ci`,
+      phone: newCourier.phone || '+229 97 00 00 00',
+      email: newCourier.email || `${id}@livralink.bj`,
       avatarInitials: initials,
       rating: 5.0,
       totalDeliveries: 0,
       vehicle: newCourier.vehicle || 'Moto 125cc',
-      vehiclePlate: newCourier.vehiclePlate || 'CI-0000-XX',
-      zone: newCourier.zone || 'Abidjan Centre',
+      vehiclePlate: newCourier.vehiclePlate || 'BJ-0000-RB',
+      zone: newCourier.zone || 'Cotonou Centre',
       distanceKm: 1.5,
       etaMinutes: 10,
       status: 'en_ligne',
@@ -619,10 +885,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id,
       storeName: newMerchant.storeName || 'Nouvelle Boutique',
       managerName: newMerchant.managerName || 'Gérant Marchand',
-      phone: newMerchant.phone || '+225 07 00 00 00',
-      email: newMerchant.email || `${id}@boutique.ci`,
-      commune: newMerchant.commune || 'Cocody',
-      address: newMerchant.address || 'Abidjan',
+      phone: newMerchant.phone || '+229 97 00 00 00',
+      email: newMerchant.email || `${id}@boutique.bj`,
+      commune: newMerchant.commune || 'Cotonou - Haie Vive',
+      address: newMerchant.address || 'Cotonou, Bénin',
       channel: newMerchant.channel || 'WhatsApp',
       totalOrders: 0,
       totalVolumeFCFA: 0,
@@ -682,7 +948,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const t1Start = Date.now();
     try {
       const testCourierName = `Test Coursier Auto ${Date.now().toString().slice(-4)}`;
-      addCourier({ name: testCourierName, phone: '+225 07 99 99 99', vehicle: 'Moto Honda Test 125cc' });
+      addCourier({ name: testCourierName, phone: '+229 97 99 99 99', vehicle: 'Moto Honda Test 125cc' });
       results.push({
         id: 't-courier-lifecycle',
         name: 'Gestion & Création Complète Livreur',
@@ -706,7 +972,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const t2Start = Date.now();
     try {
       const testStoreName = `Boutique Test Express ${Date.now().toString().slice(-4)}`;
-      addMerchant({ storeName: testStoreName, managerName: 'Superviseur Test', commune: 'Plateau', channel: 'WhatsApp' });
+      addMerchant({ storeName: testStoreName, managerName: 'Superviseur Test', commune: 'Cotonou - Cadjehoun', channel: 'WhatsApp' });
       results.push({
         id: 't-merchant-management',
         name: 'Supervision & Enrôlement Vendeur / Marchand',
@@ -731,7 +997,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const testOrder = createDelivery({
         clientName: 'Client Test Validation',
-        clientPhone: '+225 07 11 22 33',
+        clientPhone: '+229 97 11 22 33',
         itemValueCOD: 15000,
         deliveryFee: 2500,
       });
@@ -770,7 +1036,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         category: 'pricing',
         status: 'SUCCESS',
         durationMs: Date.now() - t4Start,
-        message: `Règles de calcul kilométrique (+150 F/km) et barème de commission 0-20% validés.`
+        message: `Règles de calcul kilométrique (100 F/km) et barème de commission 0-20% validés.`
       });
     } catch (e: any) {
       results.push({
@@ -817,18 +1083,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const acceptUrgentOffer = () => {
     setIsUrgentOfferOpen(false);
     createDelivery({
-      clientName: 'Cabinet Juridique CCIA',
-      clientPhone: '+225 07 99 88 77 66',
+      clientName: 'Cabinet Juridique Haie Vive',
+      clientPhone: '+229 97 99 88 77',
       channel: 'WhatsApp',
       pickupLocation: {
-        name: 'Plateau CCIA',
-        address: 'Immeuble CCIA, 12e étage',
-        commune: 'Plateau'
+        name: 'Cotonou Cadjehoun',
+        address: 'Avenue Steinmetz, Cadjehoun',
+        commune: 'Cotonou - Cadjehoun'
       },
       dropoffLocation: {
-        name: 'Cabinet Notaires Marcory',
-        address: 'Rue du 7 Décembre',
-        commune: 'Marcory Zone 4'
+        name: 'Cabinet Juridique Haie Vive',
+        address: 'Rue de la Haie Vive',
+        commune: 'Cotonou - Haie Vive'
       },
       itemDescription: 'Documents juridiques urgents (0.4 kg)',
       itemWeightKg: 0.4,
@@ -878,10 +1144,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         pricingRules,
         setPricingRules,
         createDelivery,
+        acceptDelivery,
+        refuseDelivery,
         updateDeliveryStatus,
         assignCourierToDelivery,
         validatePOD,
         toggleCourierAvailability,
+        selectActiveCourier,
         approveKYC,
         rejectKYC,
         resolveDispute,
@@ -916,6 +1185,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setIsTestModalOpen,
         openTestModal,
         closeTestModal,
+        adminActiveTab,
+        setAdminActiveTab,
         authorizedAdminEmails,
         isEmailAuthorizedAdmin,
         addAuthorizedAdminEmail,

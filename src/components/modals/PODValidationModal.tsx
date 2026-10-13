@@ -105,7 +105,7 @@ export const PODValidationModal: React.FC = () => {
                 <div className="flex flex-col items-center gap-1 text-emerald-700">
                   <span className="material-symbols-outlined text-3xl">image</span>
                   <span className="text-xs font-bold">Photo de remise horodatée enregistrée ✓</span>
-                  <span className="text-[10px] text-slate-500">Cocody Danga • 14:38:12</span>
+                  <span className="text-[10px] text-slate-500">Cotonou Haie Vive • 14:38:12</span>
                 </div>
               ) : (
                 <div className="flex flex-col items-center gap-1 text-slate-500">

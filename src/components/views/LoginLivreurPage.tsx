@@ -4,7 +4,7 @@ import { loginWithEmailPassword, loginWithGoogle, getFirebaseAuthErrorMessage } 
 import { ForgotPasswordModal } from '../modals/ForgotPasswordModal';
 
 export const LoginLivreurPage: React.FC = () => {
-  const { setCurrentView, setCurrentRole, setCourierSettings, setUserProfile, showToast, openGoogleModal, openTestModal } = useApp();
+  const { setCurrentView, setCurrentRole, setCourierSettings, setUserProfile, setSelectedCourier, couriers, showToast, openGoogleModal, openTestModal } = useApp();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -17,6 +17,44 @@ export const LoginLivreurPage: React.FC = () => {
     setIdentifier(email);
     setPassword(pass);
     setErrorMessage(null);
+  };
+
+  const syncCourierIdentity = (profile: any) => {
+    if (!profile) return;
+    const driverName = profile.fullName || 'Livreur Partenaire';
+    const matched = couriers.find(
+      c => c.name.toLowerCase() === driverName.toLowerCase() || c.id === profile.uid
+    );
+    if (matched) {
+      setSelectedCourier({
+        ...matched,
+        name: driverName,
+      });
+    } else {
+      const initials = driverName.split(' ').map((n: string) => n[0]).filter(Boolean).join('').toUpperCase().substring(0, 2) || 'LV';
+      setSelectedCourier({
+        id: profile.uid || `c-${Date.now()}`,
+        name: driverName,
+        phone: profile.phone || '+229 95 87 65 43',
+        email: profile.email || 'livreur@livralink.bj',
+        avatarInitials: initials,
+        rating: 5.0,
+        totalDeliveries: 385,
+        vehicle: profile.vehicleType || 'Scooter Électrique / Moto',
+        vehiclePlate: 'BJ-6621-RB',
+        zone: 'Cotonou & Alentours',
+        distanceKm: 0.9,
+        etaMinutes: 5,
+        status: 'en_ligne',
+        walletBalanceFCFA: 62000,
+        priceFCFA: 100,
+        commissionFCFA: 0,
+        netEarningFCFA: 100,
+        badge: 'Livreur Vérifié ★',
+        isKycVerified: true,
+        createdAt: new Date().toISOString(),
+      });
+    }
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -36,11 +74,14 @@ export const LoginLivreurPage: React.FC = () => {
         setCurrentRole('livreur');
         setCurrentView('livreur_dashboard');
         if (profile) {
+          setUserProfile(profile);
           setCourierSettings((prev) => ({
             ...prev,
             fullName: profile.fullName || prev.fullName,
             phone: profile.phone || prev.phone,
+            email: profile.email || prev.email,
           }));
+          syncCourierIdentity(profile);
         }
         showToast(`Bienvenue sur votre Espace Livreur, ${profile?.fullName || user.displayName || 'Coursier'} !`, 'success');
       }
@@ -51,12 +92,6 @@ export const LoginLivreurPage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleWhatsAppOTP = () => {
-    setCurrentRole('livreur');
-    setCurrentView('livreur_dashboard');
-    showToast('Connexion WhatsApp OTP validée !', 'success');
   };
 
   const handleGoogleLogin = async () => {
@@ -73,6 +108,7 @@ export const LoginLivreurPage: React.FC = () => {
           phone: profile.phone || prev.phone,
           email: profile.email || prev.email,
         }));
+        syncCourierIdentity(profile);
       }
       setCurrentView('livreur_dashboard');
       showToast(`Connexion Google sécurisée réussie ! Bienvenue ${profile?.fullName || user.displayName || 'Coursier'}.`, 'success');
@@ -183,7 +219,7 @@ export const LoginLivreurPage: React.FC = () => {
                 <div className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
                   <span className="font-bold text-emerald-800 uppercase text-[10px] tracking-wider">
-                    MISSION PRÊTE • Zone Abidjan Nord
+                    MISSION PRÊTE • Zone Cotonou Littoral
                   </span>
                 </div>
                 <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs">
@@ -194,11 +230,11 @@ export const LoginLivreurPage: React.FC = () => {
               <div className="space-y-2 relative pl-5 border-l-2 border-dashed border-slate-200 ml-2 text-xs">
                 <div>
                   <p className="text-[10px] uppercase font-bold text-slate-400">Collecte</p>
-                  <p className="font-bold text-slate-900">Cocody Danga (Boutique Mode IG @KenzaStyl)</p>
+                  <p className="font-bold text-slate-900">Cotonou Haie Vive (Boutique Mode IG @KenzaStyl)</p>
                 </div>
                 <div>
                   <p className="text-[10px] uppercase font-bold text-slate-400">Livraison</p>
-                  <p className="font-bold text-slate-900">Plateau CCIA (Étage 7 - Bâtiment B)</p>
+                  <p className="font-bold text-slate-900">Cotonou Cadjehoun (Avenue Steinmetz)</p>
                 </div>
               </div>
 
@@ -289,7 +325,7 @@ export const LoginLivreurPage: React.FC = () => {
               <div className="relative py-0.5 flex items-center justify-center">
                 <div className="border-t border-slate-200 w-full"></div>
                 <span className="bg-white px-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest absolute">
-                  OU AVEC NUMÉRO WHATSAPP / EMAIL
+                  OU AVEC VOTRE ADRESSE E-MAIL
                 </span>
               </div>
 
@@ -438,15 +474,6 @@ export const LoginLivreurPage: React.FC = () => {
                       <span className="material-symbols-outlined text-base">arrow_forward</span>
                     </>
                   )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleWhatsAppOTP}
-                  className="w-full py-2.5 px-4 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
-                >
-                  <span className="material-symbols-outlined text-base text-emerald-600">chat</span>
-                  <span>Connexion rapide avec code WhatsApp OTP</span>
                 </button>
               </form>
 

@@ -47,7 +47,7 @@ export const LivreurWallet: React.FC = () => {
                   <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold">
                     0% Commission • 100% Revenus
                   </span>
-                  <span className="text-xs text-slate-400 font-mono">Abidjan Hub</span>
+                  <span className="text-xs text-slate-400 font-mono">Cotonou Hub</span>
                 </div>
                 <div className="text-xs text-slate-300 font-semibold uppercase tracking-wider">
                   Solde Disponible au Retrait
@@ -145,10 +145,10 @@ export const LivreurWallet: React.FC = () => {
 
             <div className="space-y-3">
               {[
-                { id: 'TR-892', title: 'Course #LL-4192 - Cocody Danga', amount: '+2 500 FCFA', type: 'earning', time: 'Aujourd\'hui 11:45', status: 'Encaissé' },
-                { id: 'TR-891', title: 'Course #LL-4191 - Marcory Zone 4', amount: '+3 000 FCFA', type: 'earning', time: 'Aujourd\'hui 10:20', status: 'Encaissé' },
-                { id: 'TR-890', title: 'Virement Wave Mobile Money', amount: '-20 000 FCFA', type: 'payout', time: 'Hier 18:30', status: 'Validé' },
-                { id: 'TR-889', title: 'Course #LL-4188 - Plateau', amount: '+2 000 FCFA', type: 'earning', time: 'Hier 16:15', status: 'Encaissé' },
+                { id: 'TR-892', title: 'Course #LL-4192 - Cotonou Haie Vive', amount: '+2 500 FCFA', type: 'earning', time: 'Aujourd\'hui 11:45', status: 'Encaissé' },
+                { id: 'TR-891', title: 'Course #LL-4191 - Abomey-Calavi', amount: '+3 000 FCFA', type: 'earning', time: 'Aujourd\'hui 10:20', status: 'Encaissé' },
+                { id: 'TR-890', title: 'Virement MTN Mobile Money Bénin', amount: '-20 000 FCFA', type: 'payout', time: 'Hier 18:30', status: 'Validé' },
+                { id: 'TR-889', title: 'Course #LL-4188 - Cotonou Fidjrossè', amount: '+2 000 FCFA', type: 'earning', time: 'Hier 16:15', status: 'Encaissé' },
               ].map((tx) => (
                 <div key={tx.id} className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-100">
                   <div className="flex items-center gap-3">

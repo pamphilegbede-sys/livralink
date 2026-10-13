@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { registerWithEmailPassword, loginWithGoogle, getFirebaseAuthErrorMessage } from '../../firebase/authService';
+import { BENIN_DEPARTMENTS, getLocationForCommune } from '../../config/maps';
 
 export const RegisterPage: React.FC = () => {
   const { setCurrentView, currentRole, setCurrentRole, setUserProfile, setMerchantSettings, setCourierSettings, showToast, openGoogleModal, openTestModal } = useApp();
@@ -10,6 +11,9 @@ export const RegisterPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [storeName, setStoreName] = useState('');
+  const [storeCommune, setStoreCommune] = useState('');
+  const [storeAddress, setStoreAddress] = useState('');
   const [acceptTerms, setAcceptTerms] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -19,7 +23,9 @@ export const RegisterPage: React.FC = () => {
     mail: string,
     pass: string,
     tel: string,
-    role: 'vendeur' | 'livreur'
+    role: 'vendeur' | 'livreur',
+    commune?: string,
+    address?: string
   ) => {
     setSelectedRole(role);
     setFullName(name);
@@ -27,6 +33,11 @@ export const RegisterPage: React.FC = () => {
     setPassword(pass);
     setConfirmPassword(pass);
     setPhone(tel);
+    if (role === 'vendeur') {
+      setStoreName(name);
+      setStoreCommune(commune || 'Cotonou - Haie Vive');
+      setStoreAddress(address || 'Avenue Jean-Paul II, Cotonou');
+    }
     setErrorMessage(null);
   };
 
@@ -55,20 +66,42 @@ export const RegisterPage: React.FC = () => {
     setIsLoading(true);
 
     try {
+      const coords = storeCommune ? getLocationForCommune(storeCommune) : undefined;
       const { user, profile } = await registerWithEmailPassword(
         email,
         password,
         selectedRole,
         fullName,
-        phone
+        phone,
+        selectedRole === 'vendeur'
+          ? {
+              storeName: storeName.trim() || fullName.trim(),
+              storeCommune: storeCommune.trim(),
+              storeAddress: storeAddress.trim(),
+              storeCoordinates: coords ? [coords.lat, coords.lng] : undefined,
+            }
+          : undefined
       );
 
       setCurrentRole(selectedRole);
 
       if (selectedRole === 'vendeur') {
+        setUserProfile(profile);
+        setMerchantSettings((prev) => ({
+          ...prev,
+          storeName: storeName.trim() || fullName.trim(),
+          managerName: fullName.trim(),
+          phone: phone.trim(),
+          email: email.trim(),
+          storeCommune: storeCommune.trim(),
+          defaultPickupAddress: storeAddress.trim() || (storeCommune ? `Boutique, ${storeCommune}` : prev.defaultPickupAddress),
+          gpsCoordinates: coords ? `${coords.lat.toFixed(4)}° N, ${coords.lng.toFixed(4)}° E` : prev.gpsCoordinates,
+          storeCoordinates: coords ? [coords.lat, coords.lng] : undefined,
+        }));
         setCurrentView('vendeur_dashboard');
-        showToast(`Compte Vendeur créé avec succès sur Firebase ! Bienvenue ${profile.fullName}.`, 'success');
+        showToast(`Compte Vendeur créé avec succès ! Bienvenue ${profile.fullName}. Emplacement boutique configuré à ${storeCommune || 'Bénin'}.`, 'success');
       } else {
+        setUserProfile(profile);
         setCurrentView('livreur_dashboard');
         showToast(`Compte Livreur Partenaire créé sur Firebase ! Bienvenue ${profile.fullName}.`, 'success');
       }
@@ -230,7 +263,7 @@ export const RegisterPage: React.FC = () => {
               </div>
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
                 <div>
-                  <p className="font-bold text-slate-900">En route • Cocody St-Jean</p>
+                  <p className="font-bold text-slate-900">En route • Cotonou Cadjehoun</p>
                   <p className="text-[11px] text-slate-500">Livreur assigné : Ibrahim K.</p>
                 </div>
                 <div className="text-right">
@@ -399,14 +432,14 @@ export const RegisterPage: React.FC = () => {
                   </button>
                   <button
                     type="button"
-                    onClick={() => fillTestRegister('Bakary Express Abidjan', 'bakary.express@gmail.com', 'BakaryFast2025!', '+225 07 48 12 34', 'livreur')}
+                    onClick={() => fillTestRegister('Bakary Express Cotonou', 'bakary.express@gmail.com', 'BakaryFast2025!', '+229 97 48 12 34', 'livreur')}
                     className="px-2 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-[10px] font-bold shadow-2xs transition-colors"
                   >
                     6. Bakary (Livreur)
                   </button>
                   <button
                     type="button"
-                    onClick={() => fillTestRegister('Awa Véloce Livraisons', 'awa.veloce@gmail.com', 'AwaVeloce2025!', '+225 05 87 65 43', 'livreur')}
+                    onClick={() => fillTestRegister('Awa Véloce Livraisons', 'awa.veloce@gmail.com', 'AwaVeloce2025!', '+229 95 87 65 43', 'livreur')}
                     className="px-2 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-[10px] font-bold shadow-2xs transition-colors"
                   >
                     7. Awa (Livreur)
@@ -425,13 +458,11 @@ export const RegisterPage: React.FC = () => {
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1" htmlFor="fullname">
-                    {selectedRole === 'vendeur' ? 'Nom de boutique ou complet *' : 'Nom complet *'}
+                    {selectedRole === 'vendeur' ? 'Nom complet du gérant / propriétaire *' : 'Nom complet *'}
                   </label>
                   <div className="relative">
                     <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                      <span className="material-symbols-outlined text-lg">
-                        {selectedRole === 'vendeur' ? 'storefront' : 'person'}
-                      </span>
+                      <span className="material-symbols-outlined text-lg">person</span>
                     </span>
                     <input
                       id="fullname"
@@ -439,11 +470,78 @@ export const RegisterPage: React.FC = () => {
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
                       required
-                      placeholder={selectedRole === 'vendeur' ? 'ex: Sarah Kouamé (Mode & Beauté)' : 'ex: Ibrahim Touré'}
+                      placeholder={selectedRole === 'vendeur' ? 'ex: Sarah Kouamé' : 'ex: Ibrahim Touré'}
                       className="w-full pl-10 pr-3.5 py-2.5 text-xs text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
                     />
                   </div>
                 </div>
+
+                {selectedRole === 'vendeur' && (
+                  <div className="p-3.5 rounded-2xl bg-blue-50/60 border border-blue-200/80 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-sm text-blue-600">storefront</span>
+                        <span>Emplacement &amp; Position de la Boutique</span>
+                      </span>
+                      <span className="text-[10px] font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
+                        77 communes Bénin
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-snug">
+                      Définissez l'emplacement de votre boutique dès maintenant. Vous pourrez utiliser cette position par défaut ou choisir un autre lieu lors de chaque livraison.
+                    </p>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                        Nom commercial de la boutique *
+                      </label>
+                      <input
+                        type="text"
+                        value={storeName}
+                        onChange={(e) => setStoreName(e.target.value)}
+                        placeholder="ex: Glam Chic Cotonou, Reine Mode..."
+                        className="w-full px-3 py-2 text-xs bg-white text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Commune de la boutique *
+                        </label>
+                        <select
+                          value={storeCommune}
+                          onChange={(e) => setStoreCommune(e.target.value)}
+                          className="w-full px-2.5 py-2 text-xs bg-white text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none font-medium"
+                        >
+                          <option value="">-- Choisir la commune (Bénin) --</option>
+                          {BENIN_DEPARTMENTS.map((dept) => (
+                            <optgroup key={dept.code} label={`📍 ${dept.name}`}>
+                              {dept.communes.map((commune) => (
+                                <option key={commune} value={commune}>
+                                  {commune}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Adresse / Quartier physique *
+                        </label>
+                        <input
+                          type="text"
+                          value={storeAddress}
+                          onChange={(e) => setStoreAddress(e.target.value)}
+                          placeholder="ex: Haie Vive, Rue 320, face pharmacie"
+                          className="w-full px-3 py-2 text-xs bg-white text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div>
                   <div className="flex justify-between items-center mb-1">
@@ -456,8 +554,8 @@ export const RegisterPage: React.FC = () => {
                   </div>
                   <div className="flex rounded-xl overflow-hidden border border-slate-300 bg-white">
                     <div className="px-3 bg-slate-50 border-r border-slate-300 flex items-center gap-1 text-xs font-bold text-slate-700 select-none">
-                      <span>🇨🇮</span>
-                      <span>+225</span>
+                      <span>🇧🇯</span>
+                      <span>+229</span>
                     </div>
                     <input
                       id="reg-phone"
@@ -465,7 +563,7 @@ export const RegisterPage: React.FC = () => {
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
                       required
-                      placeholder="07 00 00 00 00"
+                      placeholder="97 00 00 00"
                       className="w-full px-3 py-2.5 text-xs text-slate-900 outline-none"
                     />
                   </div>

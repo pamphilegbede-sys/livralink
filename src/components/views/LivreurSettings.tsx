@@ -23,7 +23,7 @@ export const LivreurSettings: React.FC = () => {
   const [notifyPODValidated, setNotifyPODValidated] = useState(true);
   const [notifyPayoutReceived, setNotifyPayoutReceived] = useState(true);
 
-  const availableZones = ['Centre-ville', 'Zongo', 'Akpakpa', 'Fidjrossè', 'Godomey', 'Cocody', 'Plateau'];
+  const availableZones = ['Haie Vive', 'Zongo', 'Akpakpa', 'Fidjrossè', 'Godomey', 'Calavi Centre', 'Porto-Novo'];
 
   const toggleZone = (zone: string) => {
     if (activeZones.includes(zone)) {
@@ -447,15 +447,15 @@ export const LivreurSettings: React.FC = () => {
                   <span className="absolute top-3 right-3 px-2 py-0.5 rounded bg-blue-600 text-white font-bold text-[10px]">
                     Défaut
                   </span>
-                  <p className="font-bold text-slate-900">MTN Mobile Money</p>
-                  <p className="text-slate-500">+225 07 •• •• 04</p>
+                  <p className="font-bold text-slate-900">MTN Mobile Money Bénin</p>
+                  <p className="text-slate-500">+229 97 •• •• 04</p>
                   <span className="text-emerald-600 font-bold text-[10px] block">Instantané (0s)</span>
                 </div>
 
                 <div className="p-4 rounded-2xl border border-slate-200 bg-white space-y-1">
                   <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-bold text-[10px]">Secondaire</span>
-                  <p className="font-bold text-slate-900">Moov Money</p>
-                  <p className="text-slate-500">+225 01 •• •• 99</p>
+                  <p className="font-bold text-slate-900">Moov Money Bénin</p>
+                  <p className="text-slate-500">+229 95 •• •• 99</p>
                 </div>
 
                 <div className="p-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 flex flex-col items-center justify-center text-center p-4">

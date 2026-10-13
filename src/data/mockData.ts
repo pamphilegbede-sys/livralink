@@ -3,12 +3,12 @@ import { Courier, Merchant, DeliveryOrder, KYCUserRequest, MerchantSettings, Cou
 export const INITIAL_MERCHANTS: Merchant[] = [
   {
     id: 'm-glamchic',
-    storeName: 'Boutique Glam Chic',
+    storeName: 'Boutique Glam Chic Cotonou',
     managerName: 'Sarah Kouamé',
-    phone: '+225 07 48 92 11 04',
-    email: 'contact@glamchic-abidjan.ci',
-    commune: 'Cocody Angré 8ème tranche',
-    address: 'Boulevard Latrille, Résidence les Arums',
+    phone: '+229 97 48 92 11',
+    email: 'contact@glamchic-cotonou.bj',
+    commune: 'Cotonou - Haie Vive',
+    address: 'Haie Vive, Avenue Jean-Paul II, Résidence les Palmiers',
     channel: 'WhatsApp',
     totalOrders: 184,
     totalVolumeFCFA: 4850000,
@@ -20,12 +20,12 @@ export const INITIAL_MERCHANTS: Merchant[] = [
   },
   {
     id: 'm-techiv',
-    storeName: 'Tech Accessoire Côte d\'Ivoire',
+    storeName: 'Tech Accessoire Bénin',
     managerName: 'Koffi Emmanuel',
-    phone: '+225 05 12 34 56 78',
+    phone: '+229 95 12 34 56',
     email: 'koffi.tech@gmail.com',
-    commune: 'Plateau',
-    address: 'Rue du Commerce, Immeuble Postel 2001',
+    commune: 'Cotonou - Cadjehoun',
+    address: 'Avenue Steinmetz, Immeuble Le Béninois',
     channel: 'E-commerce',
     totalOrders: 310,
     totalVolumeFCFA: 9420000,
@@ -37,12 +37,12 @@ export const INITIAL_MERCHANTS: Merchant[] = [
   },
   {
     id: 'm-modeafrik',
-    storeName: 'Amani Afro Couture',
+    storeName: 'Amani Afro Couture Bénin',
     managerName: 'Aïcha Traoré',
-    phone: '+225 07 77 88 99 00',
-    email: 'amani.couture@afrikdesign.ci',
-    commune: 'Marcory Zone 4',
-    address: 'Rue Paul Langevin, Galerie Marchande',
+    phone: '+229 97 77 88 99',
+    email: 'amani.couture@afrikdesign.bj',
+    commune: 'Cotonou - Akpakpa',
+    address: 'Boulevard de la Marina, Galerie Marchande',
     channel: 'Instagram',
     totalOrders: 95,
     totalVolumeFCFA: 2890000,
@@ -53,12 +53,12 @@ export const INITIAL_MERCHANTS: Merchant[] = [
   },
   {
     id: 'm-saveursbio',
-    storeName: 'Saveurs & Délices Bio CI',
+    storeName: 'Saveurs & Délices Bio Bénin',
     managerName: 'Jean-Marc Bamba',
-    phone: '+225 01 44 55 66 77',
-    email: 'delices.bio@abidjan-gourmet.ci',
-    commune: 'Yopougon',
-    address: 'Carrefour Siporex, Allée Principale',
+    phone: '+229 96 44 55 66',
+    email: 'delices.bio@cotonou-gourmet.bj',
+    commune: 'Abomey-Calavi - Godomey',
+    address: 'Carrefour Godomey, Allée Principale',
     channel: 'TikTok',
     totalOrders: 42,
     totalVolumeFCFA: 860000,
@@ -69,12 +69,12 @@ export const INITIAL_MERCHANTS: Merchant[] = [
   },
   {
     id: 'm-shoesexpress',
-    storeName: 'Sneakers & Shoes Direct',
+    storeName: 'Sneakers & Shoes Direct Cotonou',
     managerName: 'Bakary Fofana',
-    phone: '+225 05 99 11 22 33',
+    phone: '+229 95 99 11 22',
     email: 'sneakers.direct@yahoo.fr',
-    commune: 'Treichville',
-    address: 'Avenue 16, Rue 12',
+    commune: 'Cotonou - Dantokpa',
+    address: 'Avenue Clozel, Proche Grand Marché Dantokpa',
     channel: 'WhatsApp',
     totalOrders: 18,
     totalVolumeFCFA: 340000,
@@ -87,23 +87,45 @@ export const INITIAL_MERCHANTS: Merchant[] = [
 
 export const INITIAL_COURIERS: Courier[] = [
   {
+    id: 'c-awa',
+    name: 'Awa Véloce Livraisons',
+    phone: '+229 95 87 65 43',
+    email: 'awa.veloce@gmail.com',
+    avatarInitials: 'AV',
+    rating: 5.0,
+    totalDeliveries: 385,
+    vehicle: 'Scooter Électrique / Van Léger',
+    vehiclePlate: 'BJ-6621-RB',
+    zone: 'Zone Akpakpa, Porto-Novo & Sèmè',
+    distanceKm: 0.9,
+    etaMinutes: 5,
+    status: 'en_ligne',
+    walletBalanceFCFA: 62000,
+    priceFCFA: 100,
+    commissionFCFA: 0,
+    netEarningFCFA: 100,
+    badge: 'Livreuse Premium ★',
+    isKycVerified: true,
+    createdAt: '2025-07-15'
+  },
+  {
     id: 'c-david',
     name: 'David Kouadio',
-    phone: '+225 07 48 92 11 04',
-    email: 'david.kouadio@coursier-link.ci',
+    phone: '+229 97 48 92 11',
+    email: 'david.kouadio@coursier-link.bj',
     avatarInitials: 'DK',
     rating: 4.9,
     totalDeliveries: 312,
     vehicle: 'Yamaha 125',
-    vehiclePlate: 'AB-8492-CI',
-    zone: 'Centre-ville / Cocody',
+    vehiclePlate: 'BJ-8492-RB',
+    zone: 'Cotonou Centre / Haie Vive',
     distanceKm: 1.2,
     etaMinutes: 6,
     status: 'en_ligne',
     walletBalanceFCFA: 48500,
-    priceFCFA: 2500,
+    priceFCFA: 100,
     commissionFCFA: 0,
-    netEarningFCFA: 2500,
+    netEarningFCFA: 100,
     badge: 'Recommandé ★',
     isKycVerified: true,
     createdAt: '2025-09-12'
@@ -111,14 +133,14 @@ export const INITIAL_COURIERS: Courier[] = [
   {
     id: 'c-paul',
     name: 'Paul Agbo',
-    phone: '+225 05 66 12 88 41',
-    email: 'paul.agbo@livreur.ci',
+    phone: '+229 95 66 12 88',
+    email: 'paul.agbo@livreur.bj',
     avatarInitials: 'PA',
     rating: 4.8,
     totalDeliveries: 185,
     vehicle: 'Boxer 150',
-    vehiclePlate: 'CI-1102-TG',
-    zone: 'Zongo / Treichville',
+    vehiclePlate: 'BJ-1102-RB',
+    zone: 'Cotonou - Akpakpa',
     distanceKm: 2.5,
     etaMinutes: 12,
     status: 'en_ligne',
@@ -133,14 +155,14 @@ export const INITIAL_COURIERS: Courier[] = [
   {
     id: 'c-ibrahim',
     name: 'Ibrahim Koné',
-    phone: '+225 07 19 88 44 22',
-    email: 'ibrahim.kone@coursier-express.ci',
+    phone: '+229 97 19 88 44',
+    email: 'ibrahim.kone@coursier-express.bj',
     avatarInitials: 'IK',
     rating: 5.0,
     totalDeliveries: 420,
     vehicle: 'Yamaha FZ / Honda CG',
-    vehiclePlate: 'CI-9043-AB',
-    zone: 'Angré / Riviera',
+    vehiclePlate: 'BJ-9043-RB',
+    zone: 'Abomey-Calavi / Godomey',
     distanceKm: 3.1,
     etaMinutes: 15,
     status: 'en_ligne',
@@ -155,14 +177,14 @@ export const INITIAL_COURIERS: Courier[] = [
   {
     id: 'c-mamadou',
     name: 'Mamadou Doumbia',
-    phone: '+225 05 77 33 22 11',
-    email: 'mamadou.d@livralink.ci',
+    phone: '+229 95 77 33 22',
+    email: 'mamadou.d@livralink.bj',
     avatarInitials: 'MD',
     rating: 4.9,
     totalDeliveries: 280,
     vehicle: 'Yamaha NMAX',
-    vehiclePlate: 'CI-4491-CC',
-    zone: 'Plateau / Cocody',
+    vehiclePlate: 'BJ-4491-RB',
+    zone: 'Cotonou - Cadjehoun / Haie Vive',
     distanceKm: 1.8,
     etaMinutes: 10,
     status: 'en_course',
@@ -177,14 +199,14 @@ export const INITIAL_COURIERS: Courier[] = [
   {
     id: 'c-moussa',
     name: 'Moussa Touré',
-    phone: '+225 05 64 22 88 19',
-    email: 'moussa.t@coursier.ci',
+    phone: '+229 95 64 22 88',
+    email: 'moussa.t@coursier.bj',
     avatarInitials: 'MT',
     rating: 4.8,
     totalDeliveries: 210,
     vehicle: 'TVS Apache 160',
-    vehiclePlate: 'CI-5521-YZ',
-    zone: 'Treichville / Plateau',
+    vehiclePlate: 'BJ-5521-RB',
+    zone: 'Cotonou - Fidjrossè / Kouhounou',
     distanceKm: 2.1,
     etaMinutes: 11,
     status: 'en_course',
@@ -198,14 +220,14 @@ export const INITIAL_COURIERS: Courier[] = [
   {
     id: 'c-seydou',
     name: 'Seydou Diabaté',
-    phone: '+225 07 88 12 34 56',
-    email: 'seydou.diabate@coursier.ci',
+    phone: '+229 97 88 12 34',
+    email: 'seydou.diabate@coursier.bj',
     avatarInitials: 'SD',
     rating: 5.0,
     totalDeliveries: 380,
     vehicle: 'Bajaj Pulsar',
-    vehiclePlate: 'CI-7734-DK',
-    zone: 'Riviera Palmeraie',
+    vehiclePlate: 'BJ-7734-RB',
+    zone: 'Porto-Novo & Sèmè-Kpodji',
     distanceKm: 1.5,
     etaMinutes: 8,
     status: 'en_ligne',
@@ -219,14 +241,14 @@ export const INITIAL_COURIERS: Courier[] = [
   {
     id: 'c-bakary',
     name: 'Bakary Sissoko',
-    phone: '+225 07 11 22 33 44',
-    email: 'bakary.s@coursier.ci',
+    phone: '+229 97 11 22 33',
+    email: 'bakary.s@coursier.bj',
     avatarInitials: 'BS',
     rating: 3.5,
     totalDeliveries: 42,
     vehicle: 'Scooter 110cc',
-    vehiclePlate: 'CI-9901-AA',
-    zone: 'Yopougon',
+    vehiclePlate: 'BJ-9901-RB',
+    zone: 'Abomey-Calavi - Tankpè',
     distanceKm: 4.2,
     etaMinutes: 20,
     status: 'suspendu',
@@ -244,19 +266,19 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
   {
     id: '#LL-4192',
     clientName: 'Sarah Kouamé',
-    clientPhone: '+225 07 48 92 11 04',
+    clientPhone: '+229 97 48 92 11',
     clientNote: 'Appeler avant départ pour confirmation présence',
     isClientVerified: true,
     channel: 'WhatsApp',
     pickupLocation: {
-      name: 'Boutique Glam Chic',
-      address: 'Boulevard Latrille, Résidence les Arums',
-      commune: 'Cocody Angré 8ème tranche'
+      name: 'Boutique Glam Chic Cotonou',
+      address: 'Avenue Jean-Paul II, Résidence les Palmiers',
+      commune: 'Cotonou - Haie Vive'
     },
     dropoffLocation: {
       name: 'Sarah Kouamé',
       address: 'Résidence Les Jardins, Bâtiment B, Apt 14 (Code: 2489)',
-      commune: 'Cocody Danga',
+      commune: 'Cotonou - Cadjehoun',
       details: 'Sonner à l\'interphone 14B ou laisser au vigile si indisponible.'
     },
     itemDescription: 'Sac à main cuir & coffret cosmétique',
@@ -270,32 +292,32 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
     statusNote: 'En cours d\'acheminement - ETA 14:38 (~6 min)',
     createdAt: '13:45',
     estimatedArrival: '14:38',
-    courier: INITIAL_COURIERS[0], // David
+    courier: INITIAL_COURIERS[0], // Awa Véloce Livraisons
     timeline: [
       { id: 't1', stepNumber: 1, title: 'Commande créée', description: 'Enregistrée via WhatsApp Checkout', timestamp: '13:45', status: 'completed' },
-      { id: 't2', stepNumber: 2, title: 'Livreur assigné', description: 'Attribuée à David (Yamaha 125)', timestamp: '13:52', status: 'completed' },
-      { id: 't3', stepNumber: 3, title: 'Mission acceptée', description: 'Coursier en route vers la boutique', timestamp: '13:55', status: 'completed' },
+      { id: 't2', stepNumber: 2, title: 'Livreur assigné', description: 'Attribuée à Awa (Scooter Électrique)', timestamp: '13:52', status: 'completed' },
+      { id: 't3', stepNumber: 3, title: 'Mission acceptée', description: 'Coursière en route vers la boutique', timestamp: '13:55', status: 'completed' },
       { id: 't4', stepNumber: 4, title: 'Colis récupéré', description: 'Scan QR & vérification au comptoir', timestamp: '14:10', status: 'completed' },
-      { id: 't5', stepNumber: 5, title: 'En cours de livraison', description: 'En transit vers Cocody Danga (1.2 km restant)', timestamp: '14:38', status: 'active' },
+      { id: 't5', stepNumber: 5, title: 'En cours de livraison', description: 'En transit vers Cadjehoun (1.2 km restant)', timestamp: '14:38', status: 'active' },
       { id: 't6', stepNumber: 6, title: 'Preuve de livraison (POD)', description: 'Validation par code OTP 4 chiffres & photo', status: 'pending' }
     ]
   },
   {
     id: '#LL-4191',
     clientName: 'Marc Antoine B.',
-    clientPhone: '+225 05 64 22 88 19',
+    clientPhone: '+229 95 64 22 88',
     clientNote: 'Bureau 802, demander l\'accueil',
     isClientVerified: true,
     channel: 'WhatsApp',
     pickupLocation: {
-      name: 'Boutique Glam Chic',
-      address: 'Boulevard Latrille',
-      commune: 'Cocody Angré'
+      name: 'Boutique Glam Chic Cotonou',
+      address: 'Avenue Jean-Paul II',
+      commune: 'Cotonou - Haie Vive'
     },
     dropoffLocation: {
       name: 'Marc Antoine B.',
-      address: 'Immeuble CCIA, 8ème étage, Porte 802',
-      commune: 'Plateau'
+      address: 'Immeuble Ganhi, 8ème étage, Porte 802',
+      commune: 'Cotonou - Cadjehoun'
     },
     itemDescription: 'Ensemble costume & cravate soie',
     itemWeightKg: 1.8,
@@ -314,26 +336,26 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
       { id: 't2', stepNumber: 2, title: 'Livreur assigné', description: 'Attribuée à Moussa T.', timestamp: '14:05', status: 'completed' },
       { id: 't3', stepNumber: 3, title: 'Mission acceptée', description: 'En route vers boutique Glam Chic (~4 min)', timestamp: '14:08', status: 'active' },
       { id: 't4', stepNumber: 4, title: 'Colis récupéré', description: 'Enlèvement boutique', status: 'pending' },
-      { id: 't5', stepNumber: 5, title: 'En cours de livraison', description: 'Trajet vers Plateau', status: 'pending' },
+      { id: 't5', stepNumber: 5, title: 'En cours de livraison', description: 'Trajet vers Ganhi / Cadjehoun', status: 'pending' },
       { id: 't6', stepNumber: 6, title: 'Livrée (POD)', description: 'Signature client', status: 'pending' }
     ]
   },
   {
     id: '#LL-4190',
     clientName: 'Aïcha Diop',
-    clientPhone: '+225 01 70 33 45 90',
+    clientPhone: '+229 96 70 33 45',
     clientNote: 'Gardiennage à l\'entrée',
     isClientVerified: true,
     channel: 'WhatsApp',
     pickupLocation: {
-      name: 'Boutique Glam Chic',
-      address: 'Boulevard Latrille',
-      commune: 'Cocody Angré'
+      name: 'Boutique Glam Chic Cotonou',
+      address: 'Avenue Jean-Paul II',
+      commune: 'Cotonou - Haie Vive'
     },
     dropoffLocation: {
       name: 'Aïcha Diop',
-      address: 'Rue Paul Langevin, Résidence Iris',
-      commune: 'Marcory Zone 4'
+      address: 'Boulevard de la Marina, Résidence Iris',
+      commune: 'Cotonou - Akpakpa'
     },
     itemDescription: 'Chaussures talons hauts & pochette soirée',
     itemWeightKg: 1.5,
@@ -357,19 +379,19 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
   {
     id: '#LL-4188',
     clientName: 'Clarisse N\'Guessan',
-    clientPhone: '+225 07 88 12 34 56',
+    clientPhone: '+229 97 88 12 34',
     clientNote: 'Remis en mains propres',
     isClientVerified: true,
     channel: 'WhatsApp',
     pickupLocation: {
-      name: 'Boutique Glam Chic',
-      address: 'Boulevard Latrille',
-      commune: 'Cocody Angré'
+      name: 'Boutique Glam Chic Cotonou',
+      address: 'Avenue Jean-Paul II',
+      commune: 'Cotonou - Haie Vive'
     },
     dropoffLocation: {
       name: 'Clarisse N\'Guessan',
-      address: 'Rond-point Mitterrand, Villa 18',
-      commune: 'Riviera Palmeraie'
+      address: 'Carrefour Fidjrossè Calvaire, Villa 18',
+      commune: 'Cotonou - Fidjrossè'
     },
     itemDescription: 'Robe de cocktail & bijoux dorés',
     itemWeightKg: 0.9,
@@ -392,27 +414,27 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
       { id: 't1', stepNumber: 1, title: 'Commande créée', description: 'Validée', timestamp: '11:20', status: 'completed' },
       { id: 't2', stepNumber: 2, title: 'Livreur assigné', description: 'Seydou D.', timestamp: '11:24', status: 'completed' },
       { id: 't3', stepNumber: 3, title: 'Mission acceptée', description: 'Confirmée', timestamp: '11:25', status: 'completed' },
-      { id: 't4', stepNumber: 4, title: 'Colis récupéré', description: 'Boutique Glam Chic', timestamp: '11:40', status: 'completed' },
-      { id: 't5', stepNumber: 5, title: 'En livraison', description: 'Vers Riviera Palmeraie', timestamp: '11:58', status: 'completed' },
+      { id: 't4', stepNumber: 4, title: 'Colis récupéré', description: 'Boutique Glam Chic Cotonou', timestamp: '11:40', status: 'completed' },
+      { id: 't5', stepNumber: 5, title: 'En livraison', description: 'Vers Fidjrossè', timestamp: '11:58', status: 'completed' },
       { id: 't6', stepNumber: 6, title: 'Livrée (POD validée)', description: 'Code OTP #8492 vérifié à 12:04', timestamp: '12:04', status: 'completed' }
     ]
   },
   {
     id: '#LL-4185',
     clientName: 'Kevin Kouassi',
-    clientPhone: '+225 05 11 99 77 33',
-    clientNote: 'Près de la Pharmacie Lumière',
+    clientPhone: '+229 95 11 99 77',
+    clientNote: 'Près de la Pharmacie Haie Vive',
     isClientVerified: false,
     channel: 'WhatsApp',
     pickupLocation: {
-      name: 'Boutique Glam Chic',
-      address: 'Boulevard Latrille',
-      commune: 'Cocody Angré'
+      name: 'Boutique Glam Chic Cotonou',
+      address: 'Avenue Jean-Paul II',
+      commune: 'Cotonou - Haie Vive'
     },
     dropoffLocation: {
       name: 'Kevin Kouassi',
-      address: 'Près de la Pharmacie Lumière, Carrefour Siporex',
-      commune: 'Yopougon Ananeraie'
+      address: 'Près de la Pharmacie Godomey, Carrefour Godomey',
+      commune: 'Abomey-Calavi - Godomey'
     },
     itemDescription: 'Montre chronographe & bracelet cuir',
     itemWeightKg: 0.6,
@@ -428,8 +450,8 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
     timeline: [
       { id: 't1', stepNumber: 1, title: 'Commande créée', description: 'Validée', timestamp: '09:40', status: 'completed' },
       { id: 't2', stepNumber: 2, title: 'Livreur assigné', description: 'Ibrahim K.', timestamp: '09:44', status: 'completed' },
-      { id: 't3', stepNumber: 3, title: 'Colis récupéré', description: 'Départ Yopougon', timestamp: '10:05', status: 'completed' },
-      { id: 't4', stepNumber: 4, title: 'En cours', description: 'Sur place à Ananeraie', timestamp: '10:45', status: 'completed' },
+      { id: 't3', stepNumber: 3, title: 'Colis récupéré', description: 'Départ Godomey', timestamp: '10:05', status: 'completed' },
+      { id: 't4', stepNumber: 4, title: 'En cours', description: 'Sur place à Godomey', timestamp: '10:45', status: 'completed' },
       { id: 't5', stepNumber: 5, title: 'Incident constaté', description: '3 tentatives d\'appels sans réponse', timestamp: '11:02', status: 'completed' },
       { id: 't6', stepNumber: 6, title: 'Échec documenté', description: 'Colis retourné / Reprogrammation requise', timestamp: '11:15', status: 'completed' }
     ]
@@ -437,19 +459,19 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
   {
     id: '#LL-4182',
     clientName: 'Estelle Touré',
-    clientPhone: '+225 07 55 43 21 00',
+    clientPhone: '+229 97 55 43 21',
     clientNote: 'Rue des Ambassades, Villa 12',
     isClientVerified: true,
     channel: 'WhatsApp',
     pickupLocation: {
-      name: 'Boutique Glam Chic',
-      address: 'Boulevard Latrille',
-      commune: 'Cocody Angré'
+      name: 'Boutique Glam Chic Cotonou',
+      address: 'Avenue Jean-Paul II',
+      commune: 'Cotonou - Haie Vive'
     },
     dropoffLocation: {
       name: 'Estelle Touré',
       address: 'Rue des Ambassades, Villa 12',
-      commune: 'Cocody Danga'
+      commune: 'Cotonou - Cadjehoun'
     },
     itemDescription: 'Coffret parfums & crèmes bio',
     itemWeightKg: 1.1,
@@ -471,25 +493,25 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
       { id: 't1', stepNumber: 1, title: 'Commande créée', description: 'WhatsApp direct', timestamp: '08:30', status: 'completed' },
       { id: 't2', stepNumber: 2, title: 'Livreur assigné', description: 'Moussa T.', timestamp: '08:35', status: 'completed' },
       { id: 't3', stepNumber: 3, title: 'Colis récupéré', description: 'Pris en charge', timestamp: '08:50', status: 'completed' },
-      { id: 't4', stepNumber: 4, title: 'En cours', description: 'Trajet Cocody Danga', timestamp: '09:05', status: 'completed' },
+      { id: 't4', stepNumber: 4, title: 'En cours', description: 'Trajet Cadjehoun', timestamp: '09:05', status: 'completed' },
       { id: 't5', stepNumber: 5, title: 'Livrée (POD)', description: 'Photo de remise horodatée validée', timestamp: '09:12', status: 'completed' }
     ]
   },
   {
     id: '#LL-1048',
     clientName: 'Mme Bamba Fatou',
-    clientPhone: '+225 07 22 33 44 55',
+    clientPhone: '+229 97 22 33 44',
     isClientVerified: true,
     channel: 'WhatsApp',
     pickupLocation: {
-      name: 'Boutique Glam Chic',
-      address: 'Boulevard Latrille',
-      commune: 'Cocody Angré 8e'
+      name: 'Boutique Glam Chic Cotonou',
+      address: 'Avenue Jean-Paul II',
+      commune: 'Cotonou - Haie Vive'
     },
     dropoffLocation: {
       name: 'Mme Bamba Fatou',
-      address: 'Rue des Majorettes, Villa 4',
-      commune: 'Marcory Zone 4'
+      address: 'Rue de la Marina, Villa 4',
+      commune: 'Cotonou - Akpakpa'
     },
     itemDescription: 'Tenues traditionnelles & pagnes',
     itemWeightKg: 2.0,
@@ -499,32 +521,32 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
     deliveryFee: 2400,
     totalCustomerPayable: 62400,
     status: 'en_cours',
-    statusNote: 'En transit - 11.4 km • Arrivée estimée dans ~14 min',
+    statusNote: 'En transit - 4.2 km • Arrivée estimée dans ~10 min',
     createdAt: '14:15',
     estimatedArrival: '14:45',
     courier: INITIAL_COURIERS[0], // David K.
     timeline: [
       { id: 't1', stepNumber: 1, title: 'Créée', description: 'WhatsApp', timestamp: '14:15', status: 'completed' },
       { id: 't2', stepNumber: 2, title: 'Colis récupéré', description: 'Enlevé à 14:22', timestamp: '14:22', status: 'completed' },
-      { id: 't3', stepNumber: 3, title: 'En transit', description: 'Vers Marcory Zone 4', timestamp: '14:35', status: 'active' },
+      { id: 't3', stepNumber: 3, title: 'En transit', description: 'Vers Cotonou Akpakpa', timestamp: '14:35', status: 'active' },
       { id: 't4', stepNumber: 4, title: 'Livrée', description: 'Attente', status: 'pending' }
     ]
   },
   {
     id: '#LL-1047',
     clientName: 'Alain Kouassi',
-    clientPhone: '+225 05 12 77 99 00',
+    clientPhone: '+229 95 12 77 99',
     isClientVerified: true,
     channel: 'Instagram',
     pickupLocation: {
-      name: 'TechZone CI',
-      address: 'Plateau CCIA',
-      commune: 'Plateau'
+      name: 'TechZone Bénin',
+      address: 'Avenue Steinmetz',
+      commune: 'Cotonou - Cadjehoun'
     },
     dropoffLocation: {
       name: 'Alain Kouassi',
-      address: 'Avenue 12, Rue 14',
-      commune: 'Treichville'
+      address: 'Avenue Clozel, Dantokpa',
+      commune: 'Cotonou - Dantokpa'
     },
     itemDescription: 'AirPods Pro & coque de protection',
     itemWeightKg: 0.5,
@@ -547,18 +569,18 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
   {
     id: '#LL-1045',
     clientName: 'Roland Yao',
-    clientPhone: '+225 01 44 55 66 77',
+    clientPhone: '+229 96 44 55 66',
     isClientVerified: true,
     channel: 'TikTok',
     pickupLocation: {
-      name: 'Mode Abidjan',
-      address: 'Riviera 2',
-      commune: 'Riviera'
+      name: 'Mode Cotonou',
+      address: 'Haie Vive',
+      commune: 'Cotonou - Haie Vive'
     },
     dropoffLocation: {
       name: 'Roland Yao',
-      address: 'Yopougon Ananeraie',
-      commune: 'Yopougon'
+      address: 'Abomey-Calavi Centre, Carrefour Arconville',
+      commune: 'Abomey-Calavi - Centre'
     },
     itemDescription: 'Colis Vêtements (2.4 kg)',
     itemWeightKg: 2.4,
@@ -578,18 +600,18 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
   {
     id: '#LL-1042',
     clientName: 'Destinataire Anonyme',
-    clientPhone: '+225 07 00 00 00 00',
+    clientPhone: '+229 97 00 00 00',
     isClientVerified: false,
     channel: 'Instagram',
     pickupLocation: {
       name: 'Kréa Fashion',
-      address: 'Koumassi Remblais',
-      commune: 'Koumassi'
+      address: 'Akpakpa Dodomè',
+      commune: 'Cotonou - Akpakpa'
     },
     dropoffLocation: {
       name: 'Client Inconnu',
       address: 'Adresse erronée / Non localisée',
-      commune: 'Koumassi'
+      commune: 'Cotonou - Akpakpa'
     },
     itemDescription: 'Robe imprimée',
     itemWeightKg: 0.8,
@@ -614,11 +636,11 @@ export const INITIAL_KYC_REQUESTS: KYCUserRequest[] = [
   {
     id: 'kyc-1',
     fullName: 'Moussa Bamba',
-    phone: '+225 07 77 12 90 44',
+    phone: '+229 97 77 12 90',
     role: 'coursier',
     vehicleType: 'Moto TVS Apache 160',
-    idNumber: 'CI-0089248-B',
-    operatingZone: 'Yopougon / Attécoubé',
+    idNumber: 'BJ-0089248-B',
+    operatingZone: 'Cotonou / Akpakpa',
     submittedAt: 'Aujourd\'hui à 11:20',
     status: 'en_attente',
     documents: { cni: true, permis: true, assurance: true }
@@ -626,11 +648,11 @@ export const INITIAL_KYC_REQUESTS: KYCUserRequest[] = [
   {
     id: 'kyc-2',
     fullName: 'Koffi Kouamé Jean',
-    phone: '+225 05 44 88 12 00',
+    phone: '+229 95 44 88 12',
     role: 'coursier',
     vehicleType: 'Scooter Yamaha RayZR',
-    idNumber: 'CI-0044910-K',
-    operatingZone: 'Cocody / Riviera',
+    idNumber: 'BJ-0044910-K',
+    operatingZone: 'Cotonou - Cadjehoun / Haie Vive',
     submittedAt: 'Aujourd\'hui à 12:45',
     status: 'en_attente',
     documents: { cni: true, permis: true, assurance: false }
@@ -638,11 +660,11 @@ export const INITIAL_KYC_REQUESTS: KYCUserRequest[] = [
   {
     id: 'kyc-3',
     fullName: 'Amadou Touré',
-    phone: '+225 01 22 99 88 77',
+    phone: '+229 96 22 99 88',
     role: 'coursier',
     vehicleType: 'Haojue 125',
-    idNumber: 'CI-0099412-T',
-    operatingZone: 'Marcory / Koumassi',
+    idNumber: 'BJ-0099412-T',
+    operatingZone: 'Abomey-Calavi / Godomey',
     submittedAt: 'Aujourd\'hui à 13:10',
     status: 'valide',
     documents: { cni: true, permis: true, assurance: true }
@@ -650,11 +672,11 @@ export const INITIAL_KYC_REQUESTS: KYCUserRequest[] = [
   {
     id: 'kyc-4',
     fullName: 'Boutique Glamour Chic',
-    phone: '+225 07 48 92 11 04',
+    phone: '+229 97 48 92 11',
     role: 'marchand',
     vehicleType: 'Magasin Physique & En ligne',
-    idNumber: 'RCCM-CI-ABJ-2023-B-148',
-    operatingZone: 'Cocody Angré',
+    idNumber: 'RCCM-RB-COT-2023-B-148',
+    operatingZone: 'Cotonou - Haie Vive',
     submittedAt: 'Hier à 16:30',
     status: 'valide',
     documents: { cni: true, permis: true, assurance: true }
@@ -662,14 +684,16 @@ export const INITIAL_KYC_REQUESTS: KYCUserRequest[] = [
 ];
 
 export const INITIAL_MERCHANT_SETTINGS: MerchantSettings = {
-  storeName: 'Boutique Glam Chic',
+  storeName: 'Boutique Glam Chic Cotonou',
   managerName: 'Sarah Kouamé',
-  phone: '+225 07 48 92 11 04',
-  email: 'contact@glamchic-abidjan.ci',
-  defaultPickupAddress: 'Cocody Angré 8ème tranche, Boulevard Latrille, Abidjan',
-  gpsCoordinates: '5.3892° N, 3.9856° W',
+  phone: '+229 97 48 92 11',
+  email: 'contact@glamchic-cotonou.bj',
+  storeCommune: 'Cotonou - Haie Vive',
+  defaultPickupAddress: 'Haie Vive, Avenue Jean-Paul II, Cotonou, Bénin',
+  gpsCoordinates: '6.3571° N, 2.4175° E',
+  storeCoordinates: [6.3571, 2.4175],
   defaultExpress: true,
-  frequentZones: ['Cocody', 'Plateau', 'Marcory', 'Yopougon', 'Deux Plateaux'],
+  frequentZones: ['Cotonou - Haie Vive', 'Cotonou - Cadjehoun', 'Cotonou - Akpakpa', 'Abomey-Calavi', 'Porto-Novo'],
   permanentInstructions: 'Toujours appeler la boutique 10 min avant l\'arrivée pour la remise du colis scellé.',
   notifyOnCreated: true,
   notifyOnStatusChange: true,
@@ -679,24 +703,24 @@ export const INITIAL_MERCHANT_SETTINGS: MerchantSettings = {
   channelWhatsApp: true,
   channelSMS: true,
   channelEmail: true,
-  defaultPaymentMethod: 'MTN Mobile Money (+225 05 •• •• 42)',
+  defaultPaymentMethod: 'MTN Mobile Money Bénin (+229 97 •• •• 42)',
   twoFactorAuth: true
 };
 
 export const INITIAL_COURIER_SETTINGS: CourierSettings = {
-  fullName: 'David Kouadio',
-  phone: '+225 07 48 92 11 04',
-  email: 'david.kouadio@coursier-link.ci',
-  parkingBaseAddress: 'Carrefour Duncan, Cocody 2 Plateaux, Abidjan',
+  fullName: 'Awa Véloce Livraisons',
+  phone: '+229 95 87 65 43',
+  email: 'awa.veloce@gmail.com',
+  parkingBaseAddress: 'Carrefour de l\'Étoile Rouge, Cotonou, Bénin',
   isAvailable: true,
   workingHours: 'Lundi à Samedi de 08:00 à 19:30',
   soundAlerts: true,
-  activeZones: ['Centre-ville', 'Zongo', 'Akpakpa'],
-  vehicleType: 'Moto · Yamaha 125cc',
-  vehiclePlate: 'AB-8492-CI',
+  activeZones: ['Cotonou Centre', 'Cadjehoun', 'Akpakpa', 'Abomey-Calavi'],
+  vehicleType: 'Scooter Électrique / Van Léger',
+  vehiclePlate: 'BJ-6621-RB',
   vehicleInsuranceUpToDate: true,
-  defaultPayoutMethod: 'MTN Mobile Money',
-  payoutPhone: '+225 07 •• •• 04',
+  defaultPayoutMethod: 'MTN Mobile Money Bénin',
+  payoutPhone: '+229 95 •• •• 43',
   twoFactorAuth: true
 };
 
@@ -713,28 +737,28 @@ export const INITIAL_AUDIT_LOGS: SystemAuditLog[] = [
     timestamp: '14:15:22',
     type: 'weather',
     title: 'Majoration dynamique pluie levée',
-    details: 'Zone Cocody & Plateau. Retour automatique aux tarifs nominaux de livraison.'
+    details: 'Zone Cotonou Littoral. Retour automatique aux tarifs nominaux de livraison.'
   },
   {
     id: 'log-3',
     timestamp: '13:48:19',
     type: 'dispute',
     title: 'Litige #LL-1029 résolu',
-    details: 'Colis re-routé vers le bon destinataire à Treichville sans frais additionnels.'
+    details: 'Colis re-routé vers le bon destinataire à Cadjehoun sans frais additionnels.'
   },
   {
     id: 'log-4',
     timestamp: '12:10:04',
     type: 'pricing',
     title: 'Moteur tarifaire synchronisé',
-    details: 'Barème kilométrique 0-3km: 1000 FCFA, 3-5km: 1500 FCFA, +150 FCFA/km.'
+    details: 'Tarif officiel : 100 FCFA par kilomètre calculé via Google Maps Bénin.'
   }
 ];
 
 export const PRICING_RULES: PricingRule = {
-  baseDistanceKm: 3,
-  baseFeeFCFA: 1000,
-  extraPerKmFCFA: 150,
-  fragileSurchargeFCFA: 200,
+  baseDistanceKm: 1,
+  baseFeeFCFA: 100,
+  extraPerKmFCFA: 100,
+  fragileSurchargeFCFA: 0,
   commissionRatePercent: 0 // 0% MVP Launch Offer
 };

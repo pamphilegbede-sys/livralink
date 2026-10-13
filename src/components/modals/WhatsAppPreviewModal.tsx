@@ -15,7 +15,17 @@ export const WhatsAppPreviewModal: React.FC = () => {
   };
 
   const handleOpenWhatsApp = () => {
-    const cleanPhone = whatsAppData.phone.replace(/[^0-9]/g, '');
+    let cleanPhone = whatsAppData.phone.replace(/[^0-9]/g, '');
+    // In Benin (+229), format standard 8-digit numbers or remove leading zeros
+    if (cleanPhone.length === 8) {
+      cleanPhone = '229' + cleanPhone;
+    } else if (cleanPhone.startsWith('00229')) {
+      cleanPhone = cleanPhone.substring(2);
+    } else if (cleanPhone.length === 10 && cleanPhone.startsWith('01')) {
+      cleanPhone = '229' + cleanPhone.substring(2);
+    } else if (!cleanPhone.startsWith('229')) {
+      cleanPhone = '229' + cleanPhone;
+    }
     const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(whatsAppData.message)}`;
     window.open(url, '_blank', 'noopener,noreferrer');
   };
@@ -63,7 +73,7 @@ export const WhatsAppPreviewModal: React.FC = () => {
             className="w-full py-3 px-4 bg-[#25D366] hover:bg-[#128C7E] text-white rounded-xl font-bold text-xs shadow-md transition-all active:scale-95 flex items-center justify-center gap-2"
           >
             <span className="material-symbols-outlined text-base">send</span>
-            <span>Ouvrir dans WhatsApp (+225)</span>
+            <span>Ouvrir dans WhatsApp (+229 Bénin)</span>
           </button>
           <button
             type="button"

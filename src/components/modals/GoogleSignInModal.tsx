@@ -74,7 +74,7 @@ export const GoogleSignInModal: React.FC<{
         uid: userUid,
         email: email,
         fullName: name,
-        phone: '+225 07 48 12 34',
+        phone: '+229 97 48 12 34',
         role: targetRole,
         storeName: storeTitle,
         vehicleType: targetRole === 'livreur' ? 'Moto 150cc Pro' : undefined,
@@ -89,7 +89,7 @@ export const GoogleSignInModal: React.FC<{
           storeName: storeTitle || 'Boutique Marchand',
           managerName: name,
           email: email,
-          phone: '+225 07 48 12 34',
+          phone: '+229 97 48 12 34',
         }));
         setCurrentView('vendeur_dashboard');
         showToast(`Bienvenue ${name} ! Connecté sur votre espace Vendeur.`, 'success');
@@ -98,7 +98,7 @@ export const GoogleSignInModal: React.FC<{
           ...prev,
           fullName: name,
           email: email,
-          phone: '+225 07 48 12 34',
+          phone: '+229 97 48 12 34',
         }));
         setCurrentView('livreur_dashboard');
         showToast(`Bienvenue ${name} ! Connecté sur votre espace Livreur.`, 'success');

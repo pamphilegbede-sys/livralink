@@ -18,7 +18,21 @@ if (fs.existsSync(envPath)) {
 console.log('[SERVER INIT] Brevo SMTP User configuré:', process.env.BREVO_SMTP_USER ? 'OUI (' + process.env.BREVO_SMTP_USER + ')' : 'NON');
 
 const app = express();
-const PORT = parseInt(process.env.PORT || '3000', 10);
+// In AI Studio and Cloud Run environments, DEFAULT_APP_PORT is 3000, while PORT=8080 is reserved for Nginx.
+// Always bind the Express/Vite app to port 3000 unless specified via CLI flag --port.
+let cliPort: number | null = null;
+const portArg = process.argv.find((arg) => arg.startsWith('--port'));
+if (portArg) {
+  if (portArg.includes('=')) {
+    cliPort = parseInt(portArg.split('=')[1], 10);
+  } else {
+    const idx = process.argv.indexOf('--port');
+    if (idx !== -1 && process.argv[idx + 1]) {
+      cliPort = parseInt(process.argv[idx + 1], 10);
+    }
+  }
+}
+const PORT = cliPort || parseInt(process.env.APP_PORT || process.env.DEFAULT_APP_PORT || '3000', 10);
 
 app.use(express.json());
 
@@ -418,15 +432,15 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response): Promis
   }
 });
 
-// Health check endpoint for Render / cloud monitoring
-app.get('/healthz', (_req: Request, res: Response) => {
+// Health check endpoints for Render / cloud monitoring
+app.get(['/healthz', '/api/healthz'], (_req: Request, res: Response) => {
   res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
 });
 
 async function startServer() {
   const distPath = path.resolve(process.cwd(), 'dist');
   const hasDist = fs.existsSync(path.resolve(distPath, 'index.html'));
-  const isProduction = process.env.NODE_ENV === 'production' || hasDist;
+  const isProduction = process.env.NODE_ENV === 'production';
 
   if (isProduction && hasDist) {
     console.log(`[SERVER] Mode Production actif - Fichiers servis depuis: ${distPath}`);
@@ -457,7 +471,11 @@ async function startServer() {
   } else {
     console.log('[SERVER] Mode Développement actif - Démarrage du middleware Vite.');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+        ws: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -465,6 +483,16 @@ async function startServer() {
 
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[SERVER] LivraLink running at http://0.0.0.0:${PORT} (Mode: ${isProduction ? 'production' : 'development'})`);
+  });
+
+  server.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(`[SERVER] Port ${PORT} déjà occupé. Tentative de gestion propre.`);
+      process.exit(1);
+    } else {
+      console.error('[SERVER] Erreur serveur:', err);
+      process.exit(1);
+    }
   });
 
   // Graceful shutdown on Render / container stop
