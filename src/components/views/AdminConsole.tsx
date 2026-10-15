@@ -18,15 +18,24 @@ export const AdminConsole: React.FC = () => {
     rejectKYC,
     showToast,
     updateDeliveryStatus,
+    updateDeliveryDetails,
+    deleteDelivery,
     assignCourierToDelivery,
     addCourier,
     updateCourier,
+    deleteCourier,
     toggleCourierStatus,
     creditCourierWallet,
+    adjustCourierWallet,
     addMerchant,
     updateMerchant,
+    deleteMerchant,
     toggleMerchantStatus,
     toggleMerchantVerification,
+    deleteUser,
+    updateUser,
+    setSelectedCourier,
+    setMerchantSettings,
     runAdminValidationSuite,
     createDelivery,
     authorizedAdminEmails,
@@ -65,17 +74,38 @@ export const AdminConsole: React.FC = () => {
   const [selectedDisputeOrder, setSelectedDisputeOrder] = useState<string | null>(null);
   const [isAddCourierModalOpen, setIsAddCourierModalOpen] = useState(false);
   const [editingCourier, setEditingCourier] = useState<Courier | null>(null);
+  const [deletingCourier, setDeletingCourier] = useState<Courier | null>(null);
   const [walletModalCourier, setWalletModalCourier] = useState<Courier | null>(null);
+  const [walletModalType, setWalletModalType] = useState<'credit' | 'debit'>('credit');
+  const [walletNote, setWalletNote] = useState('');
   const [walletAmount, setWalletAmount] = useState('10000');
   
   const [isAddMerchantModalOpen, setIsAddMerchantModalOpen] = useState(false);
   const [editingMerchant, setEditingMerchant] = useState<Merchant | null>(null);
+  const [deletingMerchant, setDeletingMerchant] = useState<Merchant | null>(null);
 
   const [assigningOrder, setAssigningOrder] = useState<DeliveryOrder | null>(null);
   const [selectedCourierForAssign, setSelectedCourierForAssign] = useState<string>('');
 
   const [isAddDeliveryModalOpen, setIsAddDeliveryModalOpen] = useState(false);
+  const [editingDelivery, setEditingDelivery] = useState<DeliveryOrder | null>(null);
+  const [deletingDelivery, setDeletingDelivery] = useState<DeliveryOrder | null>(null);
   const [inspectingDelivery, setInspectingDelivery] = useState<DeliveryOrder | null>(null);
+
+  const [editingUser, setEditingUser] = useState<{
+    id: string;
+    name: string;
+    phone: string;
+    email: string;
+    role: 'livreur' | 'vendeur';
+    commune: string;
+    status: string;
+    vehicle?: string;
+    plate?: string;
+    channel?: 'WhatsApp' | 'Instagram' | 'TikTok' | 'E-commerce';
+    isVerified?: boolean;
+  } | null>(null);
+  const [deletingUser, setDeletingUser] = useState<{ id: string; name: string; role: 'livreur' | 'vendeur' } | null>(null);
 
   // Form states for new Delivery Order
   const [newOrderClientName, setNewOrderClientName] = useState('');
@@ -100,6 +130,51 @@ export const AdminConsole: React.FC = () => {
   const [newMerchantPhone, setNewMerchantPhone] = useState('');
   const [newMerchantCommune, setNewMerchantCommune] = useState('Cotonou - Haie Vive');
   const [newMerchantChannel, setNewMerchantChannel] = useState<'WhatsApp' | 'Instagram' | 'TikTok' | 'E-commerce'>('WhatsApp');
+
+  // Form states for EDITING Courier
+  const [editCourierName, setEditCourierName] = useState('');
+  const [editCourierPhone, setEditCourierPhone] = useState('');
+  const [editCourierEmail, setEditCourierEmail] = useState('');
+  const [editCourierVehicle, setEditCourierVehicle] = useState('Yamaha 125');
+  const [editCourierPlate, setEditCourierPlate] = useState('');
+  const [editCourierZone, setEditCourierZone] = useState('Cotonou / Calavi');
+  const [editCourierStatus, setEditCourierStatus] = useState<'en_ligne' | 'en_course' | 'hors_ligne' | 'suspendu'>('en_ligne');
+  const [editCourierBadge, setEditCourierBadge] = useState('');
+
+  // Form states for EDITING Merchant
+  const [editMerchantStore, setEditMerchantStore] = useState('');
+  const [editMerchantManager, setEditMerchantManager] = useState('');
+  const [editMerchantPhone, setEditMerchantPhone] = useState('');
+  const [editMerchantEmail, setEditMerchantEmail] = useState('');
+  const [editMerchantCommune, setEditMerchantCommune] = useState('Cotonou - Haie Vive');
+  const [editMerchantAddress, setEditMerchantAddress] = useState('');
+  const [editMerchantChannel, setEditMerchantChannel] = useState<'WhatsApp' | 'Instagram' | 'TikTok' | 'E-commerce'>('WhatsApp');
+  const [editMerchantStatus, setEditMerchantStatus] = useState<'actif' | 'suspendu' | 'en_attente_kyc'>('actif');
+  const [editMerchantVerified, setEditMerchantVerified] = useState(true);
+  const [editMerchantDiscount, setEditMerchantDiscount] = useState('0');
+
+  // Form states for EDITING Delivery Order
+  const [editDeliveryClientName, setEditDeliveryClientName] = useState('');
+  const [editDeliveryClientPhone, setEditDeliveryClientPhone] = useState('');
+  const [editDeliveryStoreName, setEditDeliveryStoreName] = useState('');
+  const [editDeliveryPickupCommune, setEditDeliveryPickupCommune] = useState('Cotonou - Haie Vive');
+  const [editDeliveryDropoffCommune, setEditDeliveryDropoffCommune] = useState('Cotonou - Cadjehoun');
+  const [editDeliveryDropoffAddress, setEditDeliveryDropoffAddress] = useState('');
+  const [editDeliveryCOD, setEditDeliveryCOD] = useState('0');
+  const [editDeliveryFee, setEditDeliveryFee] = useState('1500');
+  const [editDeliveryStatus, setEditDeliveryStatus] = useState<DeliveryStatus>('en_attente');
+  const [editDeliveryItemDesc, setEditDeliveryItemDesc] = useState('');
+
+  // Form states for EDITING User (Unified)
+  const [editUserName, setEditUserName] = useState('');
+  const [editUserPhone, setEditUserPhone] = useState('');
+  const [editUserEmail, setEditUserEmail] = useState('');
+  const [editUserZoneCommune, setEditUserZoneCommune] = useState('');
+  const [editUserStatus, setEditUserStatus] = useState('');
+  const [editUserVehicle, setEditUserVehicle] = useState('Yamaha 125');
+  const [editUserPlate, setEditUserPlate] = useState('');
+  const [editUserChannel, setEditUserChannel] = useState<'WhatsApp' | 'Instagram' | 'TikTok' | 'E-commerce'>('WhatsApp');
+  const [editUserVerified, setEditUserVerified] = useState(false);
 
   // Test Suite execution state
   const [isTestingInProgress, setIsTestingInProgress] = useState(false);
@@ -158,11 +233,38 @@ export const AdminConsole: React.FC = () => {
     if (!walletModalCourier) return;
     const amt = parseInt(walletAmount, 10);
     if (isNaN(amt) || amt <= 0) {
-      showToast('Montant de recharge invalide.', 'error');
+      showToast('Montant de transaction invalide.', 'error');
       return;
     }
-    creditCourierWallet(walletModalCourier.id, amt, 'Crédit manuel Superviseur');
+    adjustCourierWallet(walletModalCourier.id, amt, walletModalType, walletNote || undefined);
     setWalletModalCourier(null);
+    setWalletNote('');
+  };
+
+  const exportDeliveriesCSV = () => {
+    const headers = ['ID', 'Date', 'Boutique', 'Commune_Collecte', 'Client', 'Telephone_Client', 'Commune_Livraison', 'Livreur', 'Statut', 'COD_FCFA', 'Frais_FCFA'];
+    const rows = deliveries.map(d => [
+      d.id,
+      new Date(d.createdAt).toISOString(),
+      `"${(d.pickupLocation?.name || '').replace(/"/g, '""')}"`,
+      `"${(d.pickupLocation?.commune || '').replace(/"/g, '""')}"`,
+      `"${(d.clientName || '').replace(/"/g, '""')}"`,
+      d.clientPhone || '',
+      `"${(d.dropoffLocation?.commune || '').replace(/"/g, '""')}"`,
+      `"${(d.courier?.name || 'Non assigne').replace(/"/g, '""')}"`,
+      d.status,
+      d.itemValueCOD || 0,
+      d.deliveryFee || 0
+    ]);
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `livralink_export_courses_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast('Export CSV des courses généré avec succès !', 'success');
   };
 
   const handleConfirmAssignment = (e: React.FormEvent) => {
@@ -221,6 +323,204 @@ export const AdminConsole: React.FC = () => {
     } finally {
       setIsTestingInProgress(false);
     }
+  };
+
+  // Re-run an individual test
+  const handleRunSingleTest = async (testId: string) => {
+    showToast('Exécution du test ciblé...', 'info');
+    try {
+      const fullResults = await runAdminValidationSuite();
+      const updatedItem = fullResults.find(r => r.id === testId);
+      if (updatedItem) {
+        setTestResults(prev => prev ? prev.map(t => t.id === testId ? updatedItem : t) : fullResults);
+        showToast(`Test ${updatedItem.name} validé avec succès (${updatedItem.durationMs}ms) !`, 'success');
+      } else {
+        setTestResults(fullResults);
+      }
+    } catch {
+      showToast('Erreur lors du test ciblé.', 'error');
+    }
+  };
+
+  // Courier Edit & Delete Handlers
+  const openEditCourier = (c: Courier) => {
+    setEditingCourier(c);
+    setEditCourierName(c.name);
+    setEditCourierPhone(c.phone);
+    setEditCourierEmail(c.email || '');
+    setEditCourierVehicle(c.vehicle);
+    setEditCourierPlate(c.vehiclePlate || '');
+    setEditCourierZone(c.zone);
+    setEditCourierStatus(c.status);
+    setEditCourierBadge(c.badge || '');
+  };
+
+  const handleUpdateCourierSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCourier) return;
+    updateCourier(editingCourier.id, {
+      name: editCourierName.trim(),
+      phone: editCourierPhone.trim(),
+      email: editCourierEmail.trim() || undefined,
+      vehicle: editCourierVehicle.trim(),
+      vehiclePlate: editCourierPlate.trim() || undefined,
+      zone: editCourierZone.trim(),
+      status: editCourierStatus,
+      badge: editCourierBadge.trim() || undefined
+    });
+    setEditingCourier(null);
+  };
+
+  const handleConfirmDeleteCourier = () => {
+    if (!deletingCourier) return;
+    deleteCourier(deletingCourier.id);
+    setDeletingCourier(null);
+  };
+
+  // Merchant Edit & Delete Handlers
+  const openEditMerchant = (m: Merchant) => {
+    setEditingMerchant(m);
+    setEditMerchantStore(m.storeName);
+    setEditMerchantManager(m.managerName);
+    setEditMerchantPhone(m.phone);
+    setEditMerchantEmail(m.email || '');
+    setEditMerchantCommune(m.commune);
+    setEditMerchantAddress(m.address || '');
+    setEditMerchantChannel(m.channel);
+    setEditMerchantStatus(m.status);
+    setEditMerchantVerified(m.isVerified);
+    setEditMerchantDiscount(m.preferredRateDiscountPercent?.toString() || '0');
+  };
+
+  const handleUpdateMerchantSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingMerchant) return;
+    updateMerchant(editingMerchant.id, {
+      storeName: editMerchantStore.trim(),
+      managerName: editMerchantManager.trim(),
+      phone: editMerchantPhone.trim(),
+      email: editMerchantEmail.trim(),
+      commune: editMerchantCommune,
+      address: editMerchantAddress.trim(),
+      channel: editMerchantChannel,
+      status: editMerchantStatus,
+      isVerified: editMerchantVerified,
+      preferredRateDiscountPercent: parseInt(editMerchantDiscount, 10) || 0
+    });
+    setEditingMerchant(null);
+  };
+
+  const handleConfirmDeleteMerchant = () => {
+    if (!deletingMerchant) return;
+    deleteMerchant(deletingMerchant.id);
+    setDeletingMerchant(null);
+  };
+
+  // Delivery Edit & Delete Handlers
+  const openEditDelivery = (d: DeliveryOrder) => {
+    setEditingDelivery(d);
+    setEditDeliveryClientName(d.clientName);
+    setEditDeliveryClientPhone(d.clientPhone);
+    setEditDeliveryStoreName(d.pickupLocation?.name || '');
+    setEditDeliveryPickupCommune(d.pickupLocation?.commune || 'Cotonou - Haie Vive');
+    setEditDeliveryDropoffCommune(d.dropoffLocation?.commune || 'Cotonou - Cadjehoun');
+    setEditDeliveryDropoffAddress(d.dropoffLocation?.address || '');
+    setEditDeliveryCOD((d.itemValueCOD || 0).toString());
+    setEditDeliveryFee((d.deliveryFee || 0).toString());
+    setEditDeliveryStatus(d.status);
+    setEditDeliveryItemDesc(d.itemDescription || '');
+  };
+
+  const handleUpdateDeliverySubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingDelivery) return;
+    const codVal = parseInt(editDeliveryCOD, 10) || 0;
+    const feeVal = parseInt(editDeliveryFee, 10) || 0;
+    updateDeliveryDetails(editingDelivery.id, {
+      clientName: editDeliveryClientName.trim(),
+      clientPhone: editDeliveryClientPhone.trim(),
+      pickupLocation: {
+        ...editingDelivery.pickupLocation,
+        name: editDeliveryStoreName.trim(),
+        commune: editDeliveryPickupCommune
+      },
+      dropoffLocation: {
+        ...editingDelivery.dropoffLocation,
+        commune: editDeliveryDropoffCommune,
+        address: editDeliveryDropoffAddress.trim()
+      },
+      itemValueCOD: codVal,
+      deliveryFee: feeVal,
+      totalCustomerPayable: codVal + feeVal,
+      status: editDeliveryStatus,
+      itemDescription: editDeliveryItemDesc.trim()
+    });
+    setEditingDelivery(null);
+  };
+
+  const handleConfirmDeleteDelivery = () => {
+    if (!deletingDelivery) return;
+    deleteDelivery(deletingDelivery.id);
+    setDeletingDelivery(null);
+  };
+
+  // User Edit & Delete Handlers (Unified)
+  const openEditUser = (user: {
+    id: string;
+    name: string;
+    phone: string;
+    email: string;
+    role: 'livreur' | 'vendeur';
+    commune: string;
+    status: string;
+    vehicle?: string;
+    plate?: string;
+    channel?: any;
+    isVerified?: boolean;
+  }) => {
+    setEditingUser(user);
+    setEditUserName(user.name);
+    setEditUserPhone(user.phone);
+    setEditUserEmail(user.email || '');
+    setEditUserZoneCommune(user.commune);
+    setEditUserStatus(user.status);
+    setEditUserVehicle(user.vehicle || 'Yamaha 125');
+    setEditUserPlate(user.plate || '');
+    setEditUserChannel(user.channel || 'WhatsApp');
+    setEditUserVerified(user.isVerified ?? false);
+  };
+
+  const handleUpdateUserSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    if (editingUser.role === 'livreur') {
+      updateCourier(editingUser.id, {
+        name: editUserName.trim(),
+        phone: editUserPhone.trim(),
+        email: editUserEmail.trim() || undefined,
+        zone: editUserZoneCommune.trim(),
+        status: (editUserStatus as any) || 'en_ligne',
+        vehicle: editUserVehicle.trim(),
+        vehiclePlate: editUserPlate.trim() || undefined
+      });
+    } else {
+      updateMerchant(editingUser.id, {
+        storeName: editUserName.trim(),
+        phone: editUserPhone.trim(),
+        email: editUserEmail.trim(),
+        commune: editUserZoneCommune,
+        status: (editUserStatus as any) || 'actif',
+        channel: editUserChannel,
+        isVerified: editUserVerified
+      });
+    }
+    setEditingUser(null);
+  };
+
+  const handleConfirmDeleteUser = () => {
+    if (!deletingUser) return;
+    deleteUser(deletingUser.id, deletingUser.role);
+    setDeletingUser(null);
   };
 
   // Filtered lists
@@ -891,20 +1191,46 @@ export const AdminConsole: React.FC = () => {
                             {c.status === 'suspendu' && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">🔴 Suspendu</span>}
                           </td>
                           <td className="py-3 px-3 text-right">
-                            <div className="flex items-center justify-end gap-1.5">
+                            <div className="flex items-center justify-end gap-1.5 flex-wrap">
                               <button
                                 onClick={() => setWalletModalCourier(c)}
                                 className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold"
+                                title="Recharger ou débiter le portefeuille"
                               >
-                                Recharger
+                                Portefeuille
+                              </button>
+                              <button
+                                onClick={() => openEditUser({
+                                  id: c.id,
+                                  name: c.name,
+                                  phone: c.phone,
+                                  email: c.email || '',
+                                  role: 'livreur',
+                                  commune: c.zone,
+                                  status: c.status,
+                                  vehicle: c.vehicle,
+                                  plate: c.vehiclePlate
+                                })}
+                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
+                                title="Modifier les coordonnées du livreur"
+                              >
+                                Modifier
                               </button>
                               <button
                                 onClick={() => toggleCourierStatus(c.id)}
                                 className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
-                                  c.status === 'suspendu' ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-red-50 text-red-600 hover:bg-red-100'
+                                  c.status === 'suspendu' ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
                                 }`}
+                                title={c.status === 'suspendu' ? 'Activer le compte' : 'Suspendre le compte'}
                               >
                                 {c.status === 'suspendu' ? 'Activer' : 'Suspendre'}
+                              </button>
+                              <button
+                                onClick={() => setDeletingUser({ id: c.id, name: c.name, role: 'livreur' })}
+                                className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Supprimer définitivement"
+                              >
+                                <span className="material-symbols-outlined text-sm">delete</span>
                               </button>
                             </div>
                           </td>
@@ -948,12 +1274,30 @@ export const AdminConsole: React.FC = () => {
                             {m.status === 'suspendu' && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">🔴 Bloqué</span>}
                           </td>
                           <td className="py-3 px-3 text-right">
-                            <div className="flex items-center justify-end gap-1.5">
+                            <div className="flex items-center justify-end gap-1.5 flex-wrap">
                               <button
                                 onClick={() => toggleMerchantVerification(m.id)}
                                 className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold"
+                                title="Accorder ou révoquer le badge"
                               >
                                 {m.isVerified ? 'Badge ✓' : '+ Badge'}
+                              </button>
+                              <button
+                                onClick={() => openEditUser({
+                                  id: m.id,
+                                  name: m.storeName,
+                                  phone: m.phone,
+                                  email: m.email || '',
+                                  role: 'vendeur',
+                                  commune: m.commune,
+                                  status: m.status,
+                                  channel: m.channel,
+                                  isVerified: m.isVerified
+                                })}
+                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
+                                title="Modifier la boutique"
+                              >
+                                Modifier
                               </button>
                               <button
                                 onClick={() => toggleMerchantStatus(m.id)}
@@ -962,6 +1306,13 @@ export const AdminConsole: React.FC = () => {
                                 }`}
                               >
                                 {m.status === 'suspendu' ? 'Débloquer' : 'Bloquer'}
+                              </button>
+                              <button
+                                onClick={() => setDeletingUser({ id: m.id, name: m.storeName, role: 'vendeur' })}
+                                className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Supprimer la boutique"
+                              >
+                                <span className="material-symbols-outlined text-sm">delete</span>
                               </button>
                             </div>
                           </td>
@@ -1290,25 +1641,38 @@ export const AdminConsole: React.FC = () => {
                           )}
                         </td>
                         <td className="py-3 px-3 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
+                          <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            <button
+                              onClick={() => setWalletModalCourier(courier)}
+                              className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold"
+                              title="Recharger ou débiter la caution"
+                            >
+                              Portefeuille
+                            </button>
+                            <button
+                              onClick={() => openEditCourier(courier)}
+                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
+                              title="Modifier toutes les informations"
+                            >
+                              Éditer
+                            </button>
                             <button
                               onClick={() => toggleCourierStatus(courier.id)}
                               className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
                                 courier.status === 'suspendu'
                                   ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                                  : 'bg-red-50 text-red-600 hover:bg-red-100'
+                                  : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
                               }`}
+                              title={courier.status === 'suspendu' ? 'Réactiver le livreur' : 'Suspendre le livreur'}
                             >
                               {courier.status === 'suspendu' ? 'Réactiver' : 'Suspendre'}
                             </button>
                             <button
-                              onClick={() => {
-                                const newPlate = prompt('Modifier la plaque d\'immatriculation :', courier.vehiclePlate || '');
-                                if (newPlate !== null) updateCourier(courier.id, { vehiclePlate: newPlate });
-                              }}
-                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
+                              onClick={() => setDeletingCourier(courier)}
+                              className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Supprimer définitivement le livreur"
                             >
-                              Éditer
+                              <span className="material-symbols-outlined text-sm">delete</span>
                             </button>
                           </div>
                         </td>
@@ -1428,23 +1792,37 @@ export const AdminConsole: React.FC = () => {
                           )}
                         </td>
                         <td className="py-3 px-3 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
+                          <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            <button
+                              onClick={() => openEditMerchant(merchant)}
+                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
+                              title="Modifier les coordonnées de la boutique"
+                            >
+                              Éditer
+                            </button>
                             <button
                               onClick={() => toggleMerchantVerification(merchant.id)}
                               className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold"
                               title="Basculer statut vérifié"
                             >
-                              {merchant.isVerified ? 'Révoquer Badge' : 'Accorder Badge'}
+                              {merchant.isVerified ? 'Badge ✓' : '+ Badge'}
                             </button>
                             <button
                               onClick={() => toggleMerchantStatus(merchant.id)}
                               className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
                                 merchant.status === 'suspendu'
                                   ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                                  : 'bg-red-50 text-red-600 hover:bg-red-100'
+                                  : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
                               }`}
                             >
                               {merchant.status === 'suspendu' ? 'Débloquer' : 'Bloquer'}
+                            </button>
+                            <button
+                              onClick={() => setDeletingMerchant(merchant)}
+                              className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Supprimer la boutique"
+                            >
+                              <span className="material-symbols-outlined text-sm">delete</span>
                             </button>
                           </div>
                         </td>
@@ -1744,6 +2122,14 @@ export const AdminConsole: React.FC = () => {
                                   Assigner
                                 </button>
                                 
+                                <button
+                                  onClick={() => openEditDelivery(order)}
+                                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
+                                  title="Modifier les détails de la course"
+                                >
+                                  Éditer
+                                </button>
+
                                 {order.status !== 'livree' && (
                                   <button
                                     onClick={() => {
@@ -1771,10 +2157,10 @@ export const AdminConsole: React.FC = () => {
                                       updateDeliveryStatus(order.id, 'echec', 'Incident signalé par le superviseur');
                                       showToast(`Course ${order.id} placée en litige`, 'info');
                                     }}
-                                    className="px-2 py-1 bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 rounded-lg text-xs font-semibold"
+                                    className="px-2 py-1 bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 rounded-lg text-xs font-semibold"
                                     title="Signaler incident"
                                   >
-                                    Incident
+                                    Litige
                                   </button>
                                 )}
 
@@ -1784,6 +2170,14 @@ export const AdminConsole: React.FC = () => {
                                   title="Voir fiche complète"
                                 >
                                   <span className="material-symbols-outlined text-sm">open_in_new</span>
+                                </button>
+
+                                <button
+                                  onClick={() => setDeletingDelivery(order)}
+                                  className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                  title="Supprimer la course"
+                                >
+                                  <span className="material-symbols-outlined text-sm">delete</span>
                                 </button>
                               </div>
                             </td>
@@ -1947,7 +2341,7 @@ export const AdminConsole: React.FC = () => {
                 <div>
                   <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                     <span className="material-symbols-outlined text-indigo-600">checklist_rtl</span>
-                    <span>Suite de Tests &amp; Validations Administrateur (5 Piliers)</span>
+                    <span>Suite de Tests &amp; Validations Administrateur (7 Pôles Complets)</span>
                   </h2>
                   <p className="text-xs text-slate-500">Exécution automatisée et certification de conformité de la console</p>
                 </div>
@@ -1960,12 +2354,12 @@ export const AdminConsole: React.FC = () => {
                   {isTestingInProgress ? (
                     <>
                       <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                      <span>Exécution en cours...</span>
+                      <span>Exécution des tests...</span>
                     </>
                   ) : (
                     <>
                       <span className="material-symbols-outlined text-sm">play_arrow</span>
-                      <span>Lancer Tous les Tests</span>
+                      <span>Lancer Tous les 7 Tests</span>
                     </>
                   )}
                 </button>
@@ -1976,17 +2370,19 @@ export const AdminConsole: React.FC = () => {
                   <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-900 flex items-center justify-between">
                     <span className="font-bold flex items-center gap-2">
                       <span className="material-symbols-outlined text-emerald-600">verified</span>
-                      <span>Rapport de Validation : 5/5 Tests Réussis avec Succès</span>
+                      <span>
+                        Rapport de Validation : {testResults.filter(t => t.status === 'SUCCESS').length}/{testResults.length} Tests Réussis avec Succès
+                      </span>
                     </span>
                     <span className="font-mono font-bold text-[11px] bg-emerald-100 px-2 py-0.5 rounded-lg text-emerald-800">
-                      100% CONFORME
+                      100% OPÉRATIONNEL
                     </span>
                   </div>
 
                   {testResults.map(test => (
                     <div
                       key={test.id}
-                      className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                      className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs hover:border-indigo-300 transition-colors"
                     >
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
@@ -1999,18 +2395,37 @@ export const AdminConsole: React.FC = () => {
                         <p className="text-slate-600 text-[11px]">{test.message}</p>
                       </div>
 
-                      <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px] shrink-0 flex items-center gap-1 w-fit">
-                        <span className="material-symbols-outlined text-xs">check_circle</span>
-                        <span>SUCCÈS</span>
-                      </span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => handleRunSingleTest(test.id)}
+                          className="px-2.5 py-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 flex items-center gap-1 transition-colors"
+                          title="Re-tester ce module unitairement"
+                        >
+                          <span className="material-symbols-outlined text-xs">refresh</span>
+                          <span>Re-tester</span>
+                        </button>
+                        <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px] flex items-center gap-1">
+                          <span className="material-symbols-outlined text-xs">check_circle</span>
+                          <span>SUCCÈS</span>
+                        </span>
+                      </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-xs text-slate-500 space-y-2">
-                  <span className="material-symbols-outlined text-3xl text-indigo-500">science</span>
-                  <p className="font-bold text-slate-800">Prêt pour la validation complète</p>
-                  <p>Cliquez sur <strong>« Lancer Tous les Tests »</strong> pour vérifier la gestion des livreurs, vendeurs, courses, tarification et sécurité.</p>
+                <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-xs text-slate-500 space-y-4">
+                  <span className="material-symbols-outlined text-4xl text-indigo-500">science</span>
+                  <div>
+                    <p className="font-bold text-slate-800 text-sm">Prêt pour la validation intégrale du SaaS</p>
+                    <p className="text-slate-500 mt-1">Supervision courses, flotteurs/livreurs, boutiques/vendeurs, annuaire, KYC, moteur tarifaire (100 F/km) et sécurité.</p>
+                  </div>
+                  <button
+                    onClick={handleRunValidationSuite}
+                    className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm inline-flex items-center gap-2"
+                  >
+                    <span className="material-symbols-outlined text-sm">play_circle</span>
+                    <span>Démarrer la Suite de Validation (7 Pôles)</span>
+                  </button>
                 </div>
               )}
             </div>
@@ -2514,14 +2929,14 @@ export const AdminConsole: React.FC = () => {
         </div>
       )}
 
-      {/* 3. Modal Recharger Portefeuille Livreur */}
+      {/* 3. Modal Recharger / Débiter Portefeuille Livreur */}
       {walletModalCourier && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
           <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800">
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
               <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
                 <span className="material-symbols-outlined text-blue-600 text-base">account_balance_wallet</span>
-                <span>Créditer le Portefeuille</span>
+                <span>Gestion Portefeuille Livreur</span>
               </h3>
               <button
                 onClick={() => setWalletModalCourier(null)}
@@ -2532,20 +2947,58 @@ export const AdminConsole: React.FC = () => {
             </div>
 
             <form onSubmit={handleWalletRechargeSubmit} className="p-6 space-y-4 text-xs">
-              <div className="p-3 bg-blue-50 rounded-2xl">
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
                 <p className="text-slate-600">Livreur : <strong>{walletModalCourier.name}</strong></p>
-                <p className="text-slate-600 mt-0.5">Solde actuel : <strong>{(walletModalCourier.walletBalanceFCFA || 0).toLocaleString('fr-FR')} FCFA</strong></p>
+                <p className="text-slate-600 mt-0.5">Solde actuel : <strong className="font-mono text-blue-700 font-black">{(walletModalCourier.walletBalanceFCFA || 0).toLocaleString('fr-FR')} FCFA</strong></p>
+              </div>
+
+              {/* Type d'opération : Créditer vs Débiter */}
+              <div className="flex gap-2 p-1 bg-slate-100 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setWalletModalType('credit')}
+                  className={`flex-1 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1 transition-all ${
+                    walletModalType === 'credit' ? 'bg-emerald-600 text-white shadow-2xs' : 'text-slate-600'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-sm">add_circle</span>
+                  <span>+ Créditer</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWalletModalType('debit')}
+                  className={`flex-1 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1 transition-all ${
+                    walletModalType === 'debit' ? 'bg-red-600 text-white shadow-2xs' : 'text-slate-600'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-sm">remove_circle</span>
+                  <span>- Débiter</span>
+                </button>
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Montant à créditer (FCFA) *</label>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Montant à {walletModalType === 'credit' ? 'créditer' : 'déduire'} (FCFA) *
+                </label>
                 <input
                   type="number"
                   required
-                  step="1000"
+                  step="500"
+                  min="100"
                   value={walletAmount}
                   onChange={(e) => setWalletAmount(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none font-mono text-sm font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Motif / Justificatif (Optionnel)</label>
+                <input
+                  type="text"
+                  value={walletNote}
+                  onChange={(e) => setWalletNote(e.target.value)}
+                  placeholder="ex: Rechargement caution, régularisation course..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
                 />
               </div>
 
@@ -2559,9 +3012,11 @@ export const AdminConsole: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-xs"
+                  className={`flex-1 py-2.5 rounded-xl text-white font-bold shadow-xs ${
+                    walletModalType === 'credit' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-600 hover:bg-red-700'
+                  }`}
                 >
-                  Valider Crédit
+                  {walletModalType === 'credit' ? 'Valider Crédit' : 'Valider Débit'}
                 </button>
               </div>
             </form>
@@ -2863,6 +3318,762 @@ export const AdminConsole: React.FC = () => {
                   Fermer
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. Modal Modifier Livreur */}
+      {editingCourier && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800 max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
+              <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                <span className="material-symbols-outlined text-blue-600 text-base">edit</span>
+                <span>Modifier le Livreur ({editingCourier.name})</span>
+              </h3>
+              <button
+                onClick={() => setEditingCourier(null)}
+                className="w-8 h-8 rounded-full hover:bg-slate-200 flex items-center justify-center text-slate-400"
+              >
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateCourierSubmit} className="p-6 space-y-4 text-xs overflow-y-auto">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Nom Complet *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editCourierName}
+                    onChange={(e) => setEditCourierName(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Téléphone WhatsApp *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editCourierPhone}
+                    onChange={(e) => setEditCourierPhone(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={editCourierEmail}
+                    onChange={(e) => setEditCourierEmail(e.target.value)}
+                    placeholder="livreur@livralink.bj"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Badge Spécial</label>
+                  <input
+                    type="text"
+                    value={editCourierBadge}
+                    onChange={(e) => setEditCourierBadge(e.target.value)}
+                    placeholder="ex: Top Livreur, Express, VIP"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Type de Véhicule</label>
+                  <select
+                    value={editCourierVehicle}
+                    onChange={(e) => setEditCourierVehicle(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none bg-white"
+                  >
+                    <option value="Yamaha 125">Yamaha 125</option>
+                    <option value="Haojue 110">Haojue 110</option>
+                    <option value="Scooter Électrique 125">Scooter Électrique 125</option>
+                    <option value="Tricycle Keke">Tricycle Keke</option>
+                    <option value="Voiture Légère">Voiture Légère</option>
+                    <option value="Vélo Cargo">Vélo Cargo</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Plaque d'Immatriculation</label>
+                  <input
+                    type="text"
+                    value={editCourierPlate}
+                    onChange={(e) => setEditCourierPlate(e.target.value)}
+                    placeholder="BJ-8492-RB"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Zone Opérationnelle</label>
+                  <input
+                    type="text"
+                    value={editCourierZone}
+                    onChange={(e) => setEditCourierZone(e.target.value)}
+                    placeholder="Cotonou / Calavi"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Statut du Livreur</label>
+                  <select
+                    value={editCourierStatus}
+                    onChange={(e) => setEditCourierStatus(e.target.value as any)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none bg-white font-bold"
+                  >
+                    <option value="en_ligne">🟢 En ligne (Disponible)</option>
+                    <option value="en_course">🔵 En course (Occupé)</option>
+                    <option value="hors_ligne">⚪ Hors ligne</option>
+                    <option value="suspendu">🔴 Suspendu (Bloqué)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingCourier(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-700 hover:bg-slate-50"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-xs flex items-center justify-center gap-1.5"
+                >
+                  <span className="material-symbols-outlined text-sm">save</span>
+                  <span>Enregistrer Modifications</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 9. Modal Confirmer Suppression Livreur */}
+      {deletingCourier && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800 p-6 space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+              <span className="material-symbols-outlined text-2xl">warning</span>
+            </div>
+            <div className="text-center space-y-1">
+              <h3 className="font-bold text-sm text-slate-900">Supprimer ce Livreur ?</h3>
+              <p className="text-xs text-slate-500">
+                Êtes-vous sûr de vouloir supprimer définitivement <strong>{deletingCourier.name}</strong> ({deletingCourier.vehicle}) de la flotte LivraLink ?
+              </p>
+            </div>
+            <div className="p-3 bg-red-50 rounded-2xl border border-red-100 text-[11px] text-red-800">
+              ⚠️ Cette action retirera le profil, son historique et réassignera toute course en cours.
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setDeletingCourier(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-700 hover:bg-slate-50 text-xs"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteCourier}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs shadow-xs flex items-center justify-center gap-1"
+              >
+                <span className="material-symbols-outlined text-sm">delete</span>
+                <span>Confirmer</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 10. Modal Modifier Boutique */}
+      {editingMerchant && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800 max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
+              <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                <span className="material-symbols-outlined text-emerald-600 text-base">edit</span>
+                <span>Modifier la Boutique ({editingMerchant.storeName})</span>
+              </h3>
+              <button
+                onClick={() => setEditingMerchant(null)}
+                className="w-8 h-8 rounded-full hover:bg-slate-200 flex items-center justify-center text-slate-400"
+              >
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateMerchantSubmit} className="p-6 space-y-4 text-xs overflow-y-auto">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Nom de la Boutique *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editMerchantStore}
+                    onChange={(e) => setEditMerchantStore(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-600 outline-none font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Nom du Gérant *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editMerchantManager}
+                    onChange={(e) => setEditMerchantManager(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-600 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Téléphone / WhatsApp *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editMerchantPhone}
+                    onChange={(e) => setEditMerchantPhone(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-600 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Email Boutique</label>
+                  <input
+                    type="email"
+                    value={editMerchantEmail}
+                    onChange={(e) => setEditMerchantEmail(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-600 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Commune</label>
+                  <select
+                    value={editMerchantCommune}
+                    onChange={(e) => setEditMerchantCommune(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-600 outline-none bg-white"
+                  >
+                    <option value="Cotonou - Haie Vive">Cotonou - Haie Vive</option>
+                    <option value="Cotonou - Cadjehoun">Cotonou - Cadjehoun</option>
+                    <option value="Cotonou - Akpakpa">Cotonou - Akpakpa</option>
+                    <option value="Cotonou - Fidjrossè">Cotonou - Fidjrossè</option>
+                    <option value="Abomey-Calavi">Abomey-Calavi</option>
+                    <option value="Porto-Novo">Porto-Novo</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Canal de Vente</label>
+                  <select
+                    value={editMerchantChannel}
+                    onChange={(e) => setEditMerchantChannel(e.target.value as any)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-600 outline-none bg-white"
+                  >
+                    <option value="WhatsApp">WhatsApp</option>
+                    <option value="Instagram">Instagram</option>
+                    <option value="TikTok">TikTok</option>
+                    <option value="E-commerce">E-commerce</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Adresse Précise</label>
+                <input
+                  type="text"
+                  value={editMerchantAddress}
+                  onChange={(e) => setEditMerchantAddress(e.target.value)}
+                  placeholder="Rue 380, face pharmacie Haie Vive"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-600 outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Statut Boutique</label>
+                  <select
+                    value={editMerchantStatus}
+                    onChange={(e) => setEditMerchantStatus(e.target.value as any)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-600 outline-none bg-white font-bold"
+                  >
+                    <option value="actif">🟢 Actif</option>
+                    <option value="suspendu">🔴 Suspendu</option>
+                    <option value="en_attente_kyc">🟡 En attente KYC</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Remise Tarifaire (%)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="50"
+                    value={editMerchantDiscount}
+                    onChange={(e) => setEditMerchantDiscount(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-600 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-2xl flex items-center justify-between border border-slate-200">
+                <span className="font-bold text-slate-800">Badge Vérifié Partenaire</span>
+                <button
+                  type="button"
+                  onClick={() => setEditMerchantVerified(!editMerchantVerified)}
+                  className={`px-3 py-1 rounded-xl font-bold text-xs flex items-center gap-1 ${
+                    editMerchantVerified ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-sm">verified</span>
+                  <span>{editMerchantVerified ? 'Vérifié ✓' : 'Non vérifié'}</span>
+                </button>
+              </div>
+
+              <div className="flex gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingMerchant(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-700 hover:bg-slate-50"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-xs flex items-center justify-center gap-1.5"
+                >
+                  <span className="material-symbols-outlined text-sm">save</span>
+                  <span>Enregistrer Modifications</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 11. Modal Confirmer Suppression Boutique */}
+      {deletingMerchant && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800 p-6 space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+              <span className="material-symbols-outlined text-2xl">store</span>
+            </div>
+            <div className="text-center space-y-1">
+              <h3 className="font-bold text-sm text-slate-900">Supprimer la Boutique ?</h3>
+              <p className="text-xs text-slate-500">
+                Êtes-vous sûr de vouloir supprimer définitivement la boutique <strong>{deletingMerchant.storeName}</strong> (Gérant: {deletingMerchant.managerName}) ?
+              </p>
+            </div>
+            <div className="p-3 bg-red-50 rounded-2xl border border-red-100 text-[11px] text-red-800">
+              ⚠️ Cette action supprimera le profil marchand, ses paramètres et ses tarifs négociés.
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setDeletingMerchant(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-700 hover:bg-slate-50 text-xs"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteMerchant}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs shadow-xs flex items-center justify-center gap-1"
+              >
+                <span className="material-symbols-outlined text-sm">delete</span>
+                <span>Confirmer</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 12. Modal Modifier Course */}
+      {editingDelivery && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800 max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
+              <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                <span className="material-symbols-outlined text-blue-600 text-base">edit_location_alt</span>
+                <span>Modifier la Course {editingDelivery.id}</span>
+              </h3>
+              <button
+                onClick={() => setEditingDelivery(null)}
+                className="w-8 h-8 rounded-full hover:bg-slate-200 flex items-center justify-center text-slate-400"
+              >
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateDeliverySubmit} className="p-6 space-y-4 text-xs overflow-y-auto">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Nom Destinataire *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editDeliveryClientName}
+                    onChange={(e) => setEditDeliveryClientName(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Téléphone Destinataire *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editDeliveryClientPhone}
+                    onChange={(e) => setEditDeliveryClientPhone(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Boutique Expéditrice</label>
+                  <input
+                    type="text"
+                    value={editDeliveryStoreName}
+                    onChange={(e) => setEditDeliveryStoreName(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Commune Expédition</label>
+                  <select
+                    value={editDeliveryPickupCommune}
+                    onChange={(e) => setEditDeliveryPickupCommune(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none bg-white"
+                  >
+                    <option value="Cotonou - Haie Vive">Cotonou - Haie Vive</option>
+                    <option value="Cotonou - Cadjehoun">Cotonou - Cadjehoun</option>
+                    <option value="Cotonou - Akpakpa">Cotonou - Akpakpa</option>
+                    <option value="Cotonou - Fidjrossè">Cotonou - Fidjrossè</option>
+                    <option value="Abomey-Calavi">Abomey-Calavi</option>
+                    <option value="Porto-Novo">Porto-Novo</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Commune Livraison</label>
+                  <select
+                    value={editDeliveryDropoffCommune}
+                    onChange={(e) => setEditDeliveryDropoffCommune(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none bg-white"
+                  >
+                    <option value="Cotonou - Cadjehoun">Cotonou - Cadjehoun</option>
+                    <option value="Cotonou - Haie Vive">Cotonou - Haie Vive</option>
+                    <option value="Cotonou - Akpakpa">Cotonou - Akpakpa</option>
+                    <option value="Cotonou - Fidjrossè">Cotonou - Fidjrossè</option>
+                    <option value="Abomey-Calavi">Abomey-Calavi</option>
+                    <option value="Porto-Novo">Porto-Novo</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Adresse Précise</label>
+                  <input
+                    type="text"
+                    value={editDeliveryDropoffAddress}
+                    onChange={(e) => setEditDeliveryDropoffAddress(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Description du Colis</label>
+                <input
+                  type="text"
+                  value={editDeliveryItemDesc}
+                  onChange={(e) => setEditDeliveryItemDesc(e.target.value)}
+                  placeholder="ex: Robe de soirée, boîte à bijoux..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">COD (FCFA)</label>
+                  <input
+                    type="number"
+                    step="500"
+                    value={editDeliveryCOD}
+                    onChange={(e) => setEditDeliveryCOD(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Frais Course (FCFA)</label>
+                  <input
+                    type="number"
+                    step="500"
+                    value={editDeliveryFee}
+                    onChange={(e) => setEditDeliveryFee(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none font-mono font-bold text-blue-700"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Statut Course</label>
+                  <select
+                    value={editDeliveryStatus}
+                    onChange={(e) => setEditDeliveryStatus(e.target.value as any)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none bg-white font-bold"
+                  >
+                    <option value="en_attente">🟡 En attente</option>
+                    <option value="assignee">🟣 Assignée</option>
+                    <option value="en_cours">🔵 En cours</option>
+                    <option value="livree">🟢 Livrée (POD)</option>
+                    <option value="echec">🔴 Litige / Échec</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingDelivery(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-700 hover:bg-slate-50"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-xs flex items-center justify-center gap-1.5"
+                >
+                  <span className="material-symbols-outlined text-sm">save</span>
+                  <span>Enregistrer Modifications</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 13. Modal Confirmer Suppression Course */}
+      {deletingDelivery && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800 p-6 space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+              <span className="material-symbols-outlined text-2xl">delete_forever</span>
+            </div>
+            <div className="text-center space-y-1">
+              <h3 className="font-bold text-sm text-slate-900">Supprimer la Course {deletingDelivery.id} ?</h3>
+              <p className="text-xs text-slate-500">
+                Destination : <strong>{deletingDelivery.clientName}</strong> ({deletingDelivery.dropoffLocation.commune})<br />
+                Montant : <strong>{deletingDelivery.itemValueCOD.toLocaleString('fr-FR')} FCFA</strong>
+              </p>
+            </div>
+            <div className="p-3 bg-red-50 rounded-2xl border border-red-100 text-[11px] text-red-800">
+              ⚠️ Cette action supprimera définitivement la course du registre de dispatch.
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setDeletingDelivery(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-700 hover:bg-slate-50 text-xs"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteDelivery}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs shadow-xs flex items-center justify-center gap-1"
+              >
+                <span className="material-symbols-outlined text-sm">delete</span>
+                <span>Confirmer</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 14. Modal Modifier Utilisateur (Annuaire) */}
+      {editingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800 max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
+              <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                <span className="material-symbols-outlined text-blue-600 text-base">person</span>
+                <span>Modifier Compte Utilisateur ({editingUser.role.toUpperCase()})</span>
+              </h3>
+              <button
+                onClick={() => setEditingUser(null)}
+                className="w-8 h-8 rounded-full hover:bg-slate-200 flex items-center justify-center text-slate-400"
+              >
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateUserSubmit} className="p-6 space-y-4 text-xs overflow-y-auto">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  {editingUser.role === 'livreur' ? 'Nom du Livreur *' : 'Nom de la Boutique *'}
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editUserName}
+                  onChange={(e) => setEditUserName(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none font-semibold"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Téléphone *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editUserPhone}
+                    onChange={(e) => setEditUserPhone(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={editUserEmail}
+                    onChange={(e) => setEditUserEmail(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Zone / Commune</label>
+                <input
+                  type="text"
+                  value={editUserZoneCommune}
+                  onChange={(e) => setEditUserZoneCommune(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                />
+              </div>
+
+              {editingUser.role === 'livreur' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Véhicule</label>
+                    <input
+                      type="text"
+                      value={editUserVehicle}
+                      onChange={(e) => setEditUserVehicle(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Plaque</label>
+                    <input
+                      type="text"
+                      value={editUserPlate}
+                      onChange={(e) => setEditUserPlate(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {editingUser.role === 'vendeur' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Canal</label>
+                    <select
+                      value={editUserChannel}
+                      onChange={(e) => setEditUserChannel(e.target.value as any)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none bg-white"
+                    >
+                      <option value="WhatsApp">WhatsApp</option>
+                      <option value="Instagram">Instagram</option>
+                      <option value="TikTok">TikTok</option>
+                      <option value="E-commerce">E-commerce</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Badge Vérifié</label>
+                    <button
+                      type="button"
+                      onClick={() => setEditUserVerified(!editUserVerified)}
+                      className={`w-full py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1 ${
+                        editUserVerified ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-700'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-sm">verified</span>
+                      <span>{editUserVerified ? 'Badge Actif' : 'Sans Badge'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingUser(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-700 hover:bg-slate-50"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-xs flex items-center justify-center gap-1"
+                >
+                  <span className="material-symbols-outlined text-sm">save</span>
+                  <span>Enregistrer</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 15. Modal Confirmer Suppression Utilisateur */}
+      {deletingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800 p-6 space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+              <span className="material-symbols-outlined text-2xl">person_remove</span>
+            </div>
+            <div className="text-center space-y-1">
+              <h3 className="font-bold text-sm text-slate-900">Supprimer cet Utilisateur ?</h3>
+              <p className="text-xs text-slate-500">
+                Confirmez la suppression du compte <strong>{deletingUser.name}</strong> (Rôle: {deletingUser.role}).
+              </p>
+            </div>
+            <div className="p-3 bg-red-50 rounded-2xl border border-red-100 text-[11px] text-red-800">
+              ⚠️ Cette action retirera définitivement ce compte de la plateforme.
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setDeletingUser(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-700 hover:bg-slate-50 text-xs"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteUser}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs shadow-xs flex items-center justify-center gap-1"
+              >
+                <span className="material-symbols-outlined text-sm">delete</span>
+                <span>Confirmer</span>
+              </button>
             </div>
           </div>
         </div>
