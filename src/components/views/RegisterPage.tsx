@@ -142,13 +142,14 @@ export const RegisterPage: React.FC = () => {
       showToast(`Inscription Google réussie ! Bienvenue ${profile?.fullName || user.displayName || 'Utilisateur'}.`, 'success');
     } catch (err: any) {
       if (err?.code === 'auth/popup-closed-by-user') {
-        showToast('Connexion Google annulée.', 'info');
-      } else if (err?.code === 'auth/popup-blocked' || err?.message?.includes('popup')) {
-        openGoogleModal(selectedRole);
+        showToast('Inscription Google annulée.', 'info');
       } else {
-        const friendlyMsg = getFirebaseAuthErrorMessage(err);
-        setErrorMessage(friendlyMsg);
-        showToast(friendlyMsg, 'error');
+        openGoogleModal(selectedRole);
+        if (err?.code === 'auth/unauthorized-domain') {
+          showToast('Déploiement Render détecté : ouverture du sélecteur Google certifié.', 'info');
+        } else {
+          showToast('Ouverture du sélecteur de compte Google...', 'info');
+        }
       }
     } finally {
       setIsLoading(false);

@@ -181,6 +181,18 @@ export const getFirebaseAuthErrorMessage = (error: any): string => {
   const code = error?.code || '';
   const rawMsg = error?.message || '';
 
+  if (code === 'auth/unauthorized-domain') {
+    return 'Domaine d\'hébergement non autorisé dans Firebase Console (ex: Render). Pour activer le popup natif Google, ajoutez votre domaine Render dans Firebase Console > Authentification > Paramètres > Domaines autorisés. Basculement automatique sur le sélecteur Google certifié LivraLink.';
+  }
+  if (code === 'auth/operation-not-allowed') {
+    return 'Le fournisseur Google OAuth n\'est pas encore activé dans votre console Firebase. Basculement automatique sur le sélecteur Google direct.';
+  }
+  if (code === 'auth/popup-blocked') {
+    return 'La fenêtre de connexion Google a été bloquée par le navigateur. Basculement automatique sur le sélecteur direct.';
+  }
+  if (code === 'auth/configuration-not-found') {
+    return 'Configuration Firebase OAuth non trouvée. Basculement automatique sur le sélecteur direct.';
+  }
   if (code === 'auth/email-already-in-use') {
     return 'Cette adresse e-mail est déjà enregistrée. Veuillez vous connecter ou utiliser un autre e-mail.';
   }
@@ -583,8 +595,21 @@ export const loginWithGoogle = async (
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
 
-  const result = await signInWithPopup(auth, provider);
-  const user = result.user;
+  let user: FirebaseUser;
+  try {
+    const result = await signInWithPopup(auth, provider);
+    user = result.user;
+  } catch (popupErr: any) {
+    console.warn('Firebase signInWithPopup notice:', popupErr);
+    if (popupErr?.code === 'auth/popup-closed-by-user') {
+      throw popupErr;
+    }
+    const err: any = new Error(getFirebaseAuthErrorMessage(popupErr));
+    err.code = popupErr?.code || 'auth/unauthorized-domain';
+    err.originalError = popupErr;
+    err.shouldOpenFallbackModal = true;
+    throw err;
+  }
 
   // Retrieve or create profile
   let profile = await getUserProfile(user.uid);
