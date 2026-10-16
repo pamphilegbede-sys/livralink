@@ -481,31 +481,42 @@ async function startServer() {
     app.use(vite.middlewares);
   }
 
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[SERVER] LivraLink running at http://0.0.0.0:${PORT} (Mode: ${isProduction ? 'production' : 'development'})`);
-  });
+  let retryCount = 0;
+  const maxRetries = 10;
 
-  server.on('error', (err: any) => {
-    if (err.code === 'EADDRINUSE') {
-      console.warn(`[SERVER] Port ${PORT} déjà occupé. Tentative de gestion propre.`);
-      process.exit(1);
-    } else {
-      console.error('[SERVER] Erreur serveur:', err);
-      process.exit(1);
-    }
-  });
-
-  // Graceful shutdown on Render / container stop
-  const handleShutdown = (signal: string) => {
-    console.log(`[SERVER] Reçu ${signal}, arrêt propre du serveur...`);
-    server.close(() => {
-      console.log('[SERVER] Serveur arrêté avec succès.');
-      process.exit(0);
+  function bindServer() {
+    const server = app.listen(PORT, '0.0.0.0', () => {
+      console.log(`[SERVER] LivraLink running at http://0.0.0.0:${PORT} (Mode: ${isProduction ? 'production' : 'development'})`);
+      console.log(`  ➜  Local:   http://localhost:${PORT}/`);
+      console.log(`  ➜  Network: http://0.0.0.0:${PORT}/`);
+      console.log(`[SERVER] Ready for incoming requests.`);
     });
-  };
 
-  process.on('SIGTERM', () => handleShutdown('SIGTERM'));
-  process.on('SIGINT', () => handleShutdown('SIGINT'));
+    server.on('error', (err: any) => {
+      if (err.code === 'EADDRINUSE' && retryCount < maxRetries) {
+        retryCount++;
+        console.warn(`[SERVER] Port ${PORT} temporairement occupé, nouvelle tentative (${retryCount}/${maxRetries}) dans 400ms...`);
+        setTimeout(bindServer, 400);
+      } else {
+        console.error('[SERVER] Erreur fatale serveur:', err);
+        process.exit(1);
+      }
+    });
+
+    // Graceful shutdown on SIGTERM / SIGINT
+    const handleShutdown = (signal: string) => {
+      console.log(`[SERVER] Reçu ${signal}, arrêt propre du serveur...`);
+      server.close(() => {
+        console.log('[SERVER] Serveur arrêté avec succès.');
+        process.exit(0);
+      });
+    };
+
+    process.once('SIGTERM', () => handleShutdown('SIGTERM'));
+    process.once('SIGINT', () => handleShutdown('SIGINT'));
+  }
+
+  bindServer();
 }
 
 startServer();

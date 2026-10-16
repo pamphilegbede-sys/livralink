@@ -33,6 +33,11 @@ export default defineConfig(() => {
       },
     },
     server: {
+      host: '0.0.0.0',
+      port: 3000,
+      strictPort: false,
+      // @ts-ignore - allowedHosts supported in modern Vite
+      allowedHosts: true,
       // HMR is disabled in AI Studio environment
       hmr: false,
       ws: false,

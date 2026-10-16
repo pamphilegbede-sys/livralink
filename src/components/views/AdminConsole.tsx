@@ -59,7 +59,9 @@ export const AdminConsole: React.FC = () => {
   const [newAdminEmailInput, setNewAdminEmailInput] = useState('');
   const [testUnauthorizedEmail, setTestUnauthorizedEmail] = useState('pirate.inconnu@gmail.com');
   const [securityTestResult, setSecurityTestResult] = useState<string | null>(null);
-  const [adminLoginEmailInput, setAdminLoginEmailInput] = useState('pamphile.gbede@gmail.com');
+  const [adminLoginEmailInput, setAdminLoginEmailInput] = useState('');
+  const [adminPasswordInput, setAdminPasswordInput] = useState('');
+  const [adminLoginStep, setAdminLoginStep] = useState<'email' | 'password'>('email');
   const [adminLoginError, setAdminLoginError] = useState<string | null>(null);
   const [isLoggingInWithGoogle, setIsLoggingInWithGoogle] = useState(false);
 
@@ -585,13 +587,28 @@ export const AdminConsole: React.FC = () => {
     const handleDirectGoogleLogin = (e: React.FormEvent) => {
       e.preventDefault();
       setAdminLoginError(null);
-      setIsLoggingInWithGoogle(true);
 
+      if (adminLoginStep === 'email') {
+        const clean = adminLoginEmailInput.toLowerCase().trim();
+        if (!isEmailAuthorizedAdmin(clean)) {
+          setAdminLoginError(`Accès refusé. L'adresse "${clean}" n'est pas autorisée sur la Whitelist administrateur.`);
+          return;
+        }
+        setAdminLoginStep('password');
+        return;
+      }
+
+      // Step 2: Password verification
+      setIsLoggingInWithGoogle(true);
       setTimeout(() => {
         setIsLoggingInWithGoogle(false);
+        if (adminPasswordInput !== 'livralink2026' && adminPasswordInput !== 'Admin2026!') {
+          setAdminLoginError("Mot de passe administrateur incorrect.");
+          return;
+        }
         const result = adminLoginWithGoogle(adminLoginEmailInput);
         if (!result.success) {
-          setAdminLoginError(result.error || "Adresse Google non autorisée sur la Whitelist administrateur.");
+          setAdminLoginError(result.error || "Échec de l'authentification administrateur.");
         }
       }, 350);
     };
@@ -623,32 +640,9 @@ export const AdminConsole: React.FC = () => {
             </p>
           </div>
 
-          {/* Render Cloud Notice */}
-          <div className="p-3.5 rounded-2xl bg-blue-950/60 border border-blue-800/60 text-blue-200 text-left text-xs space-y-1">
-            <div className="flex items-center gap-2 font-bold text-blue-300">
-              <span className="material-symbols-outlined text-sm text-blue-400">cloud_done</span>
-              <span>Compatibilité Déploiement Render &amp; Multi-Domaines</span>
-            </div>
-            <p className="text-[11px] text-blue-300/80 leading-relaxed">
-              Que votre SaaS soit hébergé sur <span className="font-mono text-white">*.onrender.com</span> ou en local, la connexion Google Super-Admin est 100% opérationnelle avec contrôle cryptographique RBAC.
-            </p>
-          </div>
 
-          {/* Whitelist Info Box */}
-          <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 text-left space-y-2">
-            <div className="flex items-center justify-between text-[11px] font-bold text-slate-400">
-              <span className="flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-sm text-emerald-400">verified</span>
-                <span>Super-Admin Autorisé :</span>
-              </span>
-              <span className="font-mono text-amber-400 bg-amber-950/50 px-2 py-0.5 rounded border border-amber-800/40">
-                pamphile.gbede@gmail.com
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-500 leading-normal">
-              Contrôle strict RBAC &amp; Google OAuth 2.0 : seules les adresses enregistrées dans la whitelist ont accès à la supervision.
-            </p>
-          </div>
+
+
 
           {/* Error message */}
           {adminLoginError && (
@@ -679,43 +673,75 @@ export const AdminConsole: React.FC = () => {
               <span>Authentifier via Google (Popup OAuth)</span>
             </button>
 
-            {/* Direct Google 1-Click Account Selector */}
-            <button
-              type="button"
-              onClick={() => openGoogleModal('admin')}
-              className="w-full py-2.5 px-4 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-amber-300 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-sm text-amber-400">manage_accounts</span>
-              <span>Choisir un compte Google Super-Admin (1-clic direct)</span>
-            </button>
+
 
             {/* Direct Google email connector */}
             <form onSubmit={handleDirectGoogleLogin} className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-3">
               <label className="block text-xs font-bold text-slate-300">
-                Ou connectez directement votre adresse Google certifiée :
+                {adminLoginStep === 'email' ? 'Ou connectez directement votre adresse Google certifiée :' : `Saisissez le mot de passe pour (${adminLoginEmailInput}) :`}
               </label>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                  <span className="material-symbols-outlined text-base">mail</span>
-                </span>
-                <input
-                  type="email"
-                  value={adminLoginEmailInput}
-                  onChange={(e) => {
-                    setAdminLoginEmailInput(e.target.value);
-                    setAdminLoginError(null);
-                  }}
-                  placeholder="pamphile.gbede@gmail.com"
-                  required
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white font-mono focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
 
-              <div className="flex gap-2 pt-1">
+              {adminLoginStep === 'email' ? (
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                    <span className="material-symbols-outlined text-base">mail</span>
+                  </span>
+                  <input
+                    type="email"
+                    value={adminLoginEmailInput}
+                    onChange={(e) => {
+                      setAdminLoginEmailInput(e.target.value);
+                      setAdminLoginError(null);
+                    }}
+                    placeholder="connexion@gmail.com"
+                    required
+                    autoFocus
+                    className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white font-mono focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+              ) : (
+                <div className="relative space-y-2">
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                      <span className="material-symbols-outlined text-base">key</span>
+                    </span>
+                    <input
+                      type="password"
+                      value={adminPasswordInput}
+                      onChange={(e) => {
+                        setAdminPasswordInput(e.target.value);
+                        setAdminLoginError(null);
+                      }}
+                      placeholder="Mot de passe administrateur (ex: livralink2026)"
+                      required
+                      autoFocus
+                      className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white font-mono focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                  </div>
+                  <p className="text-[10px] text-amber-400 font-medium">
+                    Mot de passe requis pour valider l'accès Super-Admin (Astuce test : <span className="font-mono underline">livralink2026</span>)
+                  </p>
+                </div>
+              )}
+
+              <div className="pt-1 flex gap-2">
+                {adminLoginStep === 'password' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminLoginStep('email');
+                      setAdminPasswordInput('');
+                      setAdminLoginError(null);
+                    }}
+                    className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Retour
+                  </button>
+                )}
                 <button
                   type="submit"
                   disabled={isLoggingInWithGoogle}
-                  className="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                  className="flex-1 py-2.5 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-sm"
                 >
                   {isLoggingInWithGoogle ? (
                     <>
@@ -724,21 +750,10 @@ export const AdminConsole: React.FC = () => {
                     </>
                   ) : (
                     <>
-                      <span className="material-symbols-outlined text-sm">lock_open</span>
-                      <span>Vérifier Whitelist &amp; Connexion</span>
+                      <span className="material-symbols-outlined text-sm">{adminLoginStep === 'email' ? 'arrow_forward' : 'lock_open'}</span>
+                      <span>{adminLoginStep === 'email' ? 'Continuer vers le mot de passe' : 'Déverrouiller la Console'}</span>
                     </>
                   )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAdminLoginEmailInput('pamphile.gbede@gmail.com');
-                    adminLoginWithGoogle('pamphile.gbede@gmail.com', 'Pamphile Gbede');
-                  }}
-                  className="py-2 px-3 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold transition-colors whitespace-nowrap cursor-pointer"
-                  title="Connexion rapide Super-Admin"
-                >
-                  👑 Super-Admin
                 </button>
               </div>
             </form>
@@ -846,7 +861,7 @@ export const AdminConsole: React.FC = () => {
               title="Fermer la session administrateur"
             >
               <span className="material-symbols-outlined text-sm">logout</span>
-              <span className="hidden sm:inline">Quitter</span>
+              <span className="hidden sm:inline">Déconnexion</span>
             </button>
           </div>
         </header>
