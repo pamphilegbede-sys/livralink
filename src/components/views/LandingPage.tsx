@@ -8,17 +8,17 @@ export const LandingPage: React.FC = () => {
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans'] selection:bg-blue-600 selection:text-white">
       {/* 1. Top Navigation Bar */}
       <header className="w-full bg-white/95 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 shadow-xs">
-        <div className="max-w-7xl mx-auto px-6 h-[72px] flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 sm:h-[72px] flex items-center justify-between">
           {/* Brand Logo */}
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-sm">
-              <span className="material-symbols-outlined text-2xl text-blue-400">local_shipping</span>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-sm shrink-0">
+              <span className="material-symbols-outlined text-xl sm:text-2xl text-blue-400">local_shipping</span>
             </div>
             <div className="flex flex-col">
-              <span className="text-xl font-extrabold tracking-tight text-slate-900 leading-none">
+              <span className="text-base sm:text-xl font-extrabold tracking-tight text-slate-900 leading-none">
                 Livra<span className="text-blue-600">Link</span>
               </span>
-              <span className="text-[10px] font-bold tracking-widest text-slate-400 uppercase mt-0.5">
+              <span className="text-[8px] sm:text-[10px] font-bold tracking-widest text-slate-400 uppercase mt-0.5">
                 CONNECT &amp; DELIVER
               </span>
             </div>
@@ -44,18 +44,19 @@ export const LandingPage: React.FC = () => {
           </nav>
 
           {/* Right Actions */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-3">
             {/* Direct Admin Access Button */}
             <button
               onClick={() => {
                 setCurrentRole('admin');
                 setCurrentView('admin_console');
               }}
-              className="px-3.5 py-2 bg-gradient-to-r from-purple-700 via-indigo-700 to-blue-700 hover:from-purple-800 hover:to-blue-800 text-amber-200 border border-amber-400/40 rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all flex items-center gap-1.5"
+              className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 bg-gradient-to-r from-purple-700 via-indigo-700 to-blue-700 hover:from-purple-800 hover:to-blue-800 text-amber-200 border border-amber-400/40 rounded-xl text-[11px] sm:text-xs font-bold shadow-sm active:scale-95 transition-all flex items-center gap-1"
               title="Accéder au panneau d'administration"
             >
               <span>👑</span>
-              <span>Console Admin</span>
+              <span className="hidden sm:inline">Console </span>
+              <span>Admin</span>
             </button>
 
             <button
@@ -63,26 +64,27 @@ export const LandingPage: React.FC = () => {
                 setCurrentRole('vendeur');
                 setCurrentView('login_vendeur');
               }}
-              className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all active:scale-95"
+              className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 text-[11px] sm:text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all active:scale-95"
             >
-              Se connecter
+              Connexion
             </button>
             <button
               onClick={() => {
                 setCurrentRole('vendeur');
                 setCurrentView('register');
               }}
-              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/20 active:scale-95 transition-all flex items-center gap-1.5"
+              className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[11px] sm:text-xs font-bold shadow-md shadow-blue-600/20 active:scale-95 transition-all flex items-center gap-1"
             >
-              <span>Créer un compte</span>
-              <span className="material-symbols-outlined text-sm">arrow_forward</span>
+              <span className="hidden xs:inline">Créer un </span>
+              <span>Compte</span>
+              <span className="material-symbols-outlined text-xs sm:text-sm">arrow_forward</span>
             </button>
           </div>
         </div>
       </header>
 
       {/* 2. Hero Section */}
-      <section className="py-12 md:py-20 px-6 max-w-7xl mx-auto w-full">
+      <section className="py-12 md:py-20 px-4 sm:px-6 max-w-7xl mx-auto w-full">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
           {/* Left Hero Content */}
           <div className="lg:col-span-7 space-y-6">

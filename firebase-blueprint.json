@@ -5,16 +5,18 @@
       "description": "Données de profil utilisateur pour les marchands et livreurs LivraLink.",
       "type": "object",
       "properties": {
-        "uid": { "type": "string", "description": "Identifiant unique Firebase Auth (UID)" },
-        "email": { "type": "string", "format": "email", "description": "Adresse email du compte" },
-        "fullName": { "type": "string", "maxLength": 128, "description": "Nom complet ou nom de la boutique" },
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$", "description": "Identifiant unique Firebase Auth (UID)" },
+        "email": { "type": "string", "format": "email", "maxLength": 128, "description": "Adresse email du compte" },
+        "fullName": { "type": "string", "maxLength": 128, "description": "Nom complet ou nom du responsable" },
         "phone": { "type": "string", "maxLength": 32, "description": "Numéro de téléphone / WhatsApp" },
         "role": { "type": "string", "enum": ["vendeur", "livreur", "admin"], "description": "Rôle métier" },
-        "avatarUrl": { "type": "string", "description": "Photo de profil ou logo" },
+        "avatarUrl": { "type": "string", "maxLength": 1000, "description": "Photo de profil ou logo" },
         "storeName": { "type": "string", "maxLength": 128, "description": "Nom commercial du vendeur" },
+        "storeCommune": { "type": "string", "maxLength": 128, "description": "Commune du magasin" },
+        "storeAddress": { "type": "string", "maxLength": 256, "description": "Adresse physique du magasin" },
         "vehicleType": { "type": "string", "maxLength": 64, "description": "Type de véhicule du livreur" },
-        "createdAt": { "type": "string", "description": "Horodatage de création du compte" },
-        "updatedAt": { "type": "string", "description": "Horodatage de mise à jour" }
+        "createdAt": { "type": "string", "maxLength": 64, "description": "Horodatage de création du compte" },
+        "updatedAt": { "type": "string", "maxLength": 64, "description": "Horodatage de mise à jour" }
       },
       "required": ["uid", "email", "fullName", "phone", "role"]
     },
@@ -23,17 +25,30 @@
       "description": "Commande et expédition de livraison urbaine.",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Code unique de la course (ex: #LL-4192)" },
+        "id": { "type": "string", "maxLength": 64, "description": "Code unique de la course (ex: #LL-4192)" },
         "clientName": { "type": "string", "maxLength": 128, "description": "Nom du destinataire" },
         "clientPhone": { "type": "string", "maxLength": 32, "description": "Téléphone du destinataire" },
         "status": { "type": "string", "enum": ["en_attente", "assignee", "acceptee", "colis_recupere", "en_cours", "livree", "echec"], "description": "Statut opérationnel" },
         "deliveryFee": { "type": "number", "description": "Tarif de livraison calculé" },
         "itemValueCOD": { "type": "number", "description": "Montant paiement à la livraison (COD)" },
-        "merchantId": { "type": "string", "description": "UID du vendeur propriétaire" },
-        "courierId": { "type": "string", "description": "UID du coursier assigné" },
-        "createdAt": { "type": "string", "description": "Date de création de la course" }
+        "merchantId": { "type": "string", "maxLength": 128, "description": "UID du vendeur propriétaire" },
+        "courierId": { "type": "string", "maxLength": 128, "description": "UID du coursier assigné" },
+        "createdAt": { "type": "string", "maxLength": 64, "description": "Date de création de la course" },
+        "updatedAt": { "type": "string", "maxLength": 64, "description": "Date de dernière modification" }
       },
-      "required": ["id", "clientName", "clientPhone", "status", "deliveryFee"]
+      "required": ["id", "clientName", "clientPhone", "status", "deliveryFee", "merchantId"]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Compte administrateur habilité avec privilèges élevés.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "description": "UID administrateur" },
+        "email": { "type": "string", "format": "email", "maxLength": 128, "description": "Email administrateur" },
+        "level": { "type": "string", "enum": ["super_admin", "operator"], "description": "Niveau de permission" },
+        "createdAt": { "type": "string", "maxLength": 64, "description": "Date d'habilitation" }
+      },
+      "required": ["uid", "email", "level"]
     }
   },
   "firestore": {
@@ -44,6 +59,10 @@
     "/deliveries/{deliveryId}": {
       "schema": "DeliveryOrder",
       "description": "Collection des livraisons et expéditions gérées par la plateforme."
+    },
+    "/admins/{adminId}": {
+      "schema": "AdminUser",
+      "description": "Collection des administrateurs racine autorisés."
     }
   }
 }

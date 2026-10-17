@@ -25,7 +25,7 @@ export const LivreurWallet: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
       {/* Sidebar Desktop */}
       <Sidebar />
 
@@ -67,7 +67,25 @@ export const LivreurWallet: React.FC = () => {
                   <span className="font-bold text-white">Retrait Instantané Mobile Money</span>
                   <span className="text-emerald-400 font-bold">Sans frais (0 F)</span>
                 </div>
-                <form onSubmit={handleRequestPayout} className="space-y-2.5">
+                <form onSubmit={handleRequestPayout} className="space-y-3">
+                  {/* Quick Select Amount Chips */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                    {[5000, 10000, 25000, availableBalance].map((amt) => (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() => setPayoutAmount(amt.toString())}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all whitespace-nowrap active:scale-95 ${
+                          payoutAmount === amt.toString()
+                            ? 'bg-emerald-500 text-slate-950 font-black'
+                            : 'bg-white/15 text-white hover:bg-white/25'
+                        }`}
+                      >
+                        {amt === availableBalance ? 'Tout' : `${amt.toLocaleString('fr-FR')} F`}
+                      </button>
+                    ))}
+                  </div>
+
                   <div className="flex gap-2">
                     <input
                       type="number"
@@ -75,13 +93,13 @@ export const LivreurWallet: React.FC = () => {
                       onChange={(e) => setPayoutAmount(e.target.value)}
                       max={availableBalance}
                       min={1000}
-                      className="flex-1 px-3 py-2 bg-white/20 border border-white/30 rounded-xl text-xs font-bold text-white placeholder-white/60 outline-none focus:ring-2 focus:ring-blue-400"
+                      className="min-h-[44px] flex-1 px-3 py-2 bg-white/20 border border-white/30 rounded-xl text-xs font-bold text-white placeholder-white/60 outline-none focus:ring-2 focus:ring-blue-400"
                       placeholder="Montant FCFA"
                     />
                     <button
                       type="submit"
                       disabled={isRequesting}
-                      className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-extrabold text-xs rounded-xl shadow-md transition-all active:scale-95 disabled:opacity-50"
+                      className="min-h-[44px] px-5 py-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-extrabold text-xs rounded-xl shadow-md transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center shrink-0"
                     >
                       {isRequesting ? 'Envoi...' : 'Retirer'}
                     </button>

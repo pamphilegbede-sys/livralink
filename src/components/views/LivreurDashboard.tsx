@@ -127,7 +127,7 @@ export const LivreurDashboard: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
       {/* Sidebar Desktop */}
       <Sidebar />
 
@@ -448,14 +448,14 @@ export const LivreurDashboard: React.FC = () => {
                         </div>
                       )}
 
-                      {/* Action buttons : ACCEPTER ou REFUSER */}
-                      <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                      {/* Action buttons : ACCEPTER ou REFUSER (Mobile Touch Friendly) */}
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 pt-2 border-t border-amber-200/60">
                         <button
                           type="button"
                           onClick={() => setExpandedMapOrderId(isMapExpanded ? null : order.id)}
-                          className="text-xs font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1 py-2 px-3 rounded-xl bg-white border border-slate-200 transition-colors"
+                          className="min-h-[44px] text-xs font-bold text-slate-700 hover:text-slate-900 flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-xl bg-white border border-slate-200 shadow-2xs active:scale-95 transition-all"
                         >
-                          <span className="material-symbols-outlined text-sm text-blue-600">
+                          <span className="material-symbols-outlined text-base text-blue-600">
                             {isMapExpanded ? 'map_off' : 'map'}
                           </span>
                           <span>{isMapExpanded ? 'Masquer la carte' : 'Voir tracé Google Maps'}</span>
@@ -465,17 +465,17 @@ export const LivreurDashboard: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => handleRefuseOrder(order.id)}
-                            className="py-2.5 px-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition active:scale-95"
+                            className="min-h-[44px] px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition active:scale-95 flex items-center justify-center"
                           >
                             Refuser
                           </button>
                           <button
                             type="button"
                             onClick={() => handleAcceptOrder(order)}
-                            className="py-2.5 px-5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-xs shadow-md shadow-emerald-600/30 transition active:scale-95 flex items-center gap-1.5"
+                            className="min-h-[44px] flex-1 sm:flex-initial px-5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-xs shadow-md shadow-emerald-600/30 transition active:scale-95 flex items-center justify-center gap-1.5"
                           >
                             <span className="material-symbols-outlined text-base">check_circle</span>
-                            <span>Accepter la livraison ({price.toLocaleString('fr-FR')} F)</span>
+                            <span>Accepter ({price.toLocaleString('fr-FR')} F)</span>
                           </button>
                         </div>
                       </div>

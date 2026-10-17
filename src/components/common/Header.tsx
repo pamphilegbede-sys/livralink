@@ -187,28 +187,35 @@ export const Header: React.FC<{
                   <>
                     <button
                       onClick={() => { setCurrentView('vendeur_dashboard'); setIsMobileMenuOpen(false); }}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'vendeur_dashboard' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700'}`}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'vendeur_dashboard' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'}`}
                     >
                       <span className="material-symbols-outlined text-lg">dashboard</span>
                       <span>Tableau de bord</span>
                     </button>
                     <button
                       onClick={() => { setCurrentView('vendeur_new_delivery'); setIsMobileMenuOpen(false); }}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold bg-blue-600 text-white shadow-sm"
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold bg-blue-600 text-white shadow-sm active:scale-95 transition-transform"
                     >
                       <span className="material-symbols-outlined text-lg">add</span>
                       <span>+ Nouvelle livraison</span>
                     </button>
                     <button
                       onClick={() => { setCurrentView('vendeur_tracking'); setIsMobileMenuOpen(false); }}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'vendeur_tracking' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700'}`}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'vendeur_tracking' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'}`}
                     >
                       <span className="material-symbols-outlined text-lg">local_shipping</span>
-                      <span>Suivi &amp; Rapports</span>
+                      <span>Suivi des Livraisons</span>
+                    </button>
+                    <button
+                      onClick={() => { setCurrentView('vendeur_reports'); setIsMobileMenuOpen(false); }}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'vendeur_reports' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'}`}
+                    >
+                      <span className="material-symbols-outlined text-lg">insights</span>
+                      <span>Rapports &amp; Statistiques</span>
                     </button>
                     <button
                       onClick={() => { setCurrentView('vendeur_settings'); setIsMobileMenuOpen(false); }}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'vendeur_settings' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700'}`}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'vendeur_settings' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'}`}
                     >
                       <span className="material-symbols-outlined text-lg">settings</span>
                       <span>Paramètres Vendeur</span>
@@ -220,21 +227,28 @@ export const Header: React.FC<{
                   <>
                     <button
                       onClick={() => { setCurrentView('livreur_dashboard'); setIsMobileMenuOpen(false); }}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'livreur_dashboard' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700'}`}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'livreur_dashboard' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'}`}
                     >
                       <span className="material-symbols-outlined text-lg">dashboard</span>
-                      <span>Mes Courses &amp; Missions</span>
+                      <span>Tableau de bord Livreur</span>
                     </button>
                     <button
-                      onClick={() => { setCurrentView('livreur_settings'); setIsMobileMenuOpen(false); }}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'livreur_settings' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700'}`}
+                      onClick={() => { setCurrentView('livreur_missions'); setIsMobileMenuOpen(false); }}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'livreur_missions' ? 'bg-emerald-50 text-emerald-800 font-bold' : 'text-slate-700 hover:bg-slate-50'}`}
+                    >
+                      <span className="material-symbols-outlined text-lg">two_wheeler</span>
+                      <span>Missions Disponibles</span>
+                    </button>
+                    <button
+                      onClick={() => { setCurrentView('livreur_wallet'); setIsMobileMenuOpen(false); }}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'livreur_wallet' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'}`}
                     >
                       <span className="material-symbols-outlined text-lg">account_balance_wallet</span>
                       <span>Portefeuille (0% MVP)</span>
                     </button>
                     <button
                       onClick={() => { setCurrentView('livreur_settings'); setIsMobileMenuOpen(false); }}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'livreur_settings' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700'}`}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'livreur_settings' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'}`}
                     >
                       <span className="material-symbols-outlined text-lg">settings</span>
                       <span>Paramètres Livreur</span>

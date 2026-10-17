@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
+import { MobileBottomNav } from '../common/MobileBottomNav';
 import { GoogleMapDelivery, LatLng } from '../maps/GoogleMapDelivery';
 import {
   getLocationForCommune,
@@ -322,7 +323,7 @@ export const VendeurNewDelivery: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
       {/* Sidebar Desktop */}
       <Sidebar />
 
@@ -1489,6 +1490,9 @@ export const VendeurNewDelivery: React.FC = () => {
           )}
         </main>
       </div>
+
+      {/* Mobile Bottom Navigation */}
+      <MobileBottomNav />
     </div>
   );
 };

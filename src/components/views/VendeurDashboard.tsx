@@ -77,7 +77,7 @@ export const VendeurDashboard: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
       {/* Sidebar Desktop */}
       <Sidebar />
 
@@ -497,47 +497,136 @@ export const VendeurDashboard: React.FC = () => {
             </div>
 
             {/* Mobile Card Architecture (from Stitch mobile mockup) */}
-            <div className="md:hidden divide-y divide-slate-100 p-3 space-y-3">
+            {/* Mobile Card Architecture (Full-featured touch cards) */}
+            <div className="md:hidden divide-y divide-slate-100 p-3 space-y-3.5">
               {filteredDeliveries.map((order) => (
-                <article key={order.id} className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono font-bold text-blue-700">{order.id}</span>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-800">
+                <article key={order.id} className="p-4 bg-white rounded-2xl border border-slate-200/90 shadow-2xs space-y-3 hover:border-slate-300 transition-all">
+                  {/* Header: ID + Status Badge */}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono font-black text-sm text-blue-700 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-100">
+                      {order.id}
+                    </span>
+                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                      order.status === 'livree' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                      order.status === 'en_cours' ? 'bg-blue-50 text-blue-700 border border-blue-200 animate-pulse' :
+                      order.status === 'acceptee' ? 'bg-purple-50 text-purple-700 border border-purple-200' :
+                      order.status === 'assignee' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                      order.status === 'echec' ? 'bg-red-50 text-red-700 border border-red-200' :
+                      'bg-amber-50 text-amber-800 border border-amber-200'
+                    }`}>
                       {order.status === 'en_cours' && '🚚 En cours'}
-                      {order.status === 'acceptee' && '🟣 Acceptée'}
+                      {order.status === 'acceptee' && '🟣 Course acceptée'}
+                      {order.status === 'assignee' && '🔵 Assignée'}
                       {order.status === 'en_attente' && '🟡 En attente'}
-                      {order.status === 'livree' && '🟢 Livrée'}
+                      {order.status === 'livree' && '🟢 Livrée (POD)'}
                       {order.status === 'echec' && '🔴 Échec'}
                     </span>
                   </div>
-                  <div className="space-y-1 text-xs">
-                    <div className="flex justify-between">
-                      <span className="font-bold text-slate-900">{order.clientName}</span>
-                      <span className="text-slate-500 font-mono">{order.clientPhone}</span>
+
+                  {/* Destination & Client details */}
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-extrabold text-slate-900 truncate">{order.clientName}</p>
+                        <p className="text-slate-500 font-mono text-[11px] flex items-center gap-1 mt-0.5">
+                          <span className="material-symbols-outlined text-xs text-emerald-600">call</span>
+                          <span>{order.clientPhone}</span>
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="font-black text-emerald-700 font-mono">{(order.itemValueCOD || 0).toLocaleString('fr-FR')} F</p>
+                        <span className="text-[10px] text-slate-400 font-medium">COD à encaisser</span>
+                      </div>
                     </div>
-                    <p className="text-slate-500 flex items-center gap-1">
-                      <span className="material-symbols-outlined text-xs">location_on</span>
-                      <span>{order.dropoffLocation.commune}</span>
-                    </p>
+
+                    <div className="flex items-start gap-1.5 text-slate-600 bg-slate-50 p-2 rounded-xl">
+                      <span className="material-symbols-outlined text-sm text-blue-600 shrink-0 mt-0.5">location_on</span>
+                      <div className="min-w-0">
+                        <p className="font-bold text-slate-800 text-[11px]">{order.dropoffLocation.commune}</p>
+                        <p className="text-[10px] text-slate-500 truncate">{order.dropoffLocation.address}</p>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
-                    <span className="font-bold text-slate-700">
-                      {order.courier ? `${order.courier.name} (${order.courier.rating}★)` : 'Non assigné'}
-                    </span>
-                    <div className="flex gap-1.5">
-                      <button
-                        onClick={() => handleWhatsAppAction(order)}
-                        className="p-1.5 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-200"
-                      >
-                        <span className="material-symbols-outlined text-sm">chat</span>
-                      </button>
-                      <button
-                        onClick={() => handleInspectDelivery(order)}
-                        className="px-2.5 py-1 bg-blue-600 text-white font-bold rounded-lg text-xs"
-                      >
-                        Détails
-                      </button>
+
+                  {/* Courier & Fees Info */}
+                  <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="material-symbols-outlined text-sm text-slate-400">two_wheeler</span>
+                      <span className="text-[11px] font-semibold text-slate-700 truncate">
+                        {order.courier ? `${order.courier.name} (${order.courier.rating}★)` : 'En attente de coursier'}
+                      </span>
                     </div>
+                    <span className="text-[11px] text-blue-700 font-bold shrink-0">
+                      Frais : {order.deliveryFee.toLocaleString('fr-FR')} F
+                    </span>
+                  </div>
+
+                  {/* Mobile Action Buttons (Full Feature Parity with Desktop, Min 44px Touch Heights) */}
+                  <div className="flex items-center gap-2 pt-1 border-t border-slate-100 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => handleWhatsAppAction(order)}
+                      className="min-h-[44px] px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl border border-emerald-200/80 font-bold text-xs flex items-center gap-1.5 transition-colors active:scale-95"
+                      title="Contacter le client sur WhatsApp"
+                    >
+                      <span className="material-symbols-outlined text-base">chat</span>
+                      <span>WhatsApp</span>
+                    </button>
+
+                    {order.status === 'en_cours' && (
+                      <button
+                        type="button"
+                        onClick={() => handleInspectDelivery(order)}
+                        className="min-h-[44px] flex-1 px-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                      >
+                        <span className="material-symbols-outlined text-base">near_me</span>
+                        <span>Suivi direct</span>
+                      </button>
+                    )}
+
+                    {order.status === 'acceptee' && (
+                      <button
+                        type="button"
+                        onClick={() => handleInspectDelivery(order)}
+                        className="min-h-[44px] flex-1 px-3.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 active:scale-95"
+                      >
+                        <span className="material-symbols-outlined text-base">visibility</span>
+                        <span>Détails course</span>
+                      </button>
+                    )}
+
+                    {order.status === 'en_attente' && (
+                      <button
+                        type="button"
+                        onClick={() => handleRelaunchSearch(order.id)}
+                        className="min-h-[44px] flex-1 px-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                      >
+                        <span className="material-symbols-outlined text-base">radar</span>
+                        <span>Relancer coursier</span>
+                      </button>
+                    )}
+
+                    {order.status === 'livree' && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenPOD(order)}
+                        className="min-h-[44px] flex-1 px-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                      >
+                        <span className="material-symbols-outlined text-base">verified</span>
+                        <span>Preuve POD</span>
+                      </button>
+                    )}
+
+                    {order.status === 'echec' && (
+                      <button
+                        type="button"
+                        onClick={() => handleReschedule(order.id)}
+                        className="min-h-[44px] flex-1 px-3.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                      >
+                        <span className="material-symbols-outlined text-base">replay</span>
+                        <span>Reprogrammer</span>
+                      </button>
+                    )}
                   </div>
                 </article>
               ))}

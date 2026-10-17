@@ -55,7 +55,7 @@ export const LivreurMissions: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
       {/* Sidebar Desktop */}
       <Sidebar />
 
@@ -218,33 +218,31 @@ export const LivreurMissions: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Actions */}
-                  <div className="flex items-center gap-2 flex-wrap pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100">
+                  {/* Actions - Mobile Optimized (Min 44px Touch Targets) */}
+                  <div className="flex items-center gap-2 flex-wrap pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100 w-full lg:w-auto">
                     <button
                       type="button"
                       onClick={() => handleWhatsApp(order)}
-                      className="p-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors"
+                      className="min-h-[44px] px-3.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors active:scale-95"
                       title="Contacter le client sur WhatsApp"
                     >
                       <span className="material-symbols-outlined text-base">chat</span>
-                      <span className="hidden sm:inline">WhatsApp</span>
+                      <span>WhatsApp</span>
                     </button>
 
                     {(order.status === 'en_attente' || order.status === 'assignee' || !order.courier) && (
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-2 flex-1 sm:flex-initial">
                         <button
                           type="button"
                           onClick={() => refuseDelivery(order.id)}
-                          className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all active:scale-95"
+                          className="min-h-[44px] px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all active:scale-95 flex-1 sm:flex-initial"
                         >
                           Refuser
                         </button>
                         <button
                           type="button"
-                          onClick={() => {
-                            acceptDelivery(order.id);
-                          }}
-                          className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 transition-all flex items-center gap-1"
+                          onClick={() => acceptDelivery(order.id)}
+                          className="min-h-[44px] px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1 flex-1 sm:flex-initial"
                         >
                           <span className="material-symbols-outlined text-sm">check_circle</span>
                           <span>Accepter</span>
@@ -256,9 +254,10 @@ export const LivreurMissions: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handlePickup(order.id)}
-                        className="px-3.5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95 transition-all"
+                        className="min-h-[44px] flex-1 sm:flex-initial px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5"
                       >
-                        Valider Récupération Colis
+                        <span className="material-symbols-outlined text-base">inventory</span>
+                        <span>Valider Récupération Colis</span>
                       </button>
                     )}
 
@@ -266,7 +265,7 @@ export const LivreurMissions: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleOpenPOD(order)}
-                        className="px-3.5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all flex items-center gap-1.5"
+                        className="min-h-[44px] flex-1 sm:flex-initial px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all flex items-center justify-center gap-1.5"
                       >
                         <span className="material-symbols-outlined text-base">verified_user</span>
                         <span>Valider POD (Preuve)</span>
@@ -274,7 +273,7 @@ export const LivreurMissions: React.FC = () => {
                     )}
 
                     {order.status === 'livree' && (
-                      <span className="px-3 py-2 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold flex items-center gap-1">
+                      <span className="min-h-[44px] px-3.5 py-2 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold flex items-center gap-1">
                         <span className="material-symbols-outlined text-base">check_circle</span>
                         <span>Terminée &amp; Certifiée</span>
                       </span>

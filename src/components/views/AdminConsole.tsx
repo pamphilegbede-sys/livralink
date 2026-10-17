@@ -614,12 +614,12 @@ export const AdminConsole: React.FC = () => {
     };
 
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-white font-['Plus_Jakarta_Sans'] relative overflow-hidden selection:bg-amber-500 selection:text-slate-950">
+      <div className="min-h-full flex-1 w-full overflow-y-auto custom-scrollbar bg-slate-950 flex flex-col items-center justify-center p-3 sm:p-4 py-6 sm:py-8 text-white font-['Plus_Jakarta_Sans'] relative selection:bg-amber-500 selection:text-slate-950">
         {/* Ambient Glows */}
         <div className="absolute top-1/4 -left-20 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl pointer-events-none"></div>
         <div className="absolute bottom-1/4 -right-20 w-96 h-96 bg-blue-600/20 rounded-full blur-3xl pointer-events-none"></div>
 
-        <div className="w-full max-w-lg bg-slate-900/90 border border-slate-700/80 backdrop-blur-xl rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 relative z-10 text-center">
+        <div className="w-full max-w-lg bg-slate-900/90 border border-slate-700/80 backdrop-blur-xl rounded-3xl p-4 sm:p-8 shadow-2xl space-y-5 sm:space-y-6 relative z-10 text-center my-auto">
           {/* Top Shield icon */}
           <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-tr from-purple-700 via-indigo-600 to-amber-500 p-0.5 shadow-xl shadow-purple-900/40">
             <div className="w-full h-full bg-slate-950 rounded-[22px] flex items-center justify-center">
@@ -783,7 +783,7 @@ export const AdminConsole: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
       {/* Global Sidebar */}
       <Sidebar />
 
@@ -792,7 +792,7 @@ export const AdminConsole: React.FC = () => {
         {/* Top Navbar */}
         <header className="h-[72px] bg-white border-b border-slate-200 px-4 md:px-8 flex justify-between items-center shrink-0 z-20 shadow-xs">
           {/* Search bar */}
-          <div className="flex items-center gap-3 w-1/3 min-w-[240px]">
+          <div className="flex items-center gap-2 flex-1 min-w-0 max-w-xs md:w-1/3 md:min-w-[240px]">
             <div className="relative w-full">
               <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
                 search
@@ -801,7 +801,7 @@ export const AdminConsole: React.FC = () => {
                 type="text"
                 value={adminSearch}
                 onChange={(e) => setAdminSearch(e.target.value)}
-                placeholder="Recherche globale (Livreur, Boutique, #LL-4192)..."
+                placeholder="Recherche globale..."
                 className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
               />
               {adminSearch && (
@@ -829,7 +829,7 @@ export const AdminConsole: React.FC = () => {
           </div>
 
           {/* Quick Actions & Super-Admin User Badge */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
             <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-amber-50 border border-amber-200/80 rounded-xl text-xs">
               <span className="text-sm">👑</span>
               <div className="text-left">
@@ -844,7 +844,7 @@ export const AdminConsole: React.FC = () => {
 
             <button
               onClick={() => setActiveViewTab('security')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 sm:gap-1.5 transition-all shadow-xs ${
                 activeViewTab === 'security'
                   ? 'bg-amber-600 text-white'
                   : 'bg-gradient-to-r from-slate-900 to-indigo-950 hover:from-slate-800 hover:to-indigo-900 text-amber-300 border border-amber-400/40'
@@ -865,6 +865,50 @@ export const AdminConsole: React.FC = () => {
             </button>
           </div>
         </header>
+
+        {/* Mobile Horizontal Sub-Navigation Ribbon (Sticky for small screens) */}
+        <nav
+          aria-label="Navigation des modules d'administration mobile"
+          className="md:hidden bg-slate-900 border-b border-slate-800 px-3 py-2 flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0 shadow-xs z-10"
+        >
+          {[
+            { id: 'overview', label: 'Synthèse', icon: 'dashboard' },
+            { id: 'deliveries', label: 'Courses', icon: 'local_shipping', badge: activeDeliveriesCount > 0 ? `${activeDeliveriesCount}` : undefined },
+            { id: 'users', label: 'Utilisateurs', icon: 'group' },
+            { id: 'kyc', label: 'KYC', icon: 'verified_user', badge: kycRequests.filter(k => k.status === 'en_attente').length > 0 ? `${kycRequests.filter(k => k.status === 'en_attente').length}` : undefined },
+            { id: 'couriers', label: 'Livreurs', icon: 'two_wheeler' },
+            { id: 'merchants', label: 'Boutiques', icon: 'storefront' },
+            { id: 'disputes', label: 'Litiges', icon: 'warning', badge: disputeCount > 0 ? `${disputeCount}` : undefined },
+            { id: 'pricing', label: 'Tarifs', icon: 'tune' },
+            { id: 'tests', label: 'Tests (8)', icon: 'science' },
+            { id: 'audit', label: 'Audit', icon: 'history' },
+            { id: 'security', label: 'Sécurité', icon: 'shield_person' },
+          ].map((tab) => {
+            const isActive = activeViewTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveViewTab(tab.id as any)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 shrink-0 active:scale-95 ${
+                  isActive
+                    ? 'bg-amber-400 text-slate-950 shadow-md font-extrabold'
+                    : 'bg-slate-800/90 text-slate-300 hover:text-white border border-slate-700/60'
+                }`}
+              >
+                <span className="material-symbols-outlined text-sm">{tab.icon}</span>
+                <span>{tab.label}</span>
+                {tab.badge && (
+                  <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-bold ${
+                    isActive ? 'bg-slate-900 text-amber-300' : 'bg-red-500 text-white'
+                  }`}>
+                    {tab.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
 
         {/* Scrollable Content Area */}
         <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-28 md:pb-8">
@@ -1149,7 +1193,7 @@ export const AdminConsole: React.FC = () => {
               TAB: GESTION DE TOUS LES UTILISATEURS (Livreurs + Vendeurs Réunis)
              ========================================================================= */}
           {activeViewTab === 'users' && (
-            <div className="space-y-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
+            <div className="space-y-4 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                 <div>
                   <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -1198,8 +1242,194 @@ export const AdminConsole: React.FC = () => {
                 </div>
               </div>
 
-              {/* Table of all users */}
-              <div className="overflow-x-auto">
+              {/* Mobile Card Architecture for Users (< md) */}
+              <div className="md:hidden space-y-3">
+                {/* Couriers Mobile Cards */}
+                {(userTypeFilter === 'all' || userTypeFilter === 'livreur') &&
+                  filteredCouriers.map((c) => (
+                    <article key={'m_c_' + c.id} className="p-3.5 bg-slate-50/80 rounded-2xl border border-slate-200 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center text-xs">
+                            {c.avatarInitials}
+                          </div>
+                          <div>
+                            <div className="font-bold text-slate-900 text-xs flex items-center gap-1">
+                              <span>{c.name}</span>
+                              {c.badge && (
+                                <span className="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.2 rounded-full font-bold">
+                                  {c.badge}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-slate-400 font-mono">ID: {c.id}</span>
+                          </div>
+                        </div>
+                        <div>
+                          {c.status === 'en_ligne' && <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">🟢 En ligne</span>}
+                          {c.status === 'en_course' && <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">🔵 En course</span>}
+                          {c.status === 'suspendu' && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">🔴 Suspendu</span>}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1 text-xs pt-1 border-t border-slate-200/60">
+                        <div className="flex justify-between text-slate-600">
+                          <span className="text-slate-400">Rôle:</span>
+                          <span className="font-bold text-blue-700">LIVREUR ({c.vehicle})</span>
+                        </div>
+                        <div className="flex justify-between text-slate-600">
+                          <span className="text-slate-400">Téléphone:</span>
+                          <span className="font-mono font-semibold">{c.phone}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-600">
+                          <span className="text-slate-400">Zone:</span>
+                          <span>{c.zone}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-600">
+                          <span className="text-slate-400">Solde caution:</span>
+                          <span className="font-mono font-bold text-blue-700">{(c.walletBalanceFCFA || 0).toLocaleString('fr-FR')} FCFA</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-200/60 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => setWalletModalCourier(c)}
+                          className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-bold active:scale-95"
+                        >
+                          Portefeuille
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openEditUser({
+                            id: c.id,
+                            name: c.name,
+                            phone: c.phone,
+                            email: c.email || '',
+                            role: 'livreur',
+                            commune: c.zone,
+                            status: c.status,
+                            vehicle: c.vehicle,
+                            plate: c.vehiclePlate
+                          })}
+                          className="px-2.5 py-1 bg-white border border-slate-200 text-slate-700 rounded-lg text-xs font-semibold active:scale-95"
+                        >
+                          Modifier
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleCourierStatus(c.id)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold active:scale-95 ${
+                            c.status === 'suspendu' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                          }`}
+                        >
+                          {c.status === 'suspendu' ? 'Activer' : 'Suspendre'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeletingUser({ id: c.id, name: c.name, role: 'livreur' })}
+                          className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors active:scale-95"
+                          title="Supprimer"
+                        >
+                          <span className="material-symbols-outlined text-sm">delete</span>
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+
+                {/* Merchants Mobile Cards */}
+                {(userTypeFilter === 'all' || userTypeFilter === 'vendeur') &&
+                  filteredMerchants.map((m) => (
+                    <article key={'m_m_' + m.id} className="p-3.5 bg-slate-50/80 rounded-2xl border border-slate-200 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white font-bold flex items-center justify-center text-xs">
+                            <span className="material-symbols-outlined text-sm">store</span>
+                          </div>
+                          <div>
+                            <div className="font-bold text-slate-900 text-xs flex items-center gap-1">
+                              <span>{m.storeName}</span>
+                              {m.isVerified && (
+                                <span className="material-symbols-outlined text-blue-500 text-xs">verified</span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-slate-400">Gérant: {m.managerName}</span>
+                          </div>
+                        </div>
+                        <div>
+                          {m.status === 'actif' && <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">🟢 Actif</span>}
+                          {m.status === 'suspendu' && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">🔴 Bloqué</span>}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1 text-xs pt-1 border-t border-slate-200/60">
+                        <div className="flex justify-between text-slate-600">
+                          <span className="text-slate-400">Canal:</span>
+                          <span className="font-bold text-purple-700">VENDEUR ({m.channel})</span>
+                        </div>
+                        <div className="flex justify-between text-slate-600">
+                          <span className="text-slate-400">Téléphone:</span>
+                          <span className="font-mono font-semibold">{m.phone}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-600">
+                          <span className="text-slate-400">Commune:</span>
+                          <span>{m.commune}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-600">
+                          <span className="text-slate-400">Activité:</span>
+                          <span className="font-bold text-slate-900">{m.totalOrders} courses • {(m.totalVolumeFCFA || 0).toLocaleString('fr-FR')} F</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-200/60 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => toggleMerchantVerification(m.id)}
+                          className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-bold active:scale-95"
+                        >
+                          {m.isVerified ? 'Badge ✓' : '+ Badge'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openEditUser({
+                            id: m.id,
+                            name: m.storeName,
+                            phone: m.phone,
+                            email: m.email || '',
+                            role: 'vendeur',
+                            commune: m.commune,
+                            status: m.status,
+                            channel: m.channel,
+                            isVerified: m.isVerified
+                          })}
+                          className="px-2.5 py-1 bg-white border border-slate-200 text-slate-700 rounded-lg text-xs font-semibold active:scale-95"
+                        >
+                          Modifier
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleMerchantStatus(m.id)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold active:scale-95 ${
+                            m.status === 'suspendu' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'
+                          }`}
+                        >
+                          {m.status === 'suspendu' ? 'Débloquer' : 'Bloquer'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeletingUser({ id: m.id, name: m.storeName, role: 'vendeur' })}
+                          className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors active:scale-95"
+                          title="Supprimer la boutique"
+                        >
+                          <span className="material-symbols-outlined text-sm">delete</span>
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+              </div>
+
+              {/* Table of all users for Desktop & Tablet */}
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
@@ -1392,7 +1622,7 @@ export const AdminConsole: React.FC = () => {
               TAB: VÉRIFICATIONS KYC (Centre de validation des pièces d'identité)
              ========================================================================= */}
           {activeViewTab === 'kyc' && (
-            <div className="space-y-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
+            <div className="space-y-4 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                 <div>
                   <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -1515,7 +1745,7 @@ export const AdminConsole: React.FC = () => {
               TAB 2: GESTION DES LIVREURS (Full Table & Actions)
              ========================================================================= */}
           {activeViewTab === 'couriers' && (
-            <div className="space-y-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
+            <div className="space-y-4 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                 <div>
                   <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -1627,8 +1857,115 @@ export const AdminConsole: React.FC = () => {
                 </div>
               )}
 
-              {/* Couriers Table */}
-              <div className="overflow-x-auto">
+              {/* Mobile Cards for Couriers Fleet */}
+              <div className="md:hidden divide-y divide-slate-100 space-y-3">
+                {filteredCouriers.length === 0 ? (
+                  <div className="text-center py-8 text-slate-400 text-xs">
+                    Aucun livreur trouvé avec les filtres actuels.
+                  </div>
+                ) : (
+                  filteredCouriers.map((courier) => (
+                    <article key={courier.id} className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-9 h-9 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center text-xs shadow-xs">
+                            {courier.avatarInitials}
+                          </div>
+                          <div>
+                            <div className="font-bold text-slate-900 text-xs flex items-center gap-1">
+                              <span>{courier.name}</span>
+                              {courier.badge && (
+                                <span className="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.2 rounded-full font-bold">
+                                  {courier.badge}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-amber-500 font-bold">★ {courier.rating.toFixed(1)}</span>
+                          </div>
+                        </div>
+
+                        <div>
+                          {courier.status === 'en_ligne' && (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                              🟢 En ligne
+                            </span>
+                          )}
+                          {courier.status === 'en_course' && (
+                            <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">
+                              🔵 En course
+                            </span>
+                          )}
+                          {courier.status === 'hors_ligne' && (
+                            <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold">
+                              ⚪ Hors ligne
+                            </span>
+                          )}
+                          {courier.status === 'suspendu' && (
+                            <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">
+                              🔴 Suspendu
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1 text-xs">
+                        <div className="flex justify-between items-center text-slate-600">
+                          <span>📱 {courier.phone}</span>
+                          <span className="font-mono text-slate-400 text-[10px]">{courier.vehiclePlate}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 flex items-center justify-between">
+                          <span>🛵 {courier.vehicle}</span>
+                          <span className="text-slate-700 font-semibold">{courier.zone}</span>
+                        </div>
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[11px]">
+                          <span className="text-slate-500">Caution / Portefeuille:</span>
+                          <span className="font-mono font-bold text-slate-900">{(courier.walletBalanceFCFA || 0).toLocaleString('fr-FR')} FCFA</span>
+                        </div>
+                      </div>
+
+                      {/* Courier Actions */}
+                      <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-100 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => setWalletModalCourier(courier)}
+                          className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold active:scale-95"
+                        >
+                          Portefeuille
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openEditCourier(courier)}
+                          className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold active:scale-95"
+                        >
+                          Éditer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleCourierStatus(courier.id)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold active:scale-95 ${
+                            courier.status === 'suspendu'
+                              ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                              : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                          }`}
+                        >
+                          {courier.status === 'suspendu' ? 'Réactiver' : 'Suspendre'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeletingCourier(courier)}
+                          className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors active:scale-95"
+                          title="Supprimer le livreur"
+                        >
+                          <span className="material-symbols-outlined text-sm">delete</span>
+                        </button>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+
+              {/* Couriers Table for Desktop */}
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
@@ -1752,7 +2089,7 @@ export const AdminConsole: React.FC = () => {
               TAB 3: GESTION DES VENDEURS / MARCHANDS (Full Table & Actions)
              ========================================================================= */}
           {activeViewTab === 'merchants' && (
-            <div className="space-y-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
+            <div className="space-y-4 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                 <div>
                   <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -1794,8 +2131,106 @@ export const AdminConsole: React.FC = () => {
                 </div>
               </div>
 
-              {/* Table */}
-              <div className="overflow-x-auto">
+              {/* Mobile Cards for Merchants */}
+              <div className="md:hidden divide-y divide-slate-100 space-y-3">
+                {filteredMerchants.length === 0 ? (
+                  <div className="text-center py-8 text-slate-400 text-xs">
+                    Aucune boutique trouvée avec les filtres actuels.
+                  </div>
+                ) : (
+                  filteredMerchants.map((merchant) => (
+                    <article key={merchant.id} className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-bold text-slate-900 text-xs">
+                          <span>🏪 {merchant.storeName}</span>
+                          {merchant.isVerified && (
+                            <span className="material-symbols-outlined text-blue-500 text-xs" title="Vérifié">verified</span>
+                          )}
+                        </div>
+                        <div>
+                          {merchant.status === 'actif' && (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                              🟢 Actif
+                            </span>
+                          )}
+                          {merchant.status === 'suspendu' && (
+                            <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">
+                              🔴 Suspendu
+                            </span>
+                          )}
+                          {merchant.status === 'en_attente_kyc' && (
+                            <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
+                              🟡 En attente KYC
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1 text-xs">
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Gérant: <strong className="text-slate-800">{merchant.managerName}</strong></span>
+                          <span className={`px-2 py-0.2 rounded-full text-[9px] font-bold ${
+                            merchant.channel === 'WhatsApp' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' :
+                            merchant.channel === 'Instagram' ? 'bg-pink-50 text-pink-800 border border-pink-200' :
+                            merchant.channel === 'TikTok' ? 'bg-purple-50 text-purple-800 border border-purple-200' : 'bg-blue-50 text-blue-800'
+                          }`}>
+                            {merchant.channel}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 flex items-center gap-1">
+                          <span className="material-symbols-outlined text-xs text-slate-400">location_on</span>
+                          <span>{merchant.commune} • {merchant.address}</span>
+                        </div>
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[11px]">
+                          <span>📱 {merchant.phone}</span>
+                          <span className="font-extrabold text-emerald-700">
+                            {(merchant.totalVolumeFCFA || 0).toLocaleString('fr-FR')} FCFA ({merchant.totalOrders} courses)
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-100 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => openEditMerchant(merchant)}
+                          className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold active:scale-95"
+                        >
+                          Éditer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleMerchantVerification(merchant.id)}
+                          className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold active:scale-95"
+                        >
+                          {merchant.isVerified ? 'Badge ✓' : '+ Badge'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleMerchantStatus(merchant.id)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold active:scale-95 ${
+                            merchant.status === 'suspendu'
+                              ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                              : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                          }`}
+                        >
+                          {merchant.status === 'suspendu' ? 'Débloquer' : 'Bloquer'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeletingMerchant(merchant)}
+                          className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors active:scale-95"
+                          title="Supprimer la boutique"
+                        >
+                          <span className="material-symbols-outlined text-sm">delete</span>
+                        </button>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+
+              {/* Table for Desktop */}
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
@@ -2000,7 +2435,7 @@ export const AdminConsole: React.FC = () => {
               </div>
 
               {/* Main Deliveries Card */}
-              <div className="space-y-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+              <div className="space-y-4 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                   <div>
                     <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -2067,8 +2502,160 @@ export const AdminConsole: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Table */}
-                <div className="overflow-x-auto">
+                {/* Mobile Cards for Deliveries Supervision */}
+                <div className="md:hidden divide-y divide-slate-100 p-3 space-y-3">
+                  {filteredDeliveries.length === 0 ? (
+                    <div className="text-center py-8 text-slate-400 text-xs">
+                      Aucune course trouvée avec les filtres actuels.
+                    </div>
+                  ) : (
+                    filteredDeliveries.map((order) => (
+                      <article key={order.id} className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <button
+                            type="button"
+                            onClick={() => setInspectingDelivery(order)}
+                            className="font-mono font-bold text-blue-700 text-xs hover:underline flex items-center gap-1"
+                          >
+                            <span>{order.id}</span>
+                            <span className="material-symbols-outlined text-xs">visibility</span>
+                          </button>
+                          <div>
+                            {order.status === 'en_cours' && (
+                              <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">
+                                🚚 En transit
+                              </span>
+                            )}
+                            {order.status === 'assignee' && (
+                              <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-bold">
+                                🟣 Assignée
+                              </span>
+                            )}
+                            {order.status === 'en_attente' && (
+                              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
+                                🟡 En attente
+                              </span>
+                            )}
+                            {order.status === 'echec' && (
+                              <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">
+                                🔴 Litige
+                              </span>
+                            )}
+                            {order.status === 'livree' && (
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                                ✅ Livrée (POD)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5 text-xs">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <div className="font-bold text-slate-900">{order.clientName}</div>
+                              <div className="text-[11px] text-slate-500 font-mono">{order.clientPhone}</div>
+                            </div>
+                            <div className="text-right">
+                              <div className="font-extrabold text-emerald-700">{order.itemValueCOD.toLocaleString('fr-FR')} FCFA</div>
+                              <div className="text-[10px] text-slate-400">Frais: {order.deliveryFee.toLocaleString('fr-FR')} F</div>
+                            </div>
+                          </div>
+
+                          <div className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-xl space-y-0.5">
+                            <div className="flex items-center gap-1 truncate">
+                              <span className="text-slate-400">De:</span>
+                              <strong className="text-slate-800">{order.pickupLocation.name}</strong>
+                              <span className="text-slate-400">({order.pickupLocation.commune})</span>
+                            </div>
+                            <div className="flex items-center gap-1 truncate">
+                              <span className="text-slate-400">Vers:</span>
+                              <strong className="text-slate-800">{order.dropoffLocation.commune}</strong>
+                              <span className="text-slate-400 truncate">• {order.dropoffLocation.address}</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between text-[11px] pt-1">
+                            <span className="text-slate-500">
+                              Coursier: <strong className="text-slate-800">{order.courier ? order.courier.name : 'Non assigné'}</strong>
+                            </span>
+                            <span className="text-[10px] text-slate-400">
+                              {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Actions buttons */}
+                        <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-100 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => setAssigningOrder(order)}
+                            className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-2xs active:scale-95"
+                          >
+                            Assigner
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openEditDelivery(order)}
+                            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold active:scale-95"
+                          >
+                            Éditer
+                          </button>
+                          {order.status !== 'livree' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                updateDeliveryStatus(order.id, 'livree', 'Forçage administrateur POD');
+                                showToast(`Course ${order.id} marquée livrée avec succès !`, 'success');
+                              }}
+                              className="px-2 py-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-xs font-bold active:scale-95"
+                            >
+                              ✓ Livré
+                            </button>
+                          )}
+                          {order.status === 'echec' ? (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedDisputeOrder(order.id)}
+                              className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold shadow-2xs active:scale-95"
+                            >
+                              Arbitrer
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                updateDeliveryStatus(order.id, 'echec', 'Incident signalé par le superviseur');
+                                showToast(`Course ${order.id} placée en litige`, 'info');
+                              }}
+                              className="px-2 py-1 bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 rounded-lg text-xs font-semibold active:scale-95"
+                            >
+                              Litige
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setInspectingDelivery(order)}
+                            className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg active:scale-95"
+                            title="Voir fiche complète"
+                          >
+                            <span className="material-symbols-outlined text-sm">open_in_new</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeletingDelivery(order)}
+                            className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors active:scale-95"
+                            title="Supprimer la course"
+                          >
+                            <span className="material-symbols-outlined text-sm">delete</span>
+                          </button>
+                        </div>
+                      </article>
+                    ))
+                  )}
+                </div>
+
+                {/* Table for Desktop & Tablets */}
+                <div className="hidden md:block overflow-x-auto">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
@@ -2259,7 +2846,7 @@ export const AdminConsole: React.FC = () => {
               TAB 5: LITIGES & MODÉRATION
              ========================================================================= */}
           {activeViewTab === 'disputes' && (
-            <div className="space-y-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
+            <div className="space-y-4 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
               <div className="pb-3 border-b border-slate-100">
                 <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                   <span className="material-symbols-outlined text-red-600">warning</span>
@@ -2308,7 +2895,7 @@ export const AdminConsole: React.FC = () => {
               TAB 6: MOTEUR TARIFAIRE & COMMISSIONS
              ========================================================================= */}
           {activeViewTab === 'pricing' && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
               <div className="space-y-4">
                 <div className="pb-3 border-b border-slate-100">
                   <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -2400,7 +2987,7 @@ export const AdminConsole: React.FC = () => {
               TAB 7: SUITE DE TESTS & VALIDATIONS ADMINISTRATEUR
              ========================================================================= */}
           {activeViewTab === 'tests' && (
-            <div className="space-y-6 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
+            <div className="space-y-6 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                 <div>
                   <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -2499,7 +3086,7 @@ export const AdminConsole: React.FC = () => {
               TAB 8: JOURNAL D'AUDIT & SÉCURITÉ
              ========================================================================= */}
           {activeViewTab === 'audit' && (
-            <div className="space-y-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
+            <div className="space-y-4 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                 <div>
                   <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -2597,7 +3184,7 @@ export const AdminConsole: React.FC = () => {
               {/* Whitelist Management Grid */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 {/* Left Column: Authorized Emails List (8 cols) */}
-                <div className="lg:col-span-7 bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+                <div className="lg:col-span-7 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                     <div>
                       <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
@@ -2709,7 +3296,7 @@ export const AdminConsole: React.FC = () => {
                 {/* Right Column: Security Verification & Attack Simulator (5 cols) */}
                 <div className="lg:col-span-5 space-y-4">
                   {/* Security Sandbox Test */}
-                  <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+                  <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-4">
                     <div className="flex items-center gap-2">
                       <span className="material-symbols-outlined text-amber-600 text-lg">science</span>
                       <h3 className="font-bold text-xs text-slate-900 uppercase tracking-wider">

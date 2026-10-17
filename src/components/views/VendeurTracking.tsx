@@ -75,7 +75,7 @@ export const VendeurTracking: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
       {/* Sidebar Desktop */}
       <Sidebar />
 
@@ -147,23 +147,23 @@ export const VendeurTracking: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Actions for current order */}
-                <div className="flex items-center gap-2 flex-wrap">
+                {/* Actions for current order (Mobile Touch Friendly) */}
+                <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
                   <button
                     type="button"
                     onClick={handleShareTrackingLink}
-                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors"
+                    className="min-h-[44px] flex-1 sm:flex-initial px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors active:scale-95"
                   >
-                    <span className="material-symbols-outlined text-sm">share</span>
-                    <span>Lien de suivi</span>
+                    <span className="material-symbols-outlined text-base">share</span>
+                    <span>Lien suivi</span>
                   </button>
                   <button
                     type="button"
                     onClick={handleDirectWhatsApp}
-                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all"
+                    className="min-h-[44px] flex-1 sm:flex-initial px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-all active:scale-95"
                   >
-                    <span className="material-symbols-outlined text-sm">chat</span>
-                    <span>Aviser client</span>
+                    <span className="material-symbols-outlined text-base">chat</span>
+                    <span>WhatsApp</span>
                   </button>
                   <button
                     type="button"
@@ -171,9 +171,9 @@ export const VendeurTracking: React.FC = () => {
                       setSelectedDelivery(currentOrder);
                       setIsPODModalOpen(true);
                     }}
-                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all"
+                    className="min-h-[44px] w-full sm:w-auto px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-all active:scale-95"
                   >
-                    <span className="material-symbols-outlined text-sm">verified</span>
+                    <span className="material-symbols-outlined text-base">verified</span>
                     <span>Preuve POD</span>
                   </button>
                 </div>
@@ -423,8 +423,92 @@ export const VendeurTracking: React.FC = () => {
               </div>
             </div>
 
-            {/* Orders Table */}
-            <div className="overflow-x-auto">
+            {/* Mobile Cards View (Smartphones) */}
+            <div className="md:hidden divide-y divide-slate-100 p-3 space-y-3">
+              {filteredDeliveries.map((order) => {
+                const isSelected = order.id === activeCourseId;
+                return (
+                  <article
+                    key={order.id}
+                    onClick={() => handleSelectOrder(order)}
+                    className={`p-3.5 rounded-2xl border transition-all cursor-pointer space-y-2.5 ${
+                      isSelected
+                        ? 'bg-blue-50/80 border-blue-400 shadow-sm ring-1 ring-blue-300'
+                        : 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-blue-700 text-xs">{order.id}</span>
+                        {isSelected && (
+                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-600 text-white">
+                            Actif
+                          </span>
+                        )}
+                      </div>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        order.status === 'livree' ? 'bg-emerald-100 text-emerald-800' :
+                        order.status === 'en_cours' ? 'bg-blue-100 text-blue-800' :
+                        order.status === 'echec' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'
+                      }`}>
+                        {order.status === 'livree' ? '🟢 Livrée' :
+                         order.status === 'en_cours' ? '🚚 En cours' :
+                         order.status === 'echec' ? '🔴 Échec' : '🟡 En attente'}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-slate-900">{order.clientName}</span>
+                        <span className="text-emerald-700 font-extrabold">{order.itemValueCOD.toLocaleString('fr-FR')} FCFA</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 flex items-center gap-1">
+                        <span className="material-symbols-outlined text-xs text-slate-400">location_on</span>
+                        <span>{order.dropoffLocation.commune} • {order.dropoffLocation.address}</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 flex items-center justify-between pt-1 border-t border-slate-100">
+                        <span>Colis: {order.itemDescription}</span>
+                        <span className="font-semibold text-slate-700">
+                          {order.courier?.name || 'Non assigné'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 pt-1.5 border-t border-slate-100">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openWhatsAppModal(
+                            order.clientPhone,
+                            order.clientName,
+                            `Bonjour ${order.clientName}, votre commande ${order.id} (${order.itemDescription}) est en cours de traitement par LivraLink.`
+                          );
+                        }}
+                        className="min-h-[44px] px-3 py-2 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 text-xs font-bold flex items-center gap-1.5 active:scale-95"
+                      >
+                        <span className="material-symbols-outlined text-sm">chat</span>
+                        <span>WhatsApp</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSelectOrder(order);
+                        }}
+                        className="min-h-[44px] px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs active:scale-95 flex items-center gap-1.5"
+                      >
+                        <span className="material-symbols-outlined text-sm">map</span>
+                        <span>Voir sur carte</span>
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+
+            {/* Orders Table for Tablets and Desktops */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-slate-100 text-slate-400 font-bold uppercase text-[10px] tracking-wider">

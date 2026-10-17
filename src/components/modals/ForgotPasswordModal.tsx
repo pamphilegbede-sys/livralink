@@ -126,38 +126,38 @@ export const ForgotPasswordModal: React.FC<{
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200 font-['Plus_Jakarta_Sans']">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200 font-['Plus_Jakarta_Sans']">
       <div
-        className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800"
+        className="w-full max-w-md bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100">
-              <span className="material-symbols-outlined text-2xl">lock_reset</span>
+        <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100 shrink-0">
+              <span className="material-symbols-outlined text-xl sm:text-2xl">lock_reset</span>
             </div>
-            <div>
-              <h3 className="font-bold text-base text-slate-900 leading-tight">
-                Réinitialisation du mot de passe
+            <div className="truncate">
+              <h3 className="font-bold text-sm sm:text-base text-slate-900 leading-tight truncate">
+                Réinitialisation mot de passe
               </h3>
-              <p className="text-xs text-slate-500">Procédure sécurisée LivraLink</p>
+              <p className="text-[11px] text-slate-500">Procédure sécurisée LivraLink</p>
             </div>
           </div>
           <button
             onClick={handleClose}
-            className="w-8 h-8 rounded-full hover:bg-slate-200/60 flex items-center justify-center text-slate-400 hover:text-slate-700 transition-colors"
+            className="w-8 h-8 rounded-full hover:bg-slate-200/60 flex items-center justify-center text-slate-400 hover:text-slate-700 transition-colors shrink-0 min-h-[36px]"
           >
             <span className="material-symbols-outlined text-xl">close</span>
           </button>
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 space-y-4">
+        <div className="p-4 sm:p-6 space-y-4 max-h-[80vh] overflow-y-auto">
           {errorMsg && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium flex items-center gap-2 animate-in fade-in">
-              <span className="material-symbols-outlined text-base text-red-500">error</span>
-              <span>{errorMsg}</span>
+              <span className="material-symbols-outlined text-base text-red-500 shrink-0">error</span>
+              <span className="leading-snug">{errorMsg}</span>
             </div>
           )}
 

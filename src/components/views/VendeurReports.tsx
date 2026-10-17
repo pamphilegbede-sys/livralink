@@ -32,7 +32,7 @@ export const VendeurReports: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
       {/* Sidebar Desktop */}
       <Sidebar />
 
@@ -60,49 +60,51 @@ export const VendeurReports: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto">
               {/* Period Switcher */}
-              <div className="bg-slate-100 p-1 rounded-xl flex items-center gap-1 text-xs font-semibold text-slate-600">
+              <div className="bg-slate-100 p-1 rounded-xl flex items-center justify-between sm:justify-start gap-1 text-xs font-semibold text-slate-600">
                 <button
                   type="button"
                   onClick={() => setTimeRange('today')}
-                  className={`px-3 py-1.5 rounded-lg transition-colors ${timeRange === 'today' ? 'bg-white text-blue-700 shadow-2xs font-bold' : 'hover:text-slate-900'}`}
+                  className={`flex-1 sm:flex-initial text-center px-3 py-2 sm:py-1.5 rounded-lg transition-colors ${timeRange === 'today' ? 'bg-white text-blue-700 shadow-2xs font-bold' : 'hover:text-slate-900'}`}
                 >
                   Aujourd'hui
                 </button>
                 <button
                   type="button"
                   onClick={() => setTimeRange('week')}
-                  className={`px-3 py-1.5 rounded-lg transition-colors ${timeRange === 'week' ? 'bg-white text-blue-700 shadow-2xs font-bold' : 'hover:text-slate-900'}`}
+                  className={`flex-1 sm:flex-initial text-center px-3 py-2 sm:py-1.5 rounded-lg transition-colors ${timeRange === 'week' ? 'bg-white text-blue-700 shadow-2xs font-bold' : 'hover:text-slate-900'}`}
                 >
                   7 jours
                 </button>
                 <button
                   type="button"
                   onClick={() => setTimeRange('month')}
-                  className={`px-3 py-1.5 rounded-lg transition-colors ${timeRange === 'month' ? 'bg-white text-blue-700 shadow-2xs font-bold' : 'hover:text-slate-900'}`}
+                  className={`flex-1 sm:flex-initial text-center px-3 py-2 sm:py-1.5 rounded-lg transition-colors ${timeRange === 'month' ? 'bg-white text-blue-700 shadow-2xs font-bold' : 'hover:text-slate-900'}`}
                 >
                   Ce mois
                 </button>
               </div>
 
               {/* Export Buttons */}
-              <button
-                type="button"
-                onClick={handleExportExcel}
-                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center gap-1.5"
-              >
-                <span className="material-symbols-outlined text-base text-emerald-600">table_chart</span>
-                <span>Export Excel</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleExportPDF}
-                className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 active:scale-95"
-              >
-                <span className="material-symbols-outlined text-base">download</span>
-                <span>Rapport PDF</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportExcel}
+                  className="min-h-[44px] flex-1 sm:flex-initial px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                >
+                  <span className="material-symbols-outlined text-base text-emerald-600">table_chart</span>
+                  <span>Export Excel</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportPDF}
+                  className="min-h-[44px] flex-1 sm:flex-initial px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                >
+                  <span className="material-symbols-outlined text-base">download</span>
+                  <span>Rapport PDF</span>
+                </button>
+              </div>
             </div>
           </div>
 

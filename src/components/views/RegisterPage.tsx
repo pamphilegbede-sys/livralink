@@ -99,11 +99,17 @@ export const RegisterPage: React.FC = () => {
           storeCoordinates: coords ? [coords.lat, coords.lng] : undefined,
         }));
         setCurrentView('vendeur_dashboard');
-        showToast(`Compte Vendeur créé avec succès ! Bienvenue ${profile.fullName}. Emplacement boutique configuré à ${storeCommune || 'Bénin'}.`, 'success');
+        showToast(`Compte Vendeur créé avec succès ! Bienvenue ${profile.fullName}.`, 'success');
       } else {
         setUserProfile(profile);
+        setCourierSettings((prev) => ({
+          ...prev,
+          fullName: profile.fullName || prev.fullName,
+          phone: phone.trim() || prev.phone,
+          email: email.trim() || prev.email,
+        }));
         setCurrentView('livreur_dashboard');
-        showToast(`Compte Livreur Partenaire créé sur Firebase ! Bienvenue ${profile.fullName}.`, 'success');
+        showToast(`Compte Livreur créé avec succès ! Bienvenue ${profile.fullName}.`, 'success');
       }
     } catch (err: any) {
       const friendlyMsg = getFirebaseAuthErrorMessage(err);
@@ -157,26 +163,26 @@ export const RegisterPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col justify-between bg-slate-50 text-slate-800 antialiased bg-telemetry-grid font-['Plus_Jakarta_Sans']">
-      {/* Top Header */}
-      <header className="w-full bg-white/90 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 px-6 py-4 shadow-2xs">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <button onClick={() => setCurrentView('landing')} className="flex items-center gap-2 group">
-            <div className="w-8 h-8 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-sm">
+    <div className="min-h-full flex-1 flex flex-col justify-between bg-slate-50 text-slate-800 antialiased font-['Plus_Jakarta_Sans']">
+      {/* Top Header - Mobile Optimized */}
+      <header className="w-full bg-white/95 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-40 px-3.5 sm:px-6 py-3 sm:py-4 shadow-2xs">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
+          <button onClick={() => setCurrentView('landing')} className="flex items-center gap-2 group min-h-[44px]">
+            <div className="w-8 h-8 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-2xs">
               <span className="material-symbols-outlined text-xl text-blue-400">local_shipping</span>
             </div>
             <div className="flex flex-col text-left">
-              <span className="text-lg font-extrabold tracking-tight text-slate-900 leading-none">
+              <span className="text-base sm:text-lg font-extrabold tracking-tight text-slate-900 leading-none">
                 Livra<span className="text-blue-600">Link</span>
               </span>
               <span className="text-[9px] font-bold tracking-widest text-slate-400 uppercase mt-0.5">
-                CONNECT &amp; DELIVER
+                INSCRIPTION
               </span>
             </div>
           </button>
 
-          <div className="flex items-center gap-3 text-xs">
-            <span className="text-slate-500 hidden sm:inline">Déjà inscrit ?</span>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-slate-500 hidden md:inline">Déjà inscrit ?</span>
             <button
               onClick={() => {
                 if (selectedRole === 'vendeur') {
@@ -187,172 +193,106 @@ export const RegisterPage: React.FC = () => {
                   setCurrentView('login_livreur');
                 }
               }}
-              className="px-3.5 py-1.5 rounded-lg border border-slate-300 font-semibold text-slate-700 hover:bg-slate-100 transition-colors flex items-center gap-1"
+              className="min-h-[40px] px-3 sm:px-3.5 py-1.5 rounded-xl border border-slate-300 font-semibold text-slate-700 hover:bg-slate-100 active:scale-95 transition-all text-xs whitespace-nowrap shrink-0 flex items-center gap-1.5"
             >
               <span className="material-symbols-outlined text-sm">login</span>
-              <span>Se connecter</span>
+              <span>Connexion</span>
             </button>
           </div>
         </div>
       </header>
 
       {/* Main Container */}
-      <main className="flex-1 max-w-6xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 flex items-center justify-center">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start w-full">
-          {/* Left Column: Context & Realtime Proof Preview */}
-          <div className="lg:col-span-5 space-y-6">
-            <div className="space-y-3">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-xs font-bold">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                INFRASTRUCTURE LOGISTIQUE SYNCHRONISÉE
-              </div>
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight leading-tight">
-                {selectedRole === 'vendeur'
-                  ? 'Rejoignez le réseau logistique urbain de référence'
-                  : 'Roulez l\'esprit tranquille. Recevez des courses claires et rentables.'}
-              </h1>
-              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                {selectedRole === 'vendeur'
-                  ? 'Optimisez chaque livraison avec un écosystème conçu pour éliminer l\'incertitude opérationnelle et protéger vos flux financiers.'
-                  : 'Fini les pertes de temps et les litiges d\'adresses imprécises. Rejoignez le réseau LivraLink pour fluidifier votre activité avec des gains garantis.'}
-              </p>
-            </div>
-
-            {/* Feature Bento Points */}
-            <div className="space-y-3">
-              <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-base">chat</span>
-                </div>
-                <div>
-                  <h4 className="font-bold text-xs text-slate-900">Fini le chaos des messages clients</h4>
-                  <p className="text-[11px] text-slate-500">Générez des liens de suivi sécurisés pour vos clients sans ressaisir manuellement vos adresses.</p>
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-base">timeline</span>
-                </div>
-                <div>
-                  <h4 className="font-bold text-xs text-slate-900">Traçabilité des 7 statuts en direct</h4>
-                  <p className="text-[11px] text-slate-500">Du ramassage au dépôt final : chronologie certifiée par géolocalisation haute fréquence.</p>
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-base">verified</span>
-                </div>
-                <div>
-                  <h4 className="font-bold text-xs text-slate-900">Preuve de livraison (POD) en 1 clic</h4>
-                  <p className="text-[11px] text-slate-500">Horodatage cryptographique, signature tactile numérique et code OTP de validation instantané.</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Live Telemetry Card: #LL-2048 */}
-            <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-2 text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
-                  <span className="font-bold text-slate-900">APERÇU EN DIRECT : COLIS #LL-2048</span>
-                </div>
-                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                  POD Certifiée
-                </span>
-              </div>
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
-                <div>
-                  <p className="font-bold text-slate-900">En route • Cotonou Cadjehoun</p>
-                  <p className="text-[11px] text-slate-500">Livreur assigné : Ibrahim K.</p>
-                </div>
-                <div className="text-right">
-                  <span className="font-bold text-blue-600">~14 min</span>
-                  <span className="text-[10px] text-emerald-600 block">Preuve active</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Column: Registration Form */}
-          <div className="lg:col-span-7">
-            <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-xl space-y-5">
+      <main className="flex-1 max-w-5xl mx-auto w-full px-3.5 sm:px-6 py-4 sm:py-10 flex items-center justify-center">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start w-full">
+          
+          {/* Registration Form Card (Order 1 on mobile) */}
+          <div className="lg:col-span-6 xl:col-span-7 order-1 lg:order-2 w-full">
+            <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-7 border border-slate-200/90 shadow-sm space-y-4 sm:space-y-5">
               <div>
-                <h2 className="text-xl font-bold text-slate-900">Créer votre compte LivraLink</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Sélectionnez votre profil d'activité pour démarrer.</p>
+                <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">
+                  Créer votre compte LivraLink
+                </h1>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Rejoignez la plateforme logistique et démarrez en 2 minutes.
+                </p>
               </div>
 
-              {/* Role Selection Dual Cards */}
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedRole('vendeur');
-                    setFullName('Sarah Kouamé (Mode & Beauté)');
-                  }}
-                  className={`p-3.5 rounded-2xl border text-left flex flex-col justify-between transition-all ${
-                    selectedRole === 'vendeur'
-                      ? 'border-2 border-blue-600 bg-blue-50/50 shadow-xs'
-                      : 'border-slate-200 bg-white hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xl">🛍️</span>
-                    {selectedRole === 'vendeur' ? (
-                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center">
-                        <span className="material-symbols-outlined text-xs font-bold">check</span>
+              {/* Role Selection Dual Cards - Balanced & Symmetrical */}
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                  Choisissez votre activité
+                </label>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedRole('vendeur');
+                      if (!fullName) setFullName('Sarah Kouamé');
+                    }}
+                    className={`min-h-[80px] p-3 rounded-xl border text-left flex flex-col justify-between transition-all ${
+                      selectedRole === 'vendeur'
+                        ? 'border-2 border-blue-600 bg-blue-50/50 shadow-2xs ring-2 ring-blue-600/10'
+                        : 'border-slate-200 bg-white hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-xl">🛍️</span>
+                      {selectedRole === 'vendeur' ? (
+                        <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center">
+                          <span className="material-symbols-outlined text-xs font-bold">check</span>
+                        </span>
+                      ) : (
+                        <span className="w-4 h-4 rounded-full border border-slate-300"></span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="font-bold text-xs text-slate-900 block truncate">Je suis vendeur</span>
+                      <span className="text-[10px] text-slate-500 block truncate mt-0.5">
+                        Boutiques &amp; Réseaux
                       </span>
-                    ) : (
-                      <span className="w-4 h-4 rounded-full border border-slate-300"></span>
-                    )}
-                  </div>
-                  <div>
-                    <span className="font-bold text-xs text-slate-900 block">Je suis vendeur</span>
-                    <span className="text-[10px] text-slate-500 leading-tight block mt-0.5">
-                      WhatsApp, Instagram &amp; Boutiques
-                    </span>
-                  </div>
-                </button>
+                    </div>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedRole('livreur');
-                    setFullName('Ibrahim Touré');
-                  }}
-                  className={`p-3.5 rounded-2xl border text-left flex flex-col justify-between transition-all ${
-                    selectedRole === 'livreur'
-                      ? 'border-2 border-blue-600 bg-blue-50/50 shadow-xs'
-                      : 'border-slate-200 bg-white hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xl">🛵</span>
-                    {selectedRole === 'livreur' ? (
-                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center">
-                        <span className="material-symbols-outlined text-xs font-bold">check</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedRole('livreur');
+                      if (!fullName) setFullName('Ibrahim Touré');
+                    }}
+                    className={`min-h-[80px] p-3 rounded-xl border text-left flex flex-col justify-between transition-all ${
+                      selectedRole === 'livreur'
+                        ? 'border-2 border-emerald-600 bg-emerald-50/50 shadow-2xs ring-2 ring-emerald-600/10'
+                        : 'border-slate-200 bg-white hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-xl">🛵</span>
+                      {selectedRole === 'livreur' ? (
+                        <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center">
+                          <span className="material-symbols-outlined text-xs font-bold">check</span>
+                        </span>
+                      ) : (
+                        <span className="w-4 h-4 rounded-full border border-slate-300"></span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="font-bold text-xs text-slate-900 block truncate">Je suis livreur</span>
+                      <span className="text-[10px] text-slate-500 block truncate mt-0.5">
+                        Courses &amp; Flotte
                       </span>
-                    ) : (
-                      <span className="w-4 h-4 rounded-full border border-slate-300"></span>
-                    )}
-                  </div>
-                  <div>
-                    <span className="font-bold text-xs text-slate-900 block">Je suis livreur</span>
-                    <span className="text-[10px] text-slate-500 leading-tight block mt-0.5">
-                      Courses urbaines &amp; flotte
-                    </span>
-                  </div>
-                </button>
+                    </div>
+                  </button>
+                </div>
               </div>
 
-              {/* Google / Gmail Registration Button */}
+              {/* Google SSO Button */}
               <button
                 type="button"
                 onClick={handleGoogleRegister}
-                className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 rounded-xl text-xs font-bold text-slate-800 shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2.5"
+                className="w-full min-h-[44px] py-2.5 px-3 bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 rounded-xl text-xs font-bold text-slate-800 shadow-2xs transition-all active:scale-[0.99] flex items-center justify-center gap-2"
               >
-                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
                   <path
                     fill="#4285F4"
                     d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -370,100 +310,81 @@ export const RegisterPage: React.FC = () => {
                     d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                   />
                 </svg>
-                <span>S'inscrire avec Google (Gmail)</span>
+                <span className="truncate">S'inscrire en 1 clic avec Google</span>
               </button>
 
-              <div className="relative py-0.5 flex items-center justify-center">
+              {/* Quiet Divider */}
+              <div className="relative py-1 flex items-center justify-center">
                 <div className="border-t border-slate-200 w-full"></div>
-                <span className="bg-white px-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest absolute">
-                  OU PAR FORMULAIRE
+                <span className="bg-white px-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider absolute">
+                  ou formulaire d'inscription
                 </span>
               </div>
 
-              {/* Test Accounts Quick Pre-fill */}
-              <div className="p-3 bg-amber-50/80 border border-amber-200/80 rounded-2xl space-y-2">
+              {/* Test Profiles Pre-fill Bar */}
+              <div className="p-3 bg-amber-50/80 border border-amber-200/80 rounded-xl space-y-2">
                 <div className="flex items-center justify-between text-[11px] font-bold text-amber-900">
                   <span className="flex items-center gap-1">
                     <span className="material-symbols-outlined text-sm text-amber-600">science</span>
-                    Tester les Profils Types (Vendeurs &amp; Livreurs) :
+                    <span>Profils types pour test rapide :</span>
                   </span>
                   <button
                     type="button"
                     onClick={openTestModal}
                     className="text-[10px] text-amber-700 underline hover:text-amber-900 font-extrabold"
                   >
-                    Lancer tous les tests
+                    Voir tous
                   </button>
                 </div>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                   <button
                     type="button"
                     onClick={() => fillTestRegister('Sarah Chic Boutique', 'sarah.boutique@gmail.com', 'SarahPassword2025!', '+229 97 12 34 56', 'vendeur')}
-                    className="px-2 py-1 rounded-lg bg-white hover:bg-amber-100 text-amber-900 border border-amber-200 text-[10px] font-bold shadow-2xs transition-colors"
+                    className="min-h-[34px] px-1.5 py-1 rounded-lg bg-white hover:bg-amber-100 text-amber-900 border border-amber-200 text-[10px] font-bold shadow-2xs transition-colors truncate text-center"
                   >
                     1. Sarah (Vendeur)
                   </button>
                   <button
                     type="button"
                     onClick={() => fillTestRegister('Karim Tech Store', 'karim.tech@gmail.com', 'KarimPassword2025#', '+229 95 88 77 66', 'vendeur')}
-                    className="px-2 py-1 rounded-lg bg-white hover:bg-amber-100 text-amber-900 border border-amber-200 text-[10px] font-bold shadow-2xs transition-colors"
+                    className="min-h-[34px] px-1.5 py-1 rounded-lg bg-white hover:bg-amber-100 text-amber-900 border border-amber-200 text-[10px] font-bold shadow-2xs transition-colors truncate text-center"
                   >
                     2. Karim (Vendeur)
                   </button>
                   <button
                     type="button"
-                    onClick={() => fillTestRegister('Amadou Bio Marché', 'amadou.bio@gmail.com', 'AmadouBio2025!', '+229 61 23 45 67', 'vendeur')}
-                    className="px-2 py-1 rounded-lg bg-white hover:bg-amber-100 text-amber-900 border border-amber-200 text-[10px] font-bold shadow-2xs transition-colors"
-                  >
-                    3. Amadou (Vendeur)
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => fillTestRegister('Moussa Express Moto', 'moussa.livreur@gmail.com', 'MoussaRider2025!', '+229 96 44 33 22', 'livreur')}
-                    className="px-2 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-[10px] font-bold shadow-2xs transition-colors"
+                    className="min-h-[34px] px-1.5 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-[10px] font-bold shadow-2xs transition-colors truncate text-center"
                   >
-                    4. Moussa (Livreur)
+                    3. Moussa (Livreur)
                   </button>
                   <button
                     type="button"
                     onClick={() => fillTestRegister('Fatou Cargo Vélo', 'fatou.cargo@gmail.com', 'FatouCargo2025!', '+229 90 11 22 33', 'livreur')}
-                    className="px-2 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-[10px] font-bold shadow-2xs transition-colors"
+                    className="min-h-[34px] px-1.5 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-[10px] font-bold shadow-2xs transition-colors truncate text-center"
                   >
-                    5. Fatou (Livreur)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => fillTestRegister('Bakary Express Cotonou', 'bakary.express@gmail.com', 'BakaryFast2025!', '+229 97 48 12 34', 'livreur')}
-                    className="px-2 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-[10px] font-bold shadow-2xs transition-colors"
-                  >
-                    6. Bakary (Livreur)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => fillTestRegister('Awa Véloce Livraisons', 'awa.veloce@gmail.com', 'AwaVeloce2025!', '+229 95 87 65 43', 'livreur')}
-                    className="px-2 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-[10px] font-bold shadow-2xs transition-colors"
-                  >
-                    7. Awa (Livreur)
+                    4. Fatou (Livreur)
                   </button>
                 </div>
               </div>
 
-              {/* Registration Form */}
-              <form onSubmit={handleRegister} className="space-y-4">
+              {/* Form Body */}
+              <form onSubmit={handleRegister} className="space-y-3.5">
                 {errorMessage && (
                   <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium flex items-center gap-2 animate-in fade-in">
-                    <span className="material-symbols-outlined text-base text-red-500">error</span>
-                    <span>{errorMessage}</span>
+                    <span className="material-symbols-outlined text-base text-red-500 shrink-0">error</span>
+                    <span className="leading-snug">{errorMessage}</span>
                   </div>
                 )}
 
+                {/* Name */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1" htmlFor="fullname">
-                    {selectedRole === 'vendeur' ? 'Nom complet du gérant / propriétaire *' : 'Nom complet *'}
+                    {selectedRole === 'vendeur' ? 'Nom du propriétaire ou gérant *' : 'Nom complet *'}
                   </label>
                   <div className="relative">
-                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                      <span className="material-symbols-outlined text-lg">person</span>
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                      <span className="material-symbols-outlined text-base">person</span>
                     </span>
                     <input
                       id="fullname"
@@ -471,51 +392,49 @@ export const RegisterPage: React.FC = () => {
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
                       required
-                      placeholder={selectedRole === 'vendeur' ? 'ex: Sarah Kouamé' : 'ex: Ibrahim Touré'}
-                      className="w-full pl-10 pr-3.5 py-2.5 text-xs text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                      placeholder={selectedRole === 'vendeur' ? 'Sarah Kouamé' : 'Ibrahim Touré'}
+                      className="w-full min-h-[44px] pl-8 pr-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
                     />
                   </div>
                 </div>
 
+                {/* Vendor Store Location Block */}
                 {selectedRole === 'vendeur' && (
-                  <div className="p-3.5 rounded-2xl bg-blue-50/60 border border-blue-200/80 space-y-3">
+                  <div className="p-3.5 rounded-xl bg-blue-50/60 border border-blue-200/80 space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-blue-900 flex items-center gap-1.5">
                         <span className="material-symbols-outlined text-sm text-blue-600">storefront</span>
-                        <span>Emplacement &amp; Position de la Boutique</span>
+                        <span>Emplacement de la Boutique</span>
                       </span>
                       <span className="text-[10px] font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
-                        77 communes Bénin
+                        77 Communes
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-600 leading-snug">
-                      Définissez l'emplacement de votre boutique dès maintenant. Vous pourrez utiliser cette position par défaut ou choisir un autre lieu lors de chaque livraison.
-                    </p>
 
                     <div>
                       <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                        Nom commercial de la boutique *
+                        Nom de la boutique *
                       </label>
                       <input
                         type="text"
                         value={storeName}
                         onChange={(e) => setStoreName(e.target.value)}
-                        placeholder="ex: Glam Chic Cotonou, Reine Mode..."
-                        className="w-full px-3 py-2 text-xs bg-white text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                        placeholder="ex: Glam Chic Cotonou"
+                        className="w-full min-h-[40px] px-3 py-2 text-xs bg-white text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
                       />
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div>
                         <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                          Commune de la boutique *
+                          Commune *
                         </label>
                         <select
                           value={storeCommune}
                           onChange={(e) => setStoreCommune(e.target.value)}
-                          className="w-full px-2.5 py-2 text-xs bg-white text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none font-medium"
+                          className="w-full min-h-[40px] px-2.5 py-2 text-xs bg-white text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none font-medium"
                         >
-                          <option value="">-- Choisir la commune (Bénin) --</option>
+                          <option value="">-- Choisir la commune --</option>
                           {BENIN_DEPARTMENTS.map((dept) => (
                             <optgroup key={dept.code} label={`📍 ${dept.name}`}>
                               {dept.communes.map((commune) => (
@@ -530,30 +449,31 @@ export const RegisterPage: React.FC = () => {
 
                       <div>
                         <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                          Adresse / Quartier physique *
+                          Adresse / Quartier *
                         </label>
                         <input
                           type="text"
                           value={storeAddress}
                           onChange={(e) => setStoreAddress(e.target.value)}
-                          placeholder="ex: Haie Vive, Rue 320, face pharmacie"
-                          className="w-full px-3 py-2 text-xs bg-white text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                          placeholder="Haie Vive, Rue 320"
+                          className="w-full min-h-[40px] px-3 py-2 text-xs bg-white text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
                         />
                       </div>
                     </div>
                   </div>
                 )}
 
+                {/* Phone */}
                 <div>
                   <div className="flex justify-between items-center mb-1">
                     <label className="text-xs font-bold text-slate-700" htmlFor="reg-phone">
-                      Téléphone WhatsApp direct *
+                      Téléphone WhatsApp *
                     </label>
-                    <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Canal d'alerte instantané
+                    <span className="text-[10px] text-emerald-600 font-bold">
+                      Alerte instantanée
                     </span>
                   </div>
-                  <div className="flex rounded-xl overflow-hidden border border-slate-300 bg-white">
+                  <div className="flex rounded-xl overflow-hidden border border-slate-300 bg-white min-h-[44px]">
                     <div className="px-3 bg-slate-50 border-r border-slate-300 flex items-center gap-1 text-xs font-bold text-slate-700 select-none">
                       <span>🇧🇯</span>
                       <span>+229</span>
@@ -565,18 +485,19 @@ export const RegisterPage: React.FC = () => {
                       onChange={(e) => setPhone(e.target.value)}
                       required
                       placeholder="97 00 00 00"
-                      className="w-full px-3 py-2.5 text-xs text-slate-900 outline-none"
+                      className="w-full px-3 py-2 text-xs text-slate-900 outline-none"
                     />
                   </div>
                 </div>
 
+                {/* Email */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1" htmlFor="reg-email">
-                    Email professionnel *
+                    Adresse e-mail *
                   </label>
                   <div className="relative">
-                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                      <span className="material-symbols-outlined text-lg">mail</span>
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                      <span className="text-sm font-semibold">@</span>
                     </span>
                     <input
                       id="reg-email"
@@ -584,16 +505,17 @@ export const RegisterPage: React.FC = () => {
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       required
-                      placeholder="sarah.glamchic@gmail.com"
-                      className="w-full pl-10 pr-3.5 py-2.5 text-xs text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                      placeholder="votre-compte@gmail.com"
+                      className="w-full min-h-[44px] pl-8 pr-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
                     />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Passwords */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1" htmlFor="reg-pwd">
-                      Mot de passe (min 6 car.) *
+                      Mot de passe *
                     </label>
                     <input
                       id="reg-pwd"
@@ -602,7 +524,8 @@ export const RegisterPage: React.FC = () => {
                       onChange={(e) => setPassword(e.target.value)}
                       required
                       minLength={6}
-                      className="w-full px-3.5 py-2.5 text-xs text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                      placeholder="Min. 6 caractères"
+                      className="w-full min-h-[44px] px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
                     />
                   </div>
                   <div>
@@ -616,69 +539,45 @@ export const RegisterPage: React.FC = () => {
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       required
                       minLength={6}
-                      className="w-full px-3.5 py-2.5 text-xs text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                      placeholder="Répétez le mot de passe"
+                      className="w-full min-h-[44px] px-3 py-2 text-xs text-slate-900 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
                     />
                   </div>
                 </div>
 
-                {/* Password strength meter */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-[10px] text-slate-500">
-                    <span>Solidité du mot de passe</span>
-                    <span className="text-emerald-600 font-bold">Sécurité vérifiée ✓</span>
-                  </div>
-                  <div className="grid grid-cols-4 gap-1 h-1">
-                    <div className="bg-emerald-500 rounded-full"></div>
-                    <div className="bg-emerald-500 rounded-full"></div>
-                    <div className="bg-emerald-500 rounded-full"></div>
-                    <div className="bg-emerald-300 rounded-full"></div>
-                  </div>
-                </div>
-
-                {/* Role badge notification */}
-                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-blue-600 text-sm">
-                      {selectedRole === 'vendeur' ? 'store' : 'two_wheeler'}
-                    </span>
-                    <span className="text-slate-600">Rôle sélectionné :</span>
-                  </div>
-                  <span className="font-bold text-blue-700">
-                    {selectedRole === 'vendeur' ? 'Marchand Social / E-commerce' : 'Livreur Partenaire Indépendant'}
-                  </span>
-                </div>
-
                 {/* Terms checkbox */}
-                <div className="pt-1">
-                  <label className="flex items-start gap-2 text-xs text-slate-600 cursor-pointer">
+                <div className="pt-0.5">
+                  <label className="flex items-start gap-2 text-xs text-slate-600 cursor-pointer min-h-[36px]">
                     <input
                       type="checkbox"
                       checked={acceptTerms}
                       onChange={(e) => setAcceptTerms(e.target.checked)}
-                      className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      className="mt-0.5 w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                     />
-                    <span>
-                      J'accepte les <a href="#cgu" className="text-blue-600 underline">Conditions Générales d'Utilisation</a> et la{' '}
-                      <a href="#privacy" className="text-blue-600 underline">Politique de Confidentialité</a> de LivraLink.
+                    <span className="leading-tight">
+                      J'accepte les conditions d'utilisation et la politique de confidentialité.
                     </span>
                   </label>
                 </div>
 
+                {/* Submit button */}
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="w-full py-3.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-md shadow-blue-600/25 active:scale-95 transition-all flex items-center justify-center gap-2"
+                  className={`w-full min-h-[48px] py-3 px-4 text-white rounded-xl font-bold text-xs sm:text-sm shadow-sm active:scale-[0.99] transition-all flex items-center justify-center gap-2 ${
+                    selectedRole === 'vendeur'
+                      ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-600/20'
+                      : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'
+                  }`}
                 >
                   {isLoading ? (
                     <>
                       <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                      <span>Création du compte Firebase en cours...</span>
+                      <span>Création en cours...</span>
                     </>
                   ) : (
                     <>
-                      <span>
-                        {selectedRole === 'vendeur' ? 'Créer mon compte Vendeur' : 'Devenir livreur LivraLink'}
-                      </span>
+                      <span>{selectedRole === 'vendeur' ? 'Créer mon compte Vendeur' : 'Devenir Livreur Partenaire'}</span>
                       <span className="material-symbols-outlined text-base">arrow_forward</span>
                     </>
                   )}
@@ -697,10 +596,63 @@ export const RegisterPage: React.FC = () => {
                       setCurrentView('login_livreur');
                     }
                   }}
-                  className="text-blue-600 font-bold hover:underline"
+                  className="text-blue-600 font-bold hover:underline min-h-[36px] inline-flex items-center"
                 >
                   Se connecter à mon espace
                 </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Left Column: Context & Proof (Order 2 on mobile) */}
+          <div className="lg:col-span-6 xl:col-span-5 order-2 lg:order-1 space-y-4 sm:space-y-6 w-full">
+            <div className="space-y-2">
+              <div className="text-xs font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-sm">hub</span>
+                <span>Réseau Logistique Urbain</span>
+              </div>
+              <h2 className="text-xl sm:text-3xl font-extrabold text-slate-900 tracking-tight leading-snug">
+                {selectedRole === 'vendeur'
+                  ? 'Rejoignez le réseau logistique urbain de référence au Bénin'
+                  : 'Des courses garanties, payées le jour-même sans commission cachée'}
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                {selectedRole === 'vendeur'
+                  ? 'Automatisez vos livraisons pour vos ventes en ligne et physiques avec des coursiers certifiés.'
+                  : 'Rejoignez la communauté de coursiers LivraLink et maximisez vos gains quotidiens.'}
+              </p>
+            </div>
+
+            {/* Feature Points */}
+            <div className="space-y-2.5">
+              <div className="p-3 rounded-xl bg-white border border-slate-200/80 shadow-2xs flex items-start gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-base">chat</span>
+                </div>
+                <div>
+                  <h3 className="font-bold text-xs text-slate-900">Synchronisation Ventes</h3>
+                  <p className="text-[11px] text-slate-500 leading-tight">Générez des liens de suivi sans ressaisir manuellement vos adresses.</p>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-white border border-slate-200/80 shadow-2xs flex items-start gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-base">timeline</span>
+                </div>
+                <div>
+                  <h3 className="font-bold text-xs text-slate-900">Traçabilité 7 statuts</h3>
+                  <p className="text-[11px] text-slate-500 leading-tight">Du ramassage au dépôt : chronologie certifiée par géolocalisation.</p>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-white border border-slate-200/80 shadow-2xs flex items-start gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-base">verified</span>
+                </div>
+                <div>
+                  <h3 className="font-bold text-xs text-slate-900">Preuve POD en 1 clic</h3>
+                  <p className="text-[11px] text-slate-500 leading-tight">Horodatage cryptographique, signature tactile et code OTP.</p>
+                </div>
               </div>
             </div>
           </div>
@@ -708,8 +660,8 @@ export const RegisterPage: React.FC = () => {
       </main>
 
       {/* Footer */}
-      <footer className="w-full bg-white border-t border-slate-200 py-6 px-6 text-center text-xs text-slate-500">
-        <p>© 2025 LivraLink Technologies Inc. Tous droits réservés. Données sécurisées et cryptées bout-en-bout.</p>
+      <footer className="w-full bg-white border-t border-slate-200/80 py-4 px-4 text-center text-xs text-slate-500">
+        <p>© {new Date().getFullYear()} LivraLink CI/BJ — Tous droits réservés.</p>
       </footer>
     </div>
   );

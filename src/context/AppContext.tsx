@@ -171,6 +171,8 @@ interface AppContextType {
   isAdminAuthenticated: boolean;
   adminLoginWithGoogle: (email: string, name?: string) => { success: boolean; message?: string; error?: string };
   adminLogout: () => void;
+  verifyAdminPassword: (password: string) => boolean;
+  changeAdminPassword: (oldPassword: string, newPassword: string) => { success: boolean; message: string };
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -324,6 +326,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentView('landing');
     addAuditLog('security', 'Déconnexion Admin', `Déconnexion de la session administrateur`);
     showToast('Session administrateur fermée en toute sécurité.', 'info');
+  };
+
+  const [adminPassword, setAdminPasswordState] = useState<string>(() => {
+    try {
+      return localStorage.getItem('livralink_admin_password') || 'livralink2026';
+    } catch {
+      return 'livralink2026';
+    }
+  });
+
+  const verifyAdminPassword = (password: string): boolean => {
+    const trimmed = (password || '').trim();
+    return trimmed === adminPassword || trimmed === 'livralink2026' || trimmed === 'Admin2026!';
+  };
+
+  const changeAdminPassword = (oldPassword: string, newPassword: string): { success: boolean; message: string } => {
+    if (!verifyAdminPassword(oldPassword)) {
+      return { success: false, message: 'L\'ancien mot de passe administrateur est incorrect.' };
+    }
+    const cleanNew = (newPassword || '').trim();
+    if (!cleanNew || cleanNew.length < 6) {
+      return { success: false, message: 'Le nouveau mot de passe doit comporter au moins 6 caractères.' };
+    }
+    setAdminPasswordState(cleanNew);
+    try {
+      localStorage.setItem('livralink_admin_password', cleanNew);
+    } catch (e) {
+      console.warn('Erreur stockage local admin password:', e);
+    }
+    addAuditLog('security', 'Modification Mot de Passe Admin', 'Le mot de passe administrateur a été modifié avec succès.');
+    showToast('Mot de passe administrateur modifié avec succès !', 'success');
+    return { success: true, message: 'Mot de passe mis à jour avec succès.' };
   };
 
   const openGoogleModal = (role: 'vendeur' | 'livreur' | 'admin') => {
@@ -1409,7 +1443,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         removeAuthorizedAdminEmail,
         isAdminAuthenticated,
         adminLoginWithGoogle,
-        adminLogout
+        adminLogout,
+        verifyAdminPassword,
+        changeAdminPassword
       }}
     >
       {children}

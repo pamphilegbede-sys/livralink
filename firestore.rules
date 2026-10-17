@@ -2,14 +2,24 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Global Safety Net: Default-deny catch-all
+    // 0. Global Safety Net: Default-deny catch-all
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Helper functions
+    // -------------------------------------------------------------------------
+    // Helper Primitives & Attribute-Based Access Control (ABAC)
+    // -------------------------------------------------------------------------
     function isSignedIn() {
       return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
     }
 
     function isOwner(userId) {
@@ -20,36 +30,149 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    // Strict Admin check: Verified Super-Admin email or trusted Admin document
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == "pamphile.gbede@gmail.com" && request.auth.token.email_verified == true) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // User Validation Blueprint
+    // -------------------------------------------------------------------------
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'email', 'fullName', 'phone', 'role']) &&
-             data.keys().hasOnly(['uid', 'email', 'fullName', 'phone', 'role', 'avatarUrl', 'storeName', 'vehicleType', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['uid', 'email', 'fullName', 'phone', 'role', 'avatarUrl', 'storeName', 'storeCommune', 'storeAddress', 'vehicleType', 'createdAt', 'updatedAt']) &&
              data.uid == request.auth.uid &&
              data.email is string && data.email.size() <= 128 &&
              data.fullName is string && data.fullName.size() <= 128 &&
              data.phone is string && data.phone.size() <= 32 &&
-             (data.role == 'vendeur' || data.role == 'livreur' || data.role == 'admin') &&
+             // Anti-Privilege Escalation: Only super-admin can create an admin profile; standard users can only be vendeur or livreur
+             (data.role in ['vendeur', 'livreur'] || (data.role == 'admin' && isAdmin())) &&
              (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 1000)) &&
              (!('storeName' in data) || (data.storeName is string && data.storeName.size() <= 128)) &&
+             (!('storeCommune' in data) || (data.storeCommune is string && data.storeCommune.size() <= 128)) &&
+             (!('storeAddress' in data) || (data.storeAddress is string && data.storeAddress.size() <= 256)) &&
              (!('vehicleType' in data) || (data.vehicleType is string && data.vehicleType.size() <= 64));
     }
 
-    // 1. Users collection: Strictly protected by UID ownership
-    match /users/{userId} {
-      allow get: if isOwner(userId);
-      allow list: if false; // Deny public scraping of user database
-      allow create: if isOwner(userId) && isValidUser(request.resource.data);
-      allow update: if isOwner(userId) && isValidUser(request.resource.data) &&
-                    request.resource.data.uid == resource.data.uid &&
-                    request.resource.data.email == resource.data.email;
-      allow delete: if false;
+    // -------------------------------------------------------------------------
+    // Delivery Validation Blueprint
+    // -------------------------------------------------------------------------
+    function isValidDelivery(data) {
+      return data.keys().hasAll(['id', 'clientName', 'clientPhone', 'status', 'deliveryFee', 'merchantId']) &&
+             data.id is string && data.id.size() <= 64 &&
+             data.clientName is string && data.clientName.size() <= 128 &&
+             data.clientPhone is string && data.clientPhone.size() <= 32 &&
+             data.merchantId is string && data.merchantId.size() <= 128 &&
+             data.deliveryFee is number && data.deliveryFee >= 0 &&
+             data.status in ['en_attente', 'assignee', 'acceptee', 'colis_recupere', 'en_cours', 'livree', 'echec'] &&
+             (!('itemValueCOD' in data) || data.itemValueCOD is number) &&
+             (!('courierId' in data) || (data.courierId is string && data.courierId.size() <= 128));
     }
 
-    // 2. Deliveries collection
+    // -------------------------------------------------------------------------
+    // 1. Users Collection
+    // -------------------------------------------------------------------------
+    match /users/{userId} {
+      // PII Protection: Non-owners and unauthenticated users CANNOT read user documents
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      // Anti-Scraping: Public listing of entire user directory is strictly forbidden
+      allow list: if isAdmin();
+
+      // Create: user must own document, match uid, and satisfy validation blueprint without self-assigning admin
+      allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming());
+
+      // Update: Immutable identity fields (uid, email, role cannot be modified by user)
+      allow update: if isValidId(userId) && (
+        isAdmin() ||
+        (
+          isOwner(userId) &&
+          isValidUser(incoming()) &&
+          incoming().uid == existing().uid &&
+          incoming().email == existing().email &&
+          incoming().role == existing().role
+        )
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. Deliveries Collection
+    // -------------------------------------------------------------------------
     match /deliveries/{deliveryId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.keys().hasAll(['id', 'clientName', 'clientPhone', 'status', 'deliveryFee']);
-      allow update: if isSignedIn();
-      allow delete: if false;
+      // Single Document Read (Get): Allowed only for associated merchant, assigned courier, courier viewing pending, or admin
+      allow get: if isValidId(deliveryId) && (
+        isAdmin() ||
+        (isSignedIn() && resource.data.merchantId == request.auth.uid) ||
+        (isSignedIn() && resource.data.courierId == request.auth.uid) ||
+        (isSignedIn() && resource.data.status == 'en_attente')
+      );
+
+      // Secure List Queries (Query Enforcer): Client queries MUST evaluate against auth.uid or open deliveries
+      allow list: if isSignedIn() && (
+        isAdmin() ||
+        resource.data.merchantId == request.auth.uid ||
+        resource.data.courierId == request.auth.uid ||
+        resource.data.status == 'en_attente'
+      );
+
+      // Create: Only verified merchant or admin; initial status must be 'en_attente'
+      allow create: if isValidId(deliveryId) &&
+                    isSignedIn() &&
+                    isValidDelivery(incoming()) &&
+                    (incoming().merchantId == request.auth.uid || isAdmin()) &&
+                    incoming().status == 'en_attente';
+
+      // Tiered Updates & Terminal State Locking
+      allow update: if isValidId(deliveryId) &&
+                    isSignedIn() &&
+                    isValidDelivery(incoming()) &&
+                    // Immutability: delivery ID and merchant owner cannot be altered
+                    incoming().id == existing().id &&
+                    incoming().merchantId == existing().merchantId &&
+                    (
+                      // Escape Hatch: Super-Admin can correct any state or resolve disputes
+                      isAdmin() ||
+                      (
+                        // Terminal State Lock: Regular users cannot modify finalized orders
+                        !(existing().status in ['livree', 'echec']) &&
+                        (
+                          // Tier 1: Merchant owner can edit details or cancel while still pending
+                          (
+                            existing().merchantId == request.auth.uid &&
+                            existing().status == 'en_attente' &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['clientName', 'clientPhone', 'itemValueCOD', 'deliveryFee', 'status', 'updatedAt'])
+                          ) ||
+                          // Tier 2: Courier claims an open delivery
+                          (
+                            existing().status == 'en_attente' &&
+                            incoming().courierId == request.auth.uid &&
+                            incoming().status in ['assignee', 'acceptee'] &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['courierId', 'status', 'updatedAt'])
+                          ) ||
+                          // Tier 3: Assigned courier progresses the delivery steps
+                          (
+                            existing().courierId == request.auth.uid &&
+                            incoming().courierId == existing().courierId &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+                          )
+                        )
+                      )
+                    );
+
+      // Delete: Deliveries must never be permanently purged by standard users for financial audit trail
+      allow delete: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. Admins Collection
+    // -------------------------------------------------------------------------
+    match /admins/{adminId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
     }
   }
 }
