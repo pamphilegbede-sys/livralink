@@ -3,7 +3,10 @@ import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
+import { BackButton } from '../common/BackButton';
 import { DeliveryOrder } from '../../types';
+import { EmptyState } from '../common/EmptyState';
+import { PaginationControls } from '../common/PaginationControls';
 
 export const VendeurDashboard: React.FC = () => {
   const {
@@ -22,6 +25,8 @@ export const VendeurDashboard: React.FC = () => {
 
   const [activeFilter, setActiveFilter] = useState<'all' | 'en_attente' | 'en_cours' | 'livree' | 'echec'>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5;
 
   // Counters
   const totalCount = deliveries.length;
@@ -50,6 +55,21 @@ export const VendeurDashboard: React.FC = () => {
     }
     return true;
   });
+
+  const paginatedDeliveries = filteredDeliveries.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
+  const handleFilterChange = (filter: 'all' | 'en_attente' | 'en_cours' | 'livree' | 'echec') => {
+    setActiveFilter(filter);
+    setCurrentPage(1);
+  };
+
+  const handleSearchChange = (value: string) => {
+    setSearchTerm(value);
+    setCurrentPage(1);
+  };
 
   const handleInspectDelivery = (order: DeliveryOrder) => {
     setSelectedDelivery(order);
@@ -93,11 +113,14 @@ export const VendeurDashboard: React.FC = () => {
         <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-24 md:pb-8">
           {/* Quick Header and Search for Mobile */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight">
-                Tableau de bord Vendeur
-              </h1>
-              <p className="text-xs text-slate-500">Supervision directe de votre flotte et vos colis</p>
+            <div className="flex items-center gap-3">
+              <BackButton />
+              <div>
+                <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight">
+                  Tableau de bord Vendeur
+                </h1>
+                <p className="text-xs text-slate-500">Supervision directe de votre flotte et vos colis</p>
+              </div>
             </div>
             <button
               onClick={() => setCurrentView('vendeur_new_delivery')}
@@ -279,7 +302,7 @@ export const VendeurDashboard: React.FC = () => {
               {/* Filter Tabs */}
               <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 overflow-x-auto no-scrollbar">
                 <button
-                  onClick={() => setActiveFilter('all')}
+                  onClick={() => handleFilterChange('all')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
                     activeFilter === 'all' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                   }`}
@@ -287,7 +310,7 @@ export const VendeurDashboard: React.FC = () => {
                   Toutes ({totalCount})
                 </button>
                 <button
-                  onClick={() => setActiveFilter('en_attente')}
+                  onClick={() => handleFilterChange('en_attente')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
                     activeFilter === 'en_attente' ? 'bg-white text-amber-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                   }`}
@@ -295,7 +318,7 @@ export const VendeurDashboard: React.FC = () => {
                   En attente ({pendingCount})
                 </button>
                 <button
-                  onClick={() => setActiveFilter('en_cours')}
+                  onClick={() => handleFilterChange('en_cours')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
                     activeFilter === 'en_cours' ? 'bg-white text-blue-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                   }`}
@@ -303,7 +326,7 @@ export const VendeurDashboard: React.FC = () => {
                   En cours ({inProgressCount})
                 </button>
                 <button
-                  onClick={() => setActiveFilter('livree')}
+                  onClick={() => handleFilterChange('livree')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
                     activeFilter === 'livree' ? 'bg-white text-emerald-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                   }`}
@@ -311,7 +334,7 @@ export const VendeurDashboard: React.FC = () => {
                   Livrées ({deliveredCount})
                 </button>
                 <button
-                  onClick={() => setActiveFilter('echec')}
+                  onClick={() => handleFilterChange('echec')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
                     activeFilter === 'echec' ? 'bg-white text-red-700 shadow-xs font-bold' : 'text-slate-600 hover:text-red-700'
                   }`}
@@ -329,7 +352,7 @@ export const VendeurDashboard: React.FC = () => {
                   <input
                     type="text"
                     value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
+                    onChange={(e) => handleSearchChange(e.target.value)}
                     placeholder="Filtrer client, ID..."
                     className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-600"
                   />
@@ -344,11 +367,38 @@ export const VendeurDashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* Desktop Table View */}
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">
+            {/* Deliveries Content: Empty State vs Tables */}
+            {filteredDeliveries.length === 0 ? (
+              <div className="p-6">
+                <EmptyState
+                  icon="inventory_2"
+                  title="Aucune livraison trouvée"
+                  description={
+                    searchTerm
+                      ? `Aucune course ne correspond à "${searchTerm}".`
+                      : activeFilter !== 'all'
+                      ? `Aucune livraison avec le statut sélectionné (${activeFilter}).`
+                      : "Vous n'avez pas encore créé de livraison. Démarrez en quelques secondes."
+                  }
+                  actionLabel="Nouvelle livraison"
+                  onAction={() => setCurrentView('vendeur_new_delivery')}
+                  secondaryActionLabel={searchTerm ? 'Effacer recherche' : activeFilter !== 'all' ? 'Toutes les courses' : undefined}
+                  onSecondaryAction={
+                    searchTerm
+                      ? () => handleSearchChange('')
+                      : activeFilter !== 'all'
+                      ? () => handleFilterChange('all')
+                      : undefined
+                  }
+                />
+              </div>
+            ) : (
+              <>
+                {/* Desktop Table View */}
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-left border-collapse min-w-[700px]">
+                    <thead>
+                      <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">
                     <th className="py-3 px-4">ID</th>
                     <th className="py-3 px-4">Client</th>
                     <th className="py-3 px-4">Destination</th>
@@ -358,7 +408,7 @@ export const VendeurDashboard: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
-                  {filteredDeliveries.map((order) => (
+                  {paginatedDeliveries.map((order) => (
                     <tr key={order.id} className="hover:bg-slate-50/70 transition-colors">
                       <td className="py-3.5 px-4 font-mono font-bold text-blue-700">
                         {order.id}
@@ -499,7 +549,7 @@ export const VendeurDashboard: React.FC = () => {
             {/* Mobile Card Architecture (from Stitch mobile mockup) */}
             {/* Mobile Card Architecture (Full-featured touch cards) */}
             <div className="md:hidden divide-y divide-slate-100 p-3 space-y-3.5">
-              {filteredDeliveries.map((order) => (
+              {paginatedDeliveries.map((order) => (
                 <article key={order.id} className="p-4 bg-white rounded-2xl border border-slate-200/90 shadow-2xs space-y-3 hover:border-slate-300 transition-all">
                   {/* Header: ID + Status Badge */}
                   <div className="flex items-center justify-between gap-2">
@@ -632,15 +682,15 @@ export const VendeurDashboard: React.FC = () => {
               ))}
             </div>
 
-            {/* Pagination Footer */}
-            <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-              <p>Affichage de <strong className="text-slate-900">{filteredDeliveries.length}</strong> sur <strong>{totalCount}</strong> livraisons enregistrées</p>
-              <div className="flex items-center gap-1">
-                <button className="px-2.5 py-1 rounded bg-blue-50 text-blue-700 font-bold">1</button>
-                <button className="px-2.5 py-1 rounded hover:bg-slate-100">2</button>
-                <button className="px-2.5 py-1 rounded hover:bg-slate-100">3</button>
-              </div>
-            </div>
+                {/* Pagination Controls */}
+                <PaginationControls
+                  currentPage={currentPage}
+                  totalItems={filteredDeliveries.length}
+                  itemsPerPage={itemsPerPage}
+                  onPageChange={setCurrentPage}
+                />
+              </>
+            )}
           </section>
         </main>
       </div>

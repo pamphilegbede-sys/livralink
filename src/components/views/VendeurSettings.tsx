@@ -3,10 +3,12 @@ import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
+import { BackButton } from '../common/BackButton';
 import { BENIN_DEPARTMENTS, getLocationForCommune } from '../../config/maps';
+import { BeninZoneSelector } from '../common/BeninZoneSelector';
 
 export const VendeurSettings: React.FC = () => {
-  const { merchantSettings, setMerchantSettings, showToast, setCurrentView } = useApp();
+  const { merchantSettings, setMerchantSettings, showToast, setCurrentView, logout } = useApp();
 
   const [storeName, setStoreName] = useState(merchantSettings.storeName);
   const [managerName, setManagerName] = useState(merchantSettings.managerName);
@@ -29,16 +31,6 @@ export const VendeurSettings: React.FC = () => {
   const [channelWhatsApp, setChannelWhatsApp] = useState(merchantSettings.channelWhatsApp);
   const [channelSMS, setChannelSMS] = useState(merchantSettings.channelSMS);
   const [channelEmail, setChannelEmail] = useState(merchantSettings.channelEmail);
-
-  const availableZones = ['Haie Vive', 'Cadjehoun', 'Akpakpa', 'Fidjrossè', 'Godomey', 'Calavi Centre', 'Porto-Novo'];
-
-  const toggleZone = (zone: string) => {
-    if (frequentZones.includes(zone)) {
-      setFrequentZones(frequentZones.filter((z) => z !== zone));
-    } else {
-      setFrequentZones([...frequentZones, zone]);
-    }
-  };
 
   const handleSave = () => {
     const coords = storeCommune ? getLocationForCommune(storeCommune) : undefined;
@@ -79,37 +71,39 @@ export const VendeurSettings: React.FC = () => {
           title="Paramètres du compte Vendeur"
           subtitle="Gérez votre profil marchand, préférences d'expédition et facturation"
           showReturn
-          onReturn={() => setCurrentView('vendeur_dashboard')}
         />
 
         {/* Scrollable Container */}
         <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-28 md:pb-8">
           {/* Header Action Row */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2">
-            <div>
-              <div className="flex items-center gap-3">
-                <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight">
-                  Paramètres Vendeur
-                </h1>
-                <span className="px-3 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-200">
-                  Compte Marchand Vérifié ✓
-                </span>
+            <div className="flex items-center gap-3">
+              <BackButton />
+              <div>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight">
+                    Paramètres Vendeur
+                  </h1>
+                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-200 shrink-0">
+                    Compte Vérifié ✓
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">Configuration des règles et des coordonnées de collecte</p>
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">Configuration des règles et des coordonnées de collecte</p>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="w-full sm:w-auto flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
               <button
                 type="button"
                 onClick={() => showToast('Modifications réinitialisées.', 'info')}
-                className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-semibold"
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-semibold text-center"
               >
                 Réinitialiser
               </button>
               <button
                 type="button"
                 onClick={handleSave}
-                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-600/20 active:scale-95 transition-all flex items-center gap-1.5"
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-600/20 active:scale-95 transition-all flex items-center justify-center gap-1.5"
               >
                 <span className="material-symbols-outlined text-base">check</span>
                 <span>Enregistrer les modifications</span>
@@ -144,7 +138,7 @@ export const VendeurSettings: React.FC = () => {
 
           {/* ================= 1. MON PROFIL ================= */}
           <section id="mon-profil" className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-6">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
                   <span className="material-symbols-outlined text-lg">store</span>
@@ -154,7 +148,7 @@ export const VendeurSettings: React.FC = () => {
                   <p className="text-xs text-slate-500">Informations visibles sur les bordereaux et lors des collectes</p>
                 </div>
               </div>
-              <span className="px-3 py-1 bg-slate-100 text-slate-700 text-xs font-bold rounded-full">
+              <span className="px-3 py-1 bg-slate-100 text-slate-700 text-xs font-bold rounded-full shrink-0">
                 Profil Professionnel
               </span>
             </div>
@@ -297,31 +291,15 @@ export const VendeurSettings: React.FC = () => {
               </p>
             </div>
 
-            {/* Frequent Zones Selector */}
+            {/* Frequent Zones Selector (Liste déroulante & sélection exhaustive Bénin) */}
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-800">Zones de livraison fréquentes</label>
-              <div className="flex flex-wrap gap-2">
-                {availableZones.map((zone) => {
-                  const isSelected = frequentZones.includes(zone);
-                  return (
-                    <button
-                      key={zone}
-                      type="button"
-                      onClick={() => toggleZone(zone)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 ${
-                        isSelected
-                          ? 'bg-blue-600 text-white shadow-xs'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      <span>{zone}</span>
-                      <span className="material-symbols-outlined text-xs">
-                        {isSelected ? 'check' : 'add'}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+              <BeninZoneSelector
+                selectedZones={frequentZones}
+                onChange={setFrequentZones}
+                label="Zones de livraison fréquentes (Communes, Arrondissements & Quartiers du Bénin)"
+                helperText="Sélectionnez vos zones habituelles pour accélérer l'attribution des coursiers et le calcul des délais."
+                role="vendeur"
+              />
             </div>
 
             {/* Express Toggle & Instructions */}
@@ -403,14 +381,14 @@ export const VendeurSettings: React.FC = () => {
               </div>
             </div>
 
-            <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-between gap-3">
+            <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div>
                 <span className="font-bold text-xs text-emerald-900 block">Commission LivraLink Vendeur : 0% (Offre de Lancement)</span>
                 <p className="text-[11px] text-emerald-700 mt-0.5">
                   100% de transparence. Les montants sont automatiquement reversés aux coursiers partenaires.
                 </p>
               </div>
-              <span className="px-2.5 py-1 rounded-full bg-emerald-200 text-emerald-900 font-bold text-xs shrink-0">
+              <span className="px-2.5 py-1 rounded-full bg-emerald-200 text-emerald-900 font-bold text-xs shrink-0 self-start sm:self-auto">
                 0% Actif
               </span>
             </div>
@@ -564,6 +542,25 @@ export const VendeurSettings: React.FC = () => {
                   className="px-3.5 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-xl font-bold hover:bg-slate-100"
                 >
                   Gérer le mot de passe
+                </button>
+              </div>
+
+              {/* Déconnexion de session marchande */}
+              <div className="p-4 bg-red-50/60 rounded-2xl border border-red-200/90 space-y-2 sm:col-span-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="font-bold text-red-900 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-base text-red-600">logout</span>
+                    <span>Session &amp; Déconnexion</span>
+                  </h4>
+                  <p className="text-slate-600 text-xs mt-0.5">Fermez votre session marchande sécurisée sur cet appareil.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={logout}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold flex items-center gap-1.5 text-xs shadow-xs active:scale-95 transition-all shrink-0 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm">logout</span>
+                  <span>Se déconnecter</span>
                 </button>
               </div>
             </div>

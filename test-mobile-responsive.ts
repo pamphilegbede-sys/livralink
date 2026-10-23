@@ -55,7 +55,7 @@ async function runMobileTestSuite() {
   const vendeurDashPath = path.join(process.cwd(), 'src/components/views/VendeurDashboard.tsx');
   const vendeurDashCode = fs.readFileSync(vendeurDashPath, 'utf-8');
 
-  const hasMobileCardsArchitecture = vendeurDashCode.includes('md:hidden') && vendeurDashCode.includes('filteredDeliveries.map');
+  const hasMobileCardsArchitecture = vendeurDashCode.includes('md:hidden') && (vendeurDashCode.includes('filteredDeliveries.map') || vendeurDashCode.includes('paginatedDeliveries.map'));
   const hasMobilePODProof = vendeurDashCode.includes('Preuve POD') && vendeurDashCode.includes('handleOpenPOD');
   const hasMobileRelaunch = vendeurDashCode.includes('Relancer coursier') && vendeurDashCode.includes('handleRelaunchSearch');
   const hasMobileReschedule = vendeurDashCode.includes('Reprogrammer') && vendeurDashCode.includes('handleReschedule');

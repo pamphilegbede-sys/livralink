@@ -3,6 +3,7 @@ import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
+import { BackButton } from '../common/BackButton';
 
 export const VendeurReports: React.FC = () => {
   const { deliveries, setCurrentView, showToast } = useApp();
@@ -47,8 +48,9 @@ export const VendeurReports: React.FC = () => {
         {/* Scrollable Canvas */}
         <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-28 md:pb-8">
           {/* Header Controls */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-3xl border border-slate-200 shadow-xs">
-            <div>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs">
+            <div className="flex items-center gap-3">
+              <BackButton />
               <div className="flex items-center gap-2">
                 <span className="p-2 rounded-xl bg-blue-50 text-blue-600">
                   <span className="material-symbols-outlined text-xl">insights</span>
@@ -109,7 +111,7 @@ export const VendeurReports: React.FC = () => {
           </div>
 
           {/* 4 Financial & Operational KPIs */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Chiffre d'Affaires COD */}
             <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-2">
               <div className="flex items-center justify-between text-xs text-slate-500 font-semibold">
@@ -118,7 +120,7 @@ export const VendeurReports: React.FC = () => {
                   payments
                 </span>
               </div>
-              <div className="text-2xl sm:text-3xl font-black text-slate-900">
+              <div className="text-xl sm:text-2xl lg:text-3xl font-black text-slate-900 leading-tight">
                 {totalCODCollected.toLocaleString('fr-FR')} <span className="text-xs font-bold text-slate-400">FCFA</span>
               </div>
               <div className="flex items-center gap-1 text-xs text-emerald-600 font-bold">
@@ -135,7 +137,7 @@ export const VendeurReports: React.FC = () => {
                   task_alt
                 </span>
               </div>
-              <div className="text-2xl sm:text-3xl font-black text-blue-900">
+              <div className="text-xl sm:text-2xl lg:text-3xl font-black text-blue-900 leading-tight">
                 {deliverySuccessRate}%
               </div>
               <p className="text-[11px] text-slate-500 font-medium">
@@ -151,7 +153,7 @@ export const VendeurReports: React.FC = () => {
                   local_shipping
                 </span>
               </div>
-              <div className="text-2xl sm:text-3xl font-black text-slate-900">
+              <div className="text-xl sm:text-2xl lg:text-3xl font-black text-slate-900 leading-tight">
                 {totalOrders}
               </div>
               <p className="text-[11px] text-indigo-600 font-semibold">
@@ -167,7 +169,7 @@ export const VendeurReports: React.FC = () => {
                   receipt_long
                 </span>
               </div>
-              <div className="text-2xl sm:text-3xl font-black text-slate-900">
+              <div className="text-xl sm:text-2xl lg:text-3xl font-black text-slate-900 leading-tight">
                 {totalDeliveryFees.toLocaleString('fr-FR')} <span className="text-xs font-bold text-slate-400">FCFA</span>
               </div>
               <p className="text-[11px] text-amber-700 font-medium">
@@ -245,43 +247,43 @@ export const VendeurReports: React.FC = () => {
               </div>
 
               <div className="space-y-3 pt-2">
-                <div className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-50 border border-slate-100">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-7 h-7 rounded-xl bg-blue-100 text-blue-700 font-extrabold text-xs flex items-center justify-center">
+                <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-100">
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <span className="w-7 h-7 rounded-xl bg-blue-100 text-blue-700 font-extrabold text-xs flex items-center justify-center shrink-0">
                       1
                     </span>
-                    <div>
-                      <div className="text-xs font-bold text-slate-900">Cotonou (Haie Vive, Cadjehoun, Fidjrossè)</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-bold text-slate-900 truncate">Cotonou (Haie Vive, Cadjehoun, Fidjrossè)</div>
                       <div className="text-[10px] text-slate-500">Délai moyen : 28 min</div>
                     </div>
                   </div>
-                  <span className="text-xs font-black text-blue-700">48% des colis</span>
+                  <span className="text-xs font-black text-blue-700 shrink-0 bg-blue-50 px-2 py-1 rounded-lg border border-blue-100">48% des colis</span>
                 </div>
 
-                <div className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-50 border border-slate-100">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-7 h-7 rounded-xl bg-slate-200 text-slate-700 font-extrabold text-xs flex items-center justify-center">
+                <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-100">
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <span className="w-7 h-7 rounded-xl bg-slate-200 text-slate-700 font-extrabold text-xs flex items-center justify-center shrink-0">
                       2
                     </span>
-                    <div>
-                      <div className="text-xs font-bold text-slate-900">Abomey-Calavi &amp; Godomey</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-bold text-slate-900 truncate">Abomey-Calavi &amp; Godomey</div>
                       <div className="text-[10px] text-slate-500">Délai moyen : 35 min</div>
                     </div>
                   </div>
-                  <span className="text-xs font-black text-slate-700">32% des colis</span>
+                  <span className="text-xs font-black text-slate-700 shrink-0 bg-slate-100 px-2 py-1 rounded-lg border border-slate-200">32% des colis</span>
                 </div>
 
-                <div className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-50 border border-slate-100">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-7 h-7 rounded-xl bg-slate-200 text-slate-700 font-extrabold text-xs flex items-center justify-center">
+                <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-100">
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <span className="w-7 h-7 rounded-xl bg-slate-200 text-slate-700 font-extrabold text-xs flex items-center justify-center shrink-0">
                       3
                     </span>
-                    <div>
-                      <div className="text-xs font-bold text-slate-900">Cotonou Akpakpa &amp; Dantokpa</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-bold text-slate-900 truncate">Cotonou Akpakpa &amp; Dantokpa</div>
                       <div className="text-[10px] text-slate-500">Délai moyen : 38 min</div>
                     </div>
                   </div>
-                  <span className="text-xs font-black text-slate-700">20% des colis</span>
+                  <span className="text-xs font-black text-slate-700 shrink-0 bg-slate-100 px-2 py-1 rounded-lg border border-slate-200">20% des colis</span>
                 </div>
               </div>
             </div>

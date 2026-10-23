@@ -3,6 +3,7 @@ import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
+import { BackButton } from '../common/BackButton';
 import { DeliveryOrder } from '../../types';
 import { GoogleMapDelivery } from '../maps/GoogleMapDelivery';
 import { getLocationForCommune } from '../../config/maps';
@@ -86,14 +87,14 @@ export const VendeurTracking: React.FC = () => {
           title="Mes Livraisons"
           subtitle="Suivi temps réel, traçabilité GPS et gestion des colis expédiés"
           showReturn
-          onReturn={() => setCurrentView('vendeur_dashboard')}
         />
 
         {/* Scrollable Canvas */}
         <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-28 md:pb-8">
           {/* Header Action Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-3xl border border-slate-200 shadow-xs">
-            <div>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs">
+            <div className="flex items-center gap-3">
+              <BackButton />
               <div className="flex items-center gap-2">
                 <span className="p-2 rounded-xl bg-blue-50 text-blue-600">
                   <span className="material-symbols-outlined text-xl">local_shipping</span>
@@ -431,24 +432,26 @@ export const VendeurTracking: React.FC = () => {
                   <article
                     key={order.id}
                     onClick={() => handleSelectOrder(order)}
-                    className={`p-3.5 rounded-2xl border transition-all cursor-pointer space-y-2.5 ${
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer space-y-3 ${
                       isSelected
-                        ? 'bg-blue-50/80 border-blue-400 shadow-sm ring-1 ring-blue-300'
+                        ? 'bg-blue-50/90 border-blue-400 shadow-sm ring-1 ring-blue-300'
                         : 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
                     }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-blue-700 text-xs">{order.id}</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-mono font-bold text-blue-700 text-xs px-2 py-0.5 bg-blue-100/70 rounded-md shrink-0">
+                          {order.id}
+                        </span>
                         {isSelected && (
-                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-600 text-white">
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-600 text-white shrink-0">
                             Actif
                           </span>
                         )}
                       </div>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold shrink-0 ${
                         order.status === 'livree' ? 'bg-emerald-100 text-emerald-800' :
-                        order.status === 'en_cours' ? 'bg-blue-100 text-blue-800' :
+                        order.status === 'en_cours' ? 'bg-blue-100 text-blue-800 animate-pulse' :
                         order.status === 'echec' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'
                       }`}>
                         {order.status === 'livree' ? '🟢 Livrée' :
@@ -457,24 +460,30 @@ export const VendeurTracking: React.FC = () => {
                       </span>
                     </div>
 
-                    <div className="space-y-1 text-xs">
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-slate-900">{order.clientName}</span>
-                        <span className="text-emerald-700 font-extrabold">{order.itemValueCOD.toLocaleString('fr-FR')} FCFA</span>
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-extrabold text-slate-900 truncate min-w-0 flex-1">{order.clientName}</span>
+                        <span className="text-emerald-700 font-black font-mono shrink-0 pl-1">{order.itemValueCOD.toLocaleString('fr-FR')} FCFA</span>
                       </div>
-                      <div className="text-[11px] text-slate-500 flex items-center gap-1">
-                        <span className="material-symbols-outlined text-xs text-slate-400">location_on</span>
-                        <span>{order.dropoffLocation.commune} • {order.dropoffLocation.address}</span>
+                      
+                      <div className="text-[11px] text-slate-600 flex items-start gap-1.5 bg-slate-50 p-2 rounded-xl border border-slate-100">
+                        <span className="material-symbols-outlined text-xs text-blue-600 shrink-0 mt-0.5">location_on</span>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-bold text-slate-800 truncate">{order.dropoffLocation.commune}</p>
+                          <p className="text-slate-500 text-[10px] truncate">{order.dropoffLocation.address}</p>
+                        </div>
                       </div>
-                      <div className="text-[11px] text-slate-500 flex items-center justify-between pt-1 border-t border-slate-100">
-                        <span>Colis: {order.itemDescription}</span>
-                        <span className="font-semibold text-slate-700">
-                          {order.courier?.name || 'Non assigné'}
+
+                      <div className="text-[11px] text-slate-600 flex flex-wrap items-center justify-between gap-y-1 gap-x-2 pt-1 border-t border-slate-100">
+                        <span className="truncate max-w-[180px]">Colis : <strong className="text-slate-800">{order.itemDescription}</strong></span>
+                        <span className="font-semibold text-slate-700 shrink-0 flex items-center gap-1">
+                          <span className="material-symbols-outlined text-xs text-slate-400">two_wheeler</span>
+                          <span>{order.courier?.name || 'Non assigné'}</span>
                         </span>
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-end gap-2 pt-1.5 border-t border-slate-100">
+                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
                       <button
                         type="button"
                         onClick={(e) => {
@@ -485,7 +494,7 @@ export const VendeurTracking: React.FC = () => {
                             `Bonjour ${order.clientName}, votre commande ${order.id} (${order.itemDescription}) est en cours de traitement par LivraLink.`
                           );
                         }}
-                        className="min-h-[44px] px-3 py-2 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 text-xs font-bold flex items-center gap-1.5 active:scale-95"
+                        className="min-h-[44px] px-3.5 py-2 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all"
                       >
                         <span className="material-symbols-outlined text-sm">chat</span>
                         <span>WhatsApp</span>
@@ -496,7 +505,7 @@ export const VendeurTracking: React.FC = () => {
                           e.stopPropagation();
                           handleSelectOrder(order);
                         }}
-                        className="min-h-[44px] px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs active:scale-95 flex items-center gap-1.5"
+                        className="min-h-[44px] px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs active:scale-95 flex items-center gap-1.5 transition-all"
                       >
                         <span className="material-symbols-outlined text-sm">map</span>
                         <span>Voir sur carte</span>
@@ -509,9 +518,9 @@ export const VendeurTracking: React.FC = () => {
 
             {/* Orders Table for Tablets and Desktops */}
             <div className="hidden md:block overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="w-full text-left text-xs min-w-[650px]">
                 <thead>
-                  <tr className="border-b border-slate-100 text-slate-400 font-bold uppercase text-[10px] tracking-wider">
+                  <tr className="border-b border-slate-100 text-slate-400 font-bold uppercase text-[10px] tracking-wider bg-slate-50/60">
                     <th className="py-3 px-3">Réf</th>
                     <th className="py-3 px-3">Client</th>
                     <th className="py-3 px-3">Destination</th>
@@ -537,12 +546,12 @@ export const VendeurTracking: React.FC = () => {
                           <div className="text-[10px] text-slate-400">{order.clientPhone}</div>
                         </td>
                         <td className="py-3 px-3">
-                          <div className="text-slate-800">{order.dropoffLocation.commune}</div>
+                          <div className="text-slate-800 font-medium">{order.dropoffLocation.commune}</div>
                           <div className="text-[10px] text-slate-400 truncate max-w-[150px]">{order.dropoffLocation.address}</div>
                         </td>
                         <td className="py-3 px-3">
                           <div className="text-emerald-700 font-black">{order.itemValueCOD.toLocaleString('fr-FR')} FCFA</div>
-                          <div className="text-[10px] text-slate-500">{order.itemDescription}</div>
+                          <div className="text-[10px] text-slate-500 truncate max-w-[140px]">{order.itemDescription}</div>
                         </td>
                         <td className="py-3 px-3">
                           <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
@@ -562,7 +571,7 @@ export const VendeurTracking: React.FC = () => {
                               e.stopPropagation();
                               handleSelectOrder(order);
                             }}
-                            className="px-2.5 py-1 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg text-[10px] font-bold text-slate-700 shadow-2xs"
+                            className="px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg text-[10px] font-bold text-slate-700 shadow-2xs transition-all active:scale-95"
                           >
                             Détails ›
                           </button>

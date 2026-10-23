@@ -20,6 +20,7 @@ export const VendeurNewDelivery: React.FC = () => {
     setSelectedCourier,
     createDelivery,
     setCurrentView,
+    navigateBack,
     showToast,
     merchantSettings
   } = useApp();
@@ -347,11 +348,12 @@ export const VendeurNewDelivery: React.FC = () => {
             <div className="flex items-center gap-2.5">
               <button
                 type="button"
-                onClick={() => setCurrentView('vendeur_dashboard')}
-                aria-label="Retour au tableau de bord"
-                className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center text-slate-700 active:scale-95 transition-transform shadow-xs"
+                onClick={navigateBack}
+                aria-label="Retour à la page précédente"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 hover:text-blue-600 transition-all text-xs font-bold shadow-2xs active:scale-95 cursor-pointer"
               >
-                <span className="material-symbols-outlined text-[20px]">arrow_back</span>
+                <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+                <span>Retour</span>
               </button>
               <div>
                 <div className="flex items-center gap-1.5">
@@ -515,11 +517,11 @@ export const VendeurNewDelivery: React.FC = () => {
 
                   {/* Numéro Téléphone / WhatsApp */}
                   <div>
-                    <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
                       <label className="text-xs font-bold text-slate-700">
                         Numéro Téléphone &amp; WhatsApp <span className="text-red-500">*</span>
                       </label>
-                      <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0">
                         <span className="material-symbols-outlined text-xs">chat</span>
                         WhatsApp Bénin (+229)
                       </span>
@@ -575,11 +577,11 @@ export const VendeurNewDelivery: React.FC = () => {
                 </div>
 
                 {/* Step 1 Actions */}
-                <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+                <div className="pt-4 border-t border-slate-100 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3">
                   <button
                     type="button"
                     onClick={() => setCurrentView('vendeur_dashboard')}
-                    className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 text-xs font-bold transition-all"
+                    className="min-h-[44px] px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 text-xs font-bold transition-all flex items-center justify-center cursor-pointer"
                   >
                     Annuler
                   </button>
@@ -587,7 +589,7 @@ export const VendeurNewDelivery: React.FC = () => {
                   <button
                     type="button"
                     onClick={goToStep2}
-                    className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-600/20 active:scale-95 transition-all flex items-center gap-2 cursor-pointer"
+                    className="min-h-[44px] px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-600/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <span>Continuer vers Colis &amp; Trajet</span>
                     <span className="material-symbols-outlined text-sm">arrow_forward</span>
@@ -717,7 +719,7 @@ export const VendeurNewDelivery: React.FC = () => {
 
                   {/* Point de ramassage (Origine) */}
                   <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                         <span className="material-symbols-outlined text-blue-600 text-base">store</span>
                         <span>Coordonnées du Point de Collecte (Origine)</span>
@@ -725,7 +727,7 @@ export const VendeurNewDelivery: React.FC = () => {
                       <button
                         type="button"
                         onClick={handleDetectCurrentLocation}
-                        className="text-[10px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded-lg border border-blue-200 flex items-center gap-1 transition-colors cursor-pointer"
+                        className="text-[10px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded-lg border border-blue-200 flex items-center gap-1 transition-colors cursor-pointer shrink-0"
                         title="Remplir avec votre position GPS réelle"
                       >
                         <span className="material-symbols-outlined text-xs">my_location</span>
@@ -815,11 +817,11 @@ export const VendeurNewDelivery: React.FC = () => {
                   <div className="space-y-3">
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
-                        <div className="flex items-center justify-between mb-1">
+                        <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
                           <label className="block text-xs font-bold text-slate-700">
                             Commune de livraison <span className="text-red-500">*</span>
                           </label>
-                          <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
+                          <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200 shrink-0">
                             77 communes (12 dép.)
                           </span>
                         </div>
@@ -1056,23 +1058,23 @@ export const VendeurNewDelivery: React.FC = () => {
                     </div>
 
                     {/* Synthèse Tarification */}
-                    <div className="pt-2 border-t border-blue-200/60 flex items-center justify-between text-xs">
+                    <div className="pt-2 border-t border-blue-200/60 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs">
                       <div className="text-slate-600">
-                        <span>Frais de livraison : <strong>{deliveryFee.toLocaleString('fr-FR')} FCFA</strong></span>
+                        <span>Frais de livraison : <strong className="font-mono">{deliveryFee.toLocaleString('fr-FR')} FCFA</strong></span>
                       </div>
-                      <div className="text-blue-900 font-extrabold text-sm">
-                        Total à percevoir client : <strong>{totalClient.toLocaleString('fr-FR')} FCFA</strong>
+                      <div className="text-blue-900 font-extrabold text-xs sm:text-sm">
+                        Total à percevoir client : <strong className="font-mono">{totalClient.toLocaleString('fr-FR')} FCFA</strong>
                       </div>
                     </div>
                   </div>
                 </div>
 
                 {/* Step 2 Actions */}
-                <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+                <div className="pt-4 border-t border-slate-100 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3">
                   <button
                     type="button"
                     onClick={() => setCurrentStep(1)}
-                    className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                    className="min-h-[44px] px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <span className="material-symbols-outlined text-sm">arrow_back</span>
                     <span>Retour : Client</span>
@@ -1081,9 +1083,10 @@ export const VendeurNewDelivery: React.FC = () => {
                   <button
                     type="button"
                     onClick={goToStep3}
-                    className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-600/20 active:scale-95 transition-all flex items-center gap-2 cursor-pointer"
+                    className="min-h-[44px] px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-600/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    <span>Continuer vers Publication &amp; Diffusion</span>
+                    <span className="hidden sm:inline">Continuer vers Publication &amp; Diffusion</span>
+                    <span className="sm:hidden">Continuer (Étape 3 : Diffusion)</span>
                     <span className="material-symbols-outlined text-sm">arrow_forward</span>
                   </button>
                 </div>
@@ -1190,23 +1193,23 @@ export const VendeurNewDelivery: React.FC = () => {
                   </div>
 
                   {/* Parcel info & COD */}
-                  <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 text-xs space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-600">Contenu : <strong>{itemDescription || 'Marchandise'}</strong></span>
-                      <span className="text-slate-500">{itemFormat} • {itemWeight} kg {isFragile && '• ⚠️ Fragile'}</span>
+                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 text-xs space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-1">
+                      <span className="text-slate-600">Contenu : <strong className="text-slate-900">{itemDescription || 'Marchandise'}</strong></span>
+                      <span className="text-slate-500 font-semibold">{itemFormat} • {itemWeight} kg {isFragile && '• ⚠️ Fragile'}</span>
                     </div>
 
-                    <div className="pt-2 border-t border-slate-200 flex justify-between items-center text-xs">
-                      <span>Montant COD :</span>
-                      <strong className="text-slate-900">{numericCod.toLocaleString('fr-FR')} FCFA</strong>
+                    <div className="pt-2 border-t border-slate-200 flex flex-wrap justify-between items-center gap-1 text-xs">
+                      <span className="text-slate-600">Montant COD :</span>
+                      <strong className="text-slate-900 font-mono">{numericCod.toLocaleString('fr-FR')} FCFA</strong>
                     </div>
-                    <div className="flex justify-between items-center text-xs">
-                      <span>Frais livraison standard :</span>
-                      <strong className="text-slate-900">{deliveryFee.toLocaleString('fr-FR')} FCFA</strong>
+                    <div className="flex flex-wrap justify-between items-center gap-1 text-xs">
+                      <span className="text-slate-600">Frais livraison standard :</span>
+                      <strong className="text-slate-900 font-mono">{deliveryFee.toLocaleString('fr-FR')} FCFA</strong>
                     </div>
-                    <div className="pt-2 border-t border-slate-200 flex justify-between items-center text-sm font-black text-blue-700">
+                    <div className="pt-2 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs sm:text-sm font-black text-blue-700">
                       <span>Total à percevoir client :</span>
-                      <span>{totalClient.toLocaleString('fr-FR')} FCFA</span>
+                      <span className="font-mono">{totalClient.toLocaleString('fr-FR')} FCFA</span>
                     </div>
                   </div>
                 </div>
@@ -1455,11 +1458,11 @@ export const VendeurNewDelivery: React.FC = () => {
                 </div>
 
                 {/* Final Step Actions */}
-                <div className="pt-2 flex items-center justify-between gap-3">
+                <div className="pt-2 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3">
                   <button
                     type="button"
                     onClick={() => setCurrentStep(2)}
-                    className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                    className="min-h-[44px] px-5 py-3 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <span className="material-symbols-outlined text-sm">arrow_back</span>
                     <span>Retour : Colis</span>
@@ -1469,19 +1472,20 @@ export const VendeurNewDelivery: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => handleConfirmAssignment(true)}
-                      className="flex-1 py-3.5 px-6 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-blue-600/30 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      className="min-h-[44px] flex-1 py-3.5 px-6 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-blue-600/30 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer text-center"
                     >
                       <span className="material-symbols-outlined text-lg">podcasts</span>
-                      <span>Diffuser &amp; Rendre disponible à tous les livreurs</span>
+                      <span className="hidden sm:inline">Diffuser &amp; Rendre disponible à tous les livreurs</span>
+                      <span className="sm:hidden">Diffuser la course à tous les livreurs</span>
                     </button>
                   ) : (
                     <button
                       type="button"
                       onClick={() => handleConfirmAssignment(false)}
-                      className="flex-1 py-3.5 px-6 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-blue-600/30 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      className="min-h-[44px] flex-1 py-3.5 px-6 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-blue-600/30 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer text-center"
                     >
                       <span className="material-symbols-outlined text-lg">person_check</span>
-                      <span>Attribuer et Créer la course ({currentSelectedDriver.name})</span>
+                      <span className="truncate">Attribuer à {currentSelectedDriver.name}</span>
                     </button>
                   )}
                 </div>

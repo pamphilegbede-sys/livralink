@@ -1,17 +1,51 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
+import { validateFileSize, compressImageFile } from '../../utils/fileCompressor';
 
 export const PODValidationModal: React.FC = () => {
-  const { isPODModalOpen, setIsPODModalOpen, selectedDelivery, validatePOD } = useApp();
+  const { isPODModalOpen, setIsPODModalOpen, selectedDelivery, validatePOD, showToast } = useApp();
   const [method, setMethod] = useState<'otp' | 'photo' | 'signature'>('otp');
   const [otpCode, setOtpCode] = useState('8492');
   const [signatureDone, setSignatureDone] = useState(false);
   const [photoTaken, setPhotoTaken] = useState(false);
+  const [photoInfo, setPhotoInfo] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isPODModalOpen || !selectedDelivery) return null;
 
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Point 15: File weight limit enforcement (Max 2MB)
+    const validation = validateFileSize(file, 2.0);
+    if (!validation.valid) {
+      showToast(validation.error || 'Fichier trop lourd (Max 2 Mo).', 'error');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    try {
+      showToast('Compression automatique de la photo...', 'info');
+      // Point 14: Client-side compression
+      const result = await compressImageFile(file, { maxWidth: 1024, quality: 0.75 });
+      setPhotoTaken(true);
+      setPhotoInfo(`Taille réduite de ${(result.originalSize / 1024).toFixed(0)} Ko à ${(result.compressedSize / 1024).toFixed(0)} Ko (-${result.compressionRatio}%)`);
+      showToast(`Photo compressée avec succès (-${result.compressionRatio}%) !`, 'success');
+    } catch {
+      setPhotoTaken(true);
+      setPhotoInfo('Photo enregistrée.');
+    }
+  };
+
   const handleConfirm = () => {
+    if (isSubmitting) return; // Point 09: Prevent double click
+    setIsSubmitting(true);
     validatePOD(selectedDelivery.id, method, otpCode);
+    setTimeout(() => {
+      setIsSubmitting(false);
+    }, 1500);
   };
 
   return (
@@ -95,23 +129,42 @@ export const PODValidationModal: React.FC = () => {
 
         {method === 'photo' && (
           <div className="space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200 text-center">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={handlePhotoUpload}
+            />
             <div
-              onClick={() => setPhotoTaken(true)}
+              onClick={() => {
+                if (fileInputRef.current) {
+                  fileInputRef.current.click();
+                } else {
+                  setPhotoTaken(true);
+                }
+              }}
               className={`h-36 border-2 border-dashed rounded-xl flex flex-col items-center justify-center cursor-pointer transition-colors ${
                 photoTaken ? 'border-emerald-500 bg-emerald-50/50' : 'border-slate-300 hover:border-blue-500 bg-white'
               }`}
             >
               {photoTaken ? (
-                <div className="flex flex-col items-center gap-1 text-emerald-700">
+                <div className="flex flex-col items-center gap-1 text-emerald-700 px-3">
                   <span className="material-symbols-outlined text-3xl">image</span>
-                  <span className="text-xs font-bold">Photo de remise horodatée enregistrée ✓</span>
-                  <span className="text-[10px] text-slate-500">Cotonou Haie Vive • 14:38:12</span>
+                  <span className="text-xs font-bold">Photo certifiée enregistrée ✓</span>
+                  {photoInfo && (
+                    <span className="text-[10px] text-emerald-800 font-mono font-bold bg-emerald-100/70 px-2 py-0.5 rounded-md">
+                      {photoInfo}
+                    </span>
+                  )}
+                  <span className="text-[10px] text-slate-500">Cotonou Hub • Horodatage inviolable</span>
                 </div>
               ) : (
                 <div className="flex flex-col items-center gap-1 text-slate-500">
                   <span className="material-symbols-outlined text-3xl text-blue-600">photo_camera</span>
-                  <span className="text-xs font-bold text-slate-800">Prendre en photo le colis remis</span>
-                  <span className="text-[10px] text-slate-400">Cliquez pour simuler la capture</span>
+                  <span className="text-xs font-bold text-slate-800">Prendre ou importer la photo du colis</span>
+                  <span className="text-[10px] text-slate-400">Max 2 Mo • Compression auto HD active</span>
                 </div>
               )}
             </div>
@@ -141,18 +194,29 @@ export const PODValidationModal: React.FC = () => {
         <div className="grid grid-cols-2 gap-3 pt-2">
           <button
             type="button"
+            disabled={isSubmitting}
             onClick={() => setIsPODModalOpen(false)}
-            className="py-2.5 px-4 rounded-xl border border-slate-300 text-slate-700 font-semibold text-xs hover:bg-slate-50 active:scale-95"
+            className="py-2.5 px-4 rounded-xl border border-slate-300 text-slate-700 font-semibold text-xs hover:bg-slate-50 active:scale-95 disabled:opacity-50"
           >
             Annuler
           </button>
           <button
             type="button"
+            disabled={isSubmitting}
             onClick={handleConfirm}
-            className="py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md active:scale-95 flex items-center justify-center gap-1.5"
+            className="py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5"
           >
-            <span className="material-symbols-outlined text-sm" data-icon="task_alt">task_alt</span>
-            <span>Confirmer la remise</span>
+            {isSubmitting ? (
+              <>
+                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                <span>Validation...</span>
+              </>
+            ) : (
+              <>
+                <span className="material-symbols-outlined text-sm" data-icon="task_alt">task_alt</span>
+                <span>Confirmer la remise</span>
+              </>
+            )}
           </button>
         </div>
       </div>

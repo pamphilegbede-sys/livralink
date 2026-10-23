@@ -1,5 +1,6 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
+import { LivraLinkLogo } from './LivraLinkLogo';
 
 export const Sidebar: React.FC = () => {
   const {
@@ -26,25 +27,17 @@ export const Sidebar: React.FC = () => {
 
   return (
     <aside className="hidden md:flex flex-col justify-between h-screen w-64 bg-white border-r border-slate-200 shadow-sm z-30 shrink-0 select-none sticky top-0">
-      {/* Top Part: Logo, CTA, Navigation */}
-      <div className="flex flex-col p-4">
+      {/* Top Part: Logo, CTA, Navigation (Scrollable) */}
+      <div className="flex-1 flex flex-col p-4 overflow-y-auto custom-scrollbar">
         {/* Brand Logo & Switcher */}
         <div className="flex items-center justify-between px-2 py-3 mb-4">
           <button
+            type="button"
             onClick={() => setCurrentView('landing')}
-            className="inline-flex items-center gap-2 group text-left"
+            className="inline-flex items-center group text-left transition-transform active:scale-95"
+            title="Retour à l'accueil LivraLink"
           >
-            <div className="w-8 h-8 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-sm">
-              <span className="material-symbols-outlined text-xl text-blue-400">local_shipping</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-lg font-extrabold tracking-tight text-slate-900 leading-none">
-                Livra<span className="text-blue-600">Link</span>
-              </span>
-              <span className="text-[9px] font-bold tracking-widest text-slate-400 uppercase mt-0.5">
-                CONNECT &amp; DELIVER
-              </span>
-            </div>
+            <LivraLinkLogo size="md" subtitle="CONNECT & DELIVER" />
           </button>
           <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-blue-50 text-blue-700 border border-blue-200">
             {currentRole}
@@ -164,6 +157,19 @@ export const Sidebar: React.FC = () => {
                 <span className="material-symbols-outlined text-xl">settings</span>
                 <span>Paramètres Vendeur</span>
               </button>
+
+              {/* Bouton Déconnexion dans la barre latérale Vendeur */}
+              <div className="pt-2 mt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-red-600 hover:bg-red-50 hover:text-red-700 transition-all active:scale-95 group"
+                  title="Déconnexion de votre espace vendeur"
+                >
+                  <span className="material-symbols-outlined text-xl text-red-500 group-hover:translate-x-0.5 transition-transform">logout</span>
+                  <span>Déconnexion</span>
+                </button>
+              </div>
             </>
           )}
 
@@ -224,6 +230,19 @@ export const Sidebar: React.FC = () => {
                 <span className="material-symbols-outlined text-xl">settings</span>
                 <span>Paramètres Livreur</span>
               </button>
+
+              {/* Bouton Déconnexion dans la barre latérale Livreur */}
+              <div className="pt-2 mt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-red-600 hover:bg-red-50 hover:text-red-700 transition-all active:scale-95 group"
+                  title="Déconnexion de votre espace coursier"
+                >
+                  <span className="material-symbols-outlined text-xl text-red-500 group-hover:translate-x-0.5 transition-transform">logout</span>
+                  <span>Déconnexion</span>
+                </button>
+              </div>
             </>
           )}
 
@@ -477,8 +496,8 @@ export const Sidebar: React.FC = () => {
         </nav>
       </div>
 
-      {/* Footer Navigation Tabs (Help, Logout, Profile preview) */}
-      <div className="p-4 border-t border-slate-200 space-y-2">
+      {/* Footer Navigation Tabs (Help, Logout, Profile preview) - Always Pinned */}
+      <div className="p-4 border-t border-slate-200 space-y-2 shrink-0 bg-white">
         <button
           onClick={openTestModal}
           className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold transition-colors border border-amber-200/80 shadow-2xs"
@@ -498,10 +517,11 @@ export const Sidebar: React.FC = () => {
         </button>
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-slate-600 hover:bg-red-50 hover:text-red-600 text-xs font-medium transition-colors"
+          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-red-600 hover:bg-red-600 hover:text-white text-xs font-bold transition-all border border-red-200 bg-red-50/60 shadow-2xs active:scale-95 group cursor-pointer"
+          title="Se déconnecter de la session"
         >
-          <span className="material-symbols-outlined text-lg">logout</span>
-          <span>Déconnexion</span>
+          <span className="material-symbols-outlined text-lg group-hover:-translate-x-0.5 transition-transform">logout</span>
+          <span>Se déconnecter</span>
         </button>
 
         {/* Profile Card */}

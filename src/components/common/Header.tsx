@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { LivraLinkLogo } from './LivraLinkLogo';
 
 export const Header: React.FC<{
   title?: string;
@@ -7,32 +8,25 @@ export const Header: React.FC<{
   showReturn?: boolean;
   breadcrumbs?: { label: string; view?: any }[];
   onReturn?: () => void;
-}> = ({ title, subtitle, showReturn, breadcrumbs, onReturn }) => {
+}> = ({ title, subtitle, breadcrumbs }) => {
   const { currentRole, setCurrentRole, currentView, setCurrentView, merchantSettings, courierSettings, toggleCourierAvailability, showToast, logout } = useApp();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   return (
     <>
       <header className="h-16 md:h-[72px] bg-white border-b border-slate-200/80 px-3 md:px-8 flex justify-between items-center shrink-0 z-20 shadow-xs">
-        {/* Left Cluster: Mobile Hamburger (on mobile) or Back Button / Breadcrumbs / Title */}
-        <div className="flex items-center gap-2 md:gap-3 min-w-0">
-          {showReturn ? (
-            <button
-              onClick={onReturn || (() => setCurrentView(currentRole === 'vendeur' ? 'vendeur_dashboard' : currentRole === 'livreur' ? 'livreur_dashboard' : 'admin_console'))}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-800 hover:bg-slate-50 transition-colors text-xs font-semibold shadow-xs shrink-0 active:scale-95"
-            >
-              <span className="material-symbols-outlined text-base">arrow_back</span>
-              <span className="hidden sm:inline">Retour</span>
-            </button>
-          ) : (
-            <button
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="md:hidden p-2 rounded-xl text-slate-600 hover:bg-slate-100 active:scale-95"
-              title="Menu de navigation"
-            >
-              <span className="material-symbols-outlined text-xl">menu</span>
-            </button>
-          )}
+        {/* Left Cluster: Mobile Drawer Trigger + Breadcrumbs / Title */}
+        <div className="flex items-center gap-1.5 sm:gap-2.5 md:gap-3 min-w-0">
+
+          <button
+            type="button"
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className="md:hidden p-1.5 rounded-xl text-slate-600 hover:bg-slate-100 active:scale-95 shrink-0"
+            title="Menu de navigation"
+            aria-label="Menu de navigation"
+          >
+            <span className="material-symbols-outlined text-xl">menu</span>
+          </button>
 
           {breadcrumbs && breadcrumbs.length > 0 && (
             <nav className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-slate-500">
@@ -152,15 +146,7 @@ export const Header: React.FC<{
           <div className="w-4/5 max-w-xs bg-white h-full shadow-2xl flex flex-col justify-between p-5" onClick={(e) => e.stopPropagation()}>
             <div className="space-y-4">
               <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-slate-900 flex items-center justify-center text-white">
-                    <span className="material-symbols-outlined text-xl text-blue-400">local_shipping</span>
-                  </div>
-                  <div>
-                    <span className="font-extrabold text-sm text-slate-900">Livra<span className="text-blue-600">Link</span></span>
-                    <span className="block text-[9px] font-bold text-slate-400">MENU RAPIDE</span>
-                  </div>
-                </div>
+                <LivraLinkLogo size="sm" subtitle="MENU RAPIDE" />
                 <button onClick={() => setIsMobileMenuOpen(false)} className="p-1 rounded-lg text-slate-400 hover:text-slate-700">
                   <span className="material-symbols-outlined text-xl">close</span>
                 </button>
@@ -220,6 +206,18 @@ export const Header: React.FC<{
                       <span className="material-symbols-outlined text-lg">settings</span>
                       <span>Paramètres Vendeur</span>
                     </button>
+                    <div className="pt-2 mt-2 border-t border-slate-100">
+                      <button
+                        onClick={async () => {
+                          setIsMobileMenuOpen(false);
+                          await logout();
+                        }}
+                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-red-600 hover:bg-red-50"
+                      >
+                        <span className="material-symbols-outlined text-lg">logout</span>
+                        <span>Déconnexion</span>
+                      </button>
+                    </div>
                   </>
                 )}
 
@@ -253,6 +251,18 @@ export const Header: React.FC<{
                       <span className="material-symbols-outlined text-lg">settings</span>
                       <span>Paramètres Livreur</span>
                     </button>
+                    <div className="pt-2 mt-2 border-t border-slate-100">
+                      <button
+                        onClick={async () => {
+                          setIsMobileMenuOpen(false);
+                          await logout();
+                        }}
+                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-red-600 hover:bg-red-50"
+                      >
+                        <span className="material-symbols-outlined text-lg">logout</span>
+                        <span>Déconnexion</span>
+                      </button>
+                    </div>
                   </>
                 )}
               </div>
@@ -264,10 +274,10 @@ export const Header: React.FC<{
                   setIsMobileMenuOpen(false);
                   await logout();
                 }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-red-600 rounded-xl hover:bg-red-50"
+                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 rounded-xl border border-red-200"
               >
                 <span className="material-symbols-outlined text-base">logout</span>
-                <span>Se déconnecter (Firebase)</span>
+                <span>Se déconnecter de LivraLink</span>
               </button>
             </div>
           </div>

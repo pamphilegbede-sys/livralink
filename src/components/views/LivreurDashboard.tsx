@@ -4,6 +4,7 @@ import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
+import { BackButton } from '../common/BackButton';
 import { GoogleMapDelivery } from '../maps/GoogleMapDelivery';
 import { getLocationForCommune, calculateDistanceKm, calculateDeliveryPrice } from '../../config/maps';
 import { DeliveryOrder } from '../../types';
@@ -143,7 +144,8 @@ export const LivreurDashboard: React.FC = () => {
         <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-28 md:pb-8">
           {/* 1. Courier Greeting & Availability Toggle */}
           <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-start gap-4">
+            <div className="flex items-start gap-3 sm:gap-4">
+              <BackButton />
               <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
                 <span className="material-symbols-outlined text-2xl">two_wheeler</span>
               </div>
@@ -216,14 +218,14 @@ export const LivreurDashboard: React.FC = () => {
           </div>
 
           {/* 2. Key Stats Grid */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
             {/* Courses Jour */}
             <div className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs space-y-2">
               <div className="flex items-center justify-between text-xs text-slate-500 font-semibold">
                 <span>COURSES JOUR</span>
                 <span className="material-symbols-outlined text-blue-600">calendar_today</span>
               </div>
-              <div className="flex items-baseline gap-1.5">
+              <div className="flex items-baseline gap-1.5 flex-wrap">
                 <span className="text-2xl sm:text-3xl font-black text-slate-900">
                   {deliveries.filter((d) => d.status === 'livree').length}
                 </span>
@@ -247,7 +249,7 @@ export const LivreurDashboard: React.FC = () => {
                   Retrait ›
                 </button>
               </div>
-              <div className="flex items-baseline gap-1">
+              <div className="flex items-baseline gap-1 flex-wrap">
                 <span className="text-2xl sm:text-3xl font-black text-slate-900">
                   {(
                     deliveries
@@ -257,7 +259,7 @@ export const LivreurDashboard: React.FC = () => {
                 </span>
                 <span className="text-xs font-bold text-slate-400">FCFA</span>
               </div>
-              <div className="flex items-center justify-between text-[11px] pt-1">
+              <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] pt-1">
                 <span className="text-emerald-600 font-bold">100 F/km net</span>
                 <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold">
                   MoMo / Celtiis
@@ -692,23 +694,23 @@ export const LivreurDashboard: React.FC = () => {
           )}
 
           {/* 5. Emergency SOS Dispatch Banner */}
-          <section className="bg-red-50 border border-red-200 rounded-3xl p-4 flex items-center justify-between shadow-xs">
-            <div className="flex items-center gap-3">
+          <section className="bg-red-50 border border-red-200 rounded-3xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-3 min-w-0">
               <div className="w-10 h-10 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
                 <span className="material-symbols-outlined text-xl">support_agent</span>
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-xs font-bold text-red-900 leading-tight">
                   Besoin d'aide sur votre tournée à Cotonou ?
                 </p>
-                <p className="text-[11px] text-red-700">
+                <p className="text-[11px] text-red-700 truncate">
                   Contactez le Dispatch LivraLink Bénin en direct au +229 97 00 00 00
                 </p>
               </div>
             </div>
             <a
               href="tel:+22997000000"
-              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shrink-0 shadow-xs active:scale-95"
+              className="w-full sm:w-auto text-center px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shrink-0 shadow-xs active:scale-95 transition-all"
             >
               SOS Dispatch (+229)
             </a>

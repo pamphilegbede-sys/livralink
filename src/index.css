@@ -11,6 +11,10 @@
     color: #131b2e;
     -webkit-tap-highlight-color: transparent;
   }
+
+  p, span, h1, h2, h3, h4, h5, h6, td, th {
+    overflow-wrap: break-word;
+  }
 }
 
 .material-symbols-outlined {

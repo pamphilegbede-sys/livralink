@@ -7,6 +7,8 @@ import { WhatsAppPreviewModal } from './components/modals/WhatsAppPreviewModal';
 import { UrgentMissionModal } from './components/modals/UrgentMissionModal';
 import { GoogleSignInModal } from './components/modals/GoogleSignInModal';
 import { FirebaseTestModal } from './components/modals/FirebaseTestModal';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
+import { FullViewSkeleton } from './components/common/LoadingSkeleton';
 
 // Views
 import { LandingPage } from './components/views/LandingPage';
@@ -30,18 +32,7 @@ const MainAppRouter: React.FC = () => {
 
   const renderActiveView = () => {
     if (isAuthLoading) {
-      return (
-        <div className="flex-1 flex flex-col items-center justify-center min-h-[400px] p-6 text-center">
-          <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shadow-xs animate-bounce mb-3">
-            <span className="material-symbols-outlined text-2xl">local_shipping</span>
-          </div>
-          <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
-            <span className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></span>
-            <span>Vérification de session Firebase...</span>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">Connexion sécurisée en cours</p>
-        </div>
-      );
+      return <FullViewSkeleton label="Vérification de session sécurisée..." />;
     }
 
     switch (currentView) {
@@ -134,8 +125,10 @@ const MainAppRouter: React.FC = () => {
 
 export default function App() {
   return (
-    <AppProvider>
-      <MainAppRouter />
-    </AppProvider>
+    <ErrorBoundary>
+      <AppProvider>
+        <MainAppRouter />
+      </AppProvider>
+    </ErrorBoundary>
   );
 }

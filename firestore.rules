@@ -174,5 +174,12 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow write: if isAdmin();
     }
+
+    // -------------------------------------------------------------------------
+    // 4. Test Connection Probe (Skill requirement)
+    // -------------------------------------------------------------------------
+    match /test/{testId} {
+      allow read: if true;
+    }
   }
 }

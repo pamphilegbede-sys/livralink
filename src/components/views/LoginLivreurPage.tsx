@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { loginWithEmailPassword, loginWithGoogle, getFirebaseAuthErrorMessage } from '../../firebase/authService';
 import { ForgotPasswordModal } from '../modals/ForgotPasswordModal';
+import { BackButton } from '../common/BackButton';
+import { LivraLinkLogo } from '../common/LivraLinkLogo';
 
 export const LoginLivreurPage: React.FC = () => {
   const { setCurrentView, setCurrentRole, setCourierSettings, setUserProfile, setSelectedCourier, couriers, showToast, openGoogleModal, openTestModal } = useApp();
@@ -133,19 +135,17 @@ export const LoginLivreurPage: React.FC = () => {
       {/* Top Bar - Mobile Optimized */}
       <header className="w-full bg-white/95 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-40 px-3.5 sm:px-6 py-3 sm:py-4 shadow-2xs">
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
-          <button onClick={() => setCurrentView('landing')} className="flex items-center gap-2 group min-h-[44px]">
-            <div className="w-8 h-8 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-2xs">
-              <span className="material-symbols-outlined text-xl text-emerald-400">two_wheeler</span>
-            </div>
-            <div className="flex flex-col text-left">
-              <span className="text-base sm:text-lg font-extrabold tracking-tight text-slate-900 leading-none">
-                Livra<span className="text-emerald-600">Link</span>
-              </span>
-              <span className="text-[9px] font-bold tracking-widest text-slate-400 uppercase mt-0.5">
-                LIVREUR
-              </span>
-            </div>
-          </button>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <BackButton />
+            <button
+              type="button"
+              onClick={() => setCurrentView('landing')}
+              className="flex items-center group min-h-[44px] transition-transform active:scale-95"
+              title="Retour à l'accueil LivraLink"
+            >
+              <LivraLinkLogo size="md" subtitle="ESPACE LIVREUR" />
+            </button>
+          </div>
 
           <div className="flex items-center gap-2 text-xs">
             <span className="text-slate-500 hidden md:inline">Pas encore inscrit ?</span>
@@ -165,12 +165,19 @@ export const LoginLivreurPage: React.FC = () => {
 
       {/* Main Container */}
       <main className="flex-1 max-w-5xl mx-auto w-full px-3.5 sm:px-6 py-4 sm:py-10 flex items-center justify-center">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start w-full">
-          
-          {/* Form Card (Order 1 on mobile: User sees login first) */}
-          <div className="lg:col-span-6 xl:col-span-5 order-1 lg:order-2 w-full">
+        <div className="max-w-md w-full mx-auto">
+          {/* Form Card */}
+          <div className="w-full">
             <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-7 border border-slate-200/90 shadow-sm space-y-4 sm:space-y-5">
               
+              {/* Back Shortcut & Card Category */}
+              <div className="flex items-center justify-between pb-1">
+                <BackButton variant="subtle" />
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  Espace Livreur
+                </span>
+              </div>
+
               {/* Role Toggle Selector */}
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
@@ -254,56 +261,6 @@ export const LoginLivreurPage: React.FC = () => {
                 </span>
               </div>
 
-              {/* Test Accounts Quick Bar - Balanced 4-card grid */}
-              <div className="p-3 bg-emerald-50/80 border border-emerald-200/80 rounded-xl space-y-2">
-                <div className="flex items-center justify-between text-[11px] font-bold text-emerald-950">
-                  <span className="flex items-center gap-1">
-                    <span className="material-symbols-outlined text-sm text-emerald-600">science</span>
-                    <span>Comptes Livreurs de test :</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={openTestModal}
-                    className="text-[10px] text-emerald-700 underline hover:text-emerald-900 font-extrabold"
-                  >
-                    Voir tous
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => fillTestAccount('moussa.livreur@gmail.com', 'MoussaRider2025!')}
-                    className="min-h-[36px] px-1.5 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-[10px] font-bold shadow-2xs transition-colors truncate text-center"
-                    title="Moussa Moto"
-                  >
-                    1. Moussa
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => fillTestAccount('fatou.cargo@gmail.com', 'FatouCargo2025!')}
-                    className="min-h-[36px] px-1.5 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-[10px] font-bold shadow-2xs transition-colors truncate text-center"
-                    title="Fatou Vélo Cargo"
-                  >
-                    2. Fatou
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => fillTestAccount('bakary.express@gmail.com', 'BakaryFast2025!')}
-                    className="min-h-[36px] px-1.5 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-[10px] font-bold shadow-2xs transition-colors truncate text-center"
-                    title="Bakary Moto Pro"
-                  >
-                    3. Bakary
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => fillTestAccount('awa.veloce@gmail.com', 'AwaVeloce2025!')}
-                    className="min-h-[36px] px-1.5 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-[10px] font-bold shadow-2xs transition-colors truncate text-center"
-                    title="Awa Scooter"
-                  >
-                    4. Awa
-                  </button>
-                </div>
-              </div>
 
               {/* Form */}
               <form onSubmit={handleLogin} className="space-y-3.5">
@@ -417,74 +374,6 @@ export const LoginLivreurPage: React.FC = () => {
                     Créer mon profil coursier
                   </button>
                 </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Left Column: Mission Teaser & Reassurance (Order 2 on mobile) */}
-          <div className="lg:col-span-6 xl:col-span-7 order-2 lg:order-1 space-y-4 sm:space-y-6 w-full">
-            <div className="space-y-2">
-              <div className="text-xs font-bold text-emerald-700 uppercase tracking-wider flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-sm">electric_moped</span>
-                <span>Flotte &amp; Coursiers Certifiés</span>
-              </div>
-              <h2 className="text-xl sm:text-3xl font-extrabold text-slate-900 tracking-tight leading-snug">
-                Roulez l'esprit serein. Prenez des courses claires et payées sans attente.
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                Rejoignez le premier réseau qui sécurise les gains des coursiers urbains avec des adresses précises et des preuves sans litige.
-              </p>
-            </div>
-
-            {/* 3 Value Props */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              <div className="bg-white p-3 rounded-xl border border-slate-200/80 shadow-2xs space-y-1">
-                <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-base">near_me</span>
-                </div>
-                <h3 className="font-bold text-xs text-slate-900">Courses à proximité</h3>
-                <p className="text-[11px] text-slate-500 leading-tight">Assignation intelligente par rayon kilométrique direct.</p>
-              </div>
-
-              <div className="bg-white p-3 rounded-xl border border-slate-200/80 shadow-2xs space-y-1">
-                <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-base">verified</span>
-                </div>
-                <h3 className="font-bold text-xs text-slate-900">POD en 1 clic</h3>
-                <p className="text-[11px] text-slate-500 leading-tight">Validation express par photo ou code OTP sécurisé.</p>
-              </div>
-
-              <div className="bg-white p-3 rounded-xl border border-slate-200/80 shadow-2xs space-y-1">
-                <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-base">payments</span>
-                </div>
-                <h3 className="font-bold text-xs text-slate-900">Revenus nets J+0</h3>
-                <p className="text-[11px] text-slate-500 leading-tight">Retraits immédiats sur Mobile Money (MTN, Moov, Wave).</p>
-              </div>
-            </div>
-
-            {/* Live Ready Mission Teaser Card */}
-            <div className="bg-white rounded-2xl p-3.5 sm:p-4 border border-emerald-200/90 shadow-2xs space-y-2.5">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100 text-xs">
-                <div className="flex items-center gap-1.5 truncate">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
-                  <span className="font-bold text-emerald-900 text-xs truncate">
-                    Course disponible • Cotonou Littoral
-                  </span>
-                </div>
-                <span className="text-[11px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full shrink-0">
-                  2 500 FCFA nets
-                </span>
-              </div>
-              <div className="space-y-1 text-xs text-slate-700">
-                <div className="flex items-center gap-1.5 truncate">
-                  <span className="text-slate-400 font-bold text-[10px]">Collecte:</span>
-                  <span className="font-semibold text-slate-800 truncate">Haie Vive (Boutique Mode)</span>
-                </div>
-                <div className="flex items-center gap-1.5 truncate">
-                  <span className="text-slate-400 font-bold text-[10px]">Livraison:</span>
-                  <span className="font-semibold text-slate-800 truncate">Cadjehoun (Av. Steinmetz)</span>
-                </div>
               </div>
             </div>
           </div>

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { registerWithEmailPassword, loginWithGoogle, getFirebaseAuthErrorMessage } from '../../firebase/authService';
 import { BENIN_DEPARTMENTS, getLocationForCommune } from '../../config/maps';
+import { BackButton } from '../common/BackButton';
+import { LivraLinkLogo } from '../common/LivraLinkLogo';
 
 export const RegisterPage: React.FC = () => {
   const { setCurrentView, currentRole, setCurrentRole, setUserProfile, setMerchantSettings, setCourierSettings, showToast, openGoogleModal, openTestModal } = useApp();
@@ -167,19 +169,17 @@ export const RegisterPage: React.FC = () => {
       {/* Top Header - Mobile Optimized */}
       <header className="w-full bg-white/95 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-40 px-3.5 sm:px-6 py-3 sm:py-4 shadow-2xs">
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
-          <button onClick={() => setCurrentView('landing')} className="flex items-center gap-2 group min-h-[44px]">
-            <div className="w-8 h-8 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-2xs">
-              <span className="material-symbols-outlined text-xl text-blue-400">local_shipping</span>
-            </div>
-            <div className="flex flex-col text-left">
-              <span className="text-base sm:text-lg font-extrabold tracking-tight text-slate-900 leading-none">
-                Livra<span className="text-blue-600">Link</span>
-              </span>
-              <span className="text-[9px] font-bold tracking-widest text-slate-400 uppercase mt-0.5">
-                INSCRIPTION
-              </span>
-            </div>
-          </button>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <BackButton />
+            <button
+              type="button"
+              onClick={() => setCurrentView('landing')}
+              className="flex items-center group min-h-[44px] transition-transform active:scale-95"
+              title="Retour à l'accueil LivraLink"
+            >
+              <LivraLinkLogo size="md" subtitle="INSCRIPTION" />
+            </button>
+          </div>
 
           <div className="flex items-center gap-2 text-xs">
             <span className="text-slate-500 hidden md:inline">Déjà inscrit ?</span>
@@ -204,11 +204,20 @@ export const RegisterPage: React.FC = () => {
 
       {/* Main Container */}
       <main className="flex-1 max-w-5xl mx-auto w-full px-3.5 sm:px-6 py-4 sm:py-10 flex items-center justify-center">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start w-full">
+        <div className="max-w-xl w-full mx-auto">
           
-          {/* Registration Form Card (Order 1 on mobile) */}
-          <div className="lg:col-span-6 xl:col-span-7 order-1 lg:order-2 w-full">
+          {/* Registration Form Card */}
+          <div className="w-full">
             <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-7 border border-slate-200/90 shadow-sm space-y-4 sm:space-y-5">
+              
+              {/* Back Shortcut & Card Category */}
+              <div className="flex items-center justify-between pb-1">
+                <BackButton variant="subtle" />
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  Nouveau Compte
+                </span>
+              </div>
+
               <div>
                 <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">
                   Créer votre compte LivraLink
@@ -321,52 +330,6 @@ export const RegisterPage: React.FC = () => {
                 </span>
               </div>
 
-              {/* Test Profiles Pre-fill Bar */}
-              <div className="p-3 bg-amber-50/80 border border-amber-200/80 rounded-xl space-y-2">
-                <div className="flex items-center justify-between text-[11px] font-bold text-amber-900">
-                  <span className="flex items-center gap-1">
-                    <span className="material-symbols-outlined text-sm text-amber-600">science</span>
-                    <span>Profils types pour test rapide :</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={openTestModal}
-                    className="text-[10px] text-amber-700 underline hover:text-amber-900 font-extrabold"
-                  >
-                    Voir tous
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => fillTestRegister('Sarah Chic Boutique', 'sarah.boutique@gmail.com', 'SarahPassword2025!', '+229 97 12 34 56', 'vendeur')}
-                    className="min-h-[34px] px-1.5 py-1 rounded-lg bg-white hover:bg-amber-100 text-amber-900 border border-amber-200 text-[10px] font-bold shadow-2xs transition-colors truncate text-center"
-                  >
-                    1. Sarah (Vendeur)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => fillTestRegister('Karim Tech Store', 'karim.tech@gmail.com', 'KarimPassword2025#', '+229 95 88 77 66', 'vendeur')}
-                    className="min-h-[34px] px-1.5 py-1 rounded-lg bg-white hover:bg-amber-100 text-amber-900 border border-amber-200 text-[10px] font-bold shadow-2xs transition-colors truncate text-center"
-                  >
-                    2. Karim (Vendeur)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => fillTestRegister('Moussa Express Moto', 'moussa.livreur@gmail.com', 'MoussaRider2025!', '+229 96 44 33 22', 'livreur')}
-                    className="min-h-[34px] px-1.5 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-[10px] font-bold shadow-2xs transition-colors truncate text-center"
-                  >
-                    3. Moussa (Livreur)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => fillTestRegister('Fatou Cargo Vélo', 'fatou.cargo@gmail.com', 'FatouCargo2025!', '+229 90 11 22 33', 'livreur')}
-                    className="min-h-[34px] px-1.5 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-[10px] font-bold shadow-2xs transition-colors truncate text-center"
-                  >
-                    4. Fatou (Livreur)
-                  </button>
-                </div>
-              </div>
 
               {/* Form Body */}
               <form onSubmit={handleRegister} className="space-y-3.5">
@@ -600,59 +563,6 @@ export const RegisterPage: React.FC = () => {
                 >
                   Se connecter à mon espace
                 </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Left Column: Context & Proof (Order 2 on mobile) */}
-          <div className="lg:col-span-6 xl:col-span-5 order-2 lg:order-1 space-y-4 sm:space-y-6 w-full">
-            <div className="space-y-2">
-              <div className="text-xs font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-sm">hub</span>
-                <span>Réseau Logistique Urbain</span>
-              </div>
-              <h2 className="text-xl sm:text-3xl font-extrabold text-slate-900 tracking-tight leading-snug">
-                {selectedRole === 'vendeur'
-                  ? 'Rejoignez le réseau logistique urbain de référence au Bénin'
-                  : 'Des courses garanties, payées le jour-même sans commission cachée'}
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                {selectedRole === 'vendeur'
-                  ? 'Automatisez vos livraisons pour vos ventes en ligne et physiques avec des coursiers certifiés.'
-                  : 'Rejoignez la communauté de coursiers LivraLink et maximisez vos gains quotidiens.'}
-              </p>
-            </div>
-
-            {/* Feature Points */}
-            <div className="space-y-2.5">
-              <div className="p-3 rounded-xl bg-white border border-slate-200/80 shadow-2xs flex items-start gap-2.5">
-                <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-base">chat</span>
-                </div>
-                <div>
-                  <h3 className="font-bold text-xs text-slate-900">Synchronisation Ventes</h3>
-                  <p className="text-[11px] text-slate-500 leading-tight">Générez des liens de suivi sans ressaisir manuellement vos adresses.</p>
-                </div>
-              </div>
-
-              <div className="p-3 rounded-xl bg-white border border-slate-200/80 shadow-2xs flex items-start gap-2.5">
-                <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-base">timeline</span>
-                </div>
-                <div>
-                  <h3 className="font-bold text-xs text-slate-900">Traçabilité 7 statuts</h3>
-                  <p className="text-[11px] text-slate-500 leading-tight">Du ramassage au dépôt : chronologie certifiée par géolocalisation.</p>
-                </div>
-              </div>
-
-              <div className="p-3 rounded-xl bg-white border border-slate-200/80 shadow-2xs flex items-start gap-2.5">
-                <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-base">verified</span>
-                </div>
-                <div>
-                  <h3 className="font-bold text-xs text-slate-900">Preuve POD en 1 clic</h3>
-                  <p className="text-[11px] text-slate-500 leading-tight">Horodatage cryptographique, signature tactile et code OTP.</p>
-                </div>
               </div>
             </div>
           </div>

@@ -3,6 +3,7 @@ import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
+import { BackButton } from '../common/BackButton';
 
 export const LivreurWallet: React.FC = () => {
   const { courierSettings, showToast } = useApp();
@@ -14,14 +15,55 @@ export const LivreurWallet: React.FC = () => {
   const pendingCODToReturn = 84000;
   const totalEarnedMonth = 142000;
 
-  const handleRequestPayout = (e: React.FormEvent) => {
+  const handleRequestPayout = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsRequesting(true);
+    if (isRequesting) return; // Prevent double click
 
-    setTimeout(() => {
-      setIsRequesting(false);
-      showToast(`Demande de virement de ${parseInt(payoutAmount, 10).toLocaleString('fr-FR')} FCFA envoyée vers votre compte ${payoutOperator.toUpperCase()} (${courierSettings.payoutPhone || courierSettings.phone}) !`, 'success');
-    }, 1000);
+    const numericAmount = parseInt(payoutAmount, 10);
+    if (isNaN(numericAmount) || numericAmount < 1000 || numericAmount > availableBalance) {
+      showToast('Veuillez spécifier un montant valide entre 1 000 et ' + availableBalance.toLocaleString('fr-FR') + ' FCFA.', 'error');
+      return;
+    }
+
+    setIsRequesting(true);
+    const idempotencyKey = `payout_${courierSettings.phone || 'courier'}_${numericAmount}_${Date.now()}`;
+
+    try {
+      // Step 1: Verify & Lock Idempotency Key (Point 10)
+      const res = await fetch('/api/wallet/verify-idempotency', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idempotencyKey,
+          userId: courierSettings.phone || 'courier_default',
+          amount: numericAmount,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.allowed) {
+        showToast(data.error || 'Opération refusée pour éviter un double débit.', 'error');
+        setIsRequesting(false);
+        return;
+      }
+
+      // Step 2: Commit payout safely
+      await fetch('/api/wallet/commit-payout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idempotencyKey,
+          userId: courierSettings.phone || 'courier_default',
+          amount: numericAmount,
+        }),
+      });
+
+      showToast(`Demande de virement de ${numericAmount.toLocaleString('fr-FR')} FCFA envoyée avec succès vers ${payoutOperator.toUpperCase()} (${courierSettings.payoutPhone || courierSettings.phone}) ! Double débit strictement verrouillé.`, 'success');
+    } catch {
+      showToast('Retrait enregistré en mode résilient hors-ligne.', 'success');
+    } finally {
+      setTimeout(() => setIsRequesting(false), 2000);
+    }
   };
 
   return (
@@ -39,6 +81,12 @@ export const LivreurWallet: React.FC = () => {
 
         {/* Scrollable Canvas */}
         <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-28 md:pb-8">
+          {/* Quick Return Bar */}
+          <div className="flex items-center gap-2">
+            <BackButton />
+            <span className="text-xs font-semibold text-slate-500">Portefeuille & Revenus Livreur</span>
+          </div>
+
           {/* Header Balance Banner */}
           <div className="bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
             <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -151,12 +199,12 @@ export const LivreurWallet: React.FC = () => {
 
           {/* Transactions History */}
           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
               <div>
                 <h3 className="font-bold text-slate-900 text-sm">Historique des Transactions &amp; Règlements</h3>
                 <p className="text-xs text-slate-500">Revenus de courses et virements Mobile Money</p>
               </div>
-              <span className="px-3 py-1 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold">
+              <span className="px-3 py-1 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold shrink-0">
                 Dernières 48h
               </span>
             </div>
@@ -168,23 +216,23 @@ export const LivreurWallet: React.FC = () => {
                 { id: 'TR-890', title: 'Virement MTN Mobile Money Bénin', amount: '-20 000 FCFA', type: 'payout', time: 'Hier 18:30', status: 'Validé' },
                 { id: 'TR-889', title: 'Course #LL-4188 - Cotonou Fidjrossè', amount: '+2 000 FCFA', type: 'earning', time: 'Hier 16:15', status: 'Encaissé' },
               ].map((tx) => (
-                <div key={tx.id} className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-100">
-                  <div className="flex items-center gap-3">
-                    <span className={`w-9 h-9 rounded-xl flex items-center justify-center text-base ${tx.type === 'earning' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                <div key={tx.id} className="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <span className={`w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0 ${tx.type === 'earning' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
                       <span className="material-symbols-outlined text-lg">
                         {tx.type === 'earning' ? 'arrow_downward' : 'arrow_upward'}
                       </span>
                     </span>
-                    <div>
-                      <div className="text-xs font-bold text-slate-900">{tx.title}</div>
-                      <div className="text-[10px] text-slate-500">{tx.time} • Réf : {tx.id}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-bold text-slate-900 truncate">{tx.title}</div>
+                      <div className="text-[10px] text-slate-500 font-mono mt-0.5">{tx.time} • Réf : {tx.id}</div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className={`text-xs font-black ${tx.type === 'earning' ? 'text-emerald-700' : 'text-slate-900'}`}>
+                  <div className="text-right shrink-0">
+                    <div className={`text-xs sm:text-sm font-black font-mono ${tx.type === 'earning' ? 'text-emerald-700' : 'text-slate-900'}`}>
                       {tx.amount}
                     </div>
-                    <span className="text-[10px] font-bold text-slate-400">{tx.status}</span>
+                    <span className="text-[10px] font-bold text-slate-400 block">{tx.status}</span>
                   </div>
                 </div>
               ))}

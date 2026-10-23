@@ -67,6 +67,9 @@ export interface AdminTestResultItem {
 interface AppContextType {
   currentView: AppView;
   setCurrentView: (view: AppView) => void;
+  viewHistory: AppView[];
+  navigateBack: () => void;
+  canGoBack: boolean;
   currentRole: UserRole;
   setCurrentRole: (role: UserRole) => void;
   // Firebase Auth State
@@ -178,8 +181,64 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentView, setCurrentView] = useState<AppView>('landing');
+  const [currentView, setCurrentViewState] = useState<AppView>('landing');
+  const [viewHistory, setViewHistory] = useState<AppView[]>([]);
   const [currentRole, setCurrentRole] = useState<UserRole>('vendeur');
+
+  const setCurrentView = (nextView: AppView) => {
+    if (nextView === currentView) return;
+    setViewHistory((prev) => [...prev.slice(-30), currentView]);
+    setCurrentViewState(nextView);
+  };
+
+  const navigateBack = () => {
+    if (viewHistory.length > 0) {
+      const prevView = viewHistory[viewHistory.length - 1];
+      setViewHistory((prev) => prev.slice(0, -1));
+
+      // Auto-synchroniser le rôle avec la vue de destination si nécessaire
+      if ((prevView.startsWith('vendeur_') || prevView === 'login_vendeur') && currentRole !== 'vendeur') {
+        setCurrentRole('vendeur');
+      } else if ((prevView.startsWith('livreur_') || prevView === 'login_livreur') && currentRole !== 'livreur') {
+        setCurrentRole('livreur');
+      } else if (prevView === 'admin_console' && currentRole !== 'admin') {
+        setCurrentRole('admin');
+      }
+
+      setCurrentViewState(prevView);
+    } else {
+      // Repli contextuel logique si l'historique direct est vide
+      if (
+        currentView === 'vendeur_new_delivery' ||
+        currentView === 'vendeur_tracking' ||
+        currentView === 'vendeur_reports' ||
+        currentView === 'vendeur_settings'
+      ) {
+        if (currentRole !== 'vendeur') setCurrentRole('vendeur');
+        setCurrentViewState('vendeur_dashboard');
+      } else if (
+        currentView === 'livreur_missions' ||
+        currentView === 'livreur_wallet' ||
+        currentView === 'livreur_settings'
+      ) {
+        if (currentRole !== 'livreur') setCurrentRole('livreur');
+        setCurrentViewState('livreur_dashboard');
+      } else if (
+        currentView === 'vendeur_dashboard' ||
+        currentView === 'livreur_dashboard' ||
+        currentView === 'admin_console' ||
+        currentView === 'login_vendeur' ||
+        currentView === 'login_livreur' ||
+        currentView === 'register'
+      ) {
+        setCurrentViewState('landing');
+      } else {
+        setCurrentViewState('landing');
+      }
+    }
+  };
+
+  const canGoBack = viewHistory.length > 0 || currentView !== 'landing';
 
   // Real Firebase Auth state
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
@@ -478,11 +537,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await logoutUser();
       setFirebaseUser(null);
       setUserProfile(null);
-      setCurrentView('login_vendeur');
+      setViewHistory([]);
+      const targetView: AppView = currentRole === 'livreur' ? 'login_livreur' : 'login_vendeur';
+      setCurrentViewState(targetView);
       showToast('Session déconnectée avec succès.', 'info');
     } catch (err) {
       console.error('Erreur déconnexion:', err);
-      setCurrentView('login_vendeur');
+      setFirebaseUser(null);
+      setUserProfile(null);
+      setViewHistory([]);
+      const targetView: AppView = currentRole === 'livreur' ? 'login_livreur' : 'login_vendeur';
+      setCurrentViewState(targetView);
+      showToast('Session déconnectée.', 'info');
     }
   };
 
@@ -1359,6 +1425,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       value={{
         currentView,
         setCurrentView,
+        viewHistory,
+        navigateBack,
+        canGoBack,
         currentRole,
         setCurrentRole,
         firebaseUser,

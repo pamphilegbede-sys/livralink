@@ -30,12 +30,12 @@ if (!getApps().length) {
 export const app = firebaseApp;
 export const auth: Auth = getAuth(app);
 
-// Initialize Firestore with auto-detect long polling to prevent 10s timeout in iframe/sandboxed environments
+// Initialize Firestore with forced long polling to immediately connect in iframe/preview environments without 10s timeout
 const firestoreDbId = (appletConfig as any)?.firestoreDatabaseId;
 export const db: Firestore = initializeFirestore(
   app,
   {
-    experimentalAutoDetectLongPolling: true,
+    experimentalForceLongPolling: true,
   },
   firestoreDbId && firestoreDbId !== '(default)' ? firestoreDbId : undefined
 );

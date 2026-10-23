@@ -3,9 +3,11 @@ import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
+import { BackButton } from '../common/BackButton';
+import { BeninZoneSelector } from '../common/BeninZoneSelector';
 
 export const LivreurSettings: React.FC = () => {
-  const { courierSettings, setCourierSettings, toggleCourierAvailability, showToast, setCurrentView } = useApp();
+  const { courierSettings, setCourierSettings, toggleCourierAvailability, showToast, setCurrentView, logout } = useApp();
 
   const [fullName, setFullName] = useState(courierSettings.fullName);
   const [phone, setPhone] = useState(courierSettings.phone);
@@ -22,16 +24,6 @@ export const LivreurSettings: React.FC = () => {
   const [notifyMissionChange, setNotifyMissionChange] = useState(true);
   const [notifyPODValidated, setNotifyPODValidated] = useState(true);
   const [notifyPayoutReceived, setNotifyPayoutReceived] = useState(true);
-
-  const availableZones = ['Haie Vive', 'Zongo', 'Akpakpa', 'Fidjrossè', 'Godomey', 'Calavi Centre', 'Porto-Novo'];
-
-  const toggleZone = (zone: string) => {
-    if (activeZones.includes(zone)) {
-      setActiveZones(activeZones.filter((z) => z !== zone));
-    } else {
-      setActiveZones([...activeZones, zone]);
-    }
-  };
 
   const handleSave = () => {
     setCourierSettings((prev) => ({
@@ -60,39 +52,41 @@ export const LivreurSettings: React.FC = () => {
           title="Paramètres du compte Livreur"
           subtitle="Profil coursier, zones, moyens de transport et gestion du portefeuille"
           showReturn
-          onReturn={() => setCurrentView('livreur_dashboard')}
         />
 
         {/* Scrollable Container */}
         <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-28 md:pb-8">
           {/* Header Action Row */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2">
-            <div>
-              <div className="flex items-center gap-3">
-                <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight">
-                  Paramètres du compte Livreur
-                </h1>
-                <span className="px-3 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-200">
-                  Livreur Partenaire Vérifié ✓
-                </span>
-              </div>
+            <div className="flex items-center gap-3">
+              <BackButton />
+              <div>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight">
+                    Paramètres du compte Livreur
+                  </h1>
+                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-200 shrink-0">
+                    Livreur Vérifié ✓
+                  </span>
+                </div>
               <p className="text-xs text-slate-500 mt-0.5">
                 Gérez votre profil coursier, vos modes d'encaissement transparents et votre disponibilité d'intervention.
               </p>
             </div>
+          </div>
 
-            <div className="flex items-center gap-3">
+            <div className="w-full sm:w-auto flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
               <button
                 type="button"
                 onClick={() => showToast('Paramètres réinitialisés.', 'info')}
-                className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-semibold"
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-semibold text-center"
               >
                 Réinitialiser
               </button>
               <button
                 type="button"
                 onClick={handleSave}
-                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-600/20 active:scale-95 transition-all flex items-center gap-1.5"
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-600/20 active:scale-95 transition-all flex items-center justify-center gap-1.5"
               >
                 <span className="material-symbols-outlined text-base">check_circle</span>
                 <span>Enregistrer les modifications</span>
@@ -306,31 +300,15 @@ export const LivreurSettings: React.FC = () => {
               </div>
             </div>
 
-            {/* Zone Chips */}
+            {/* Zone Chips (Liste déroulante et catalogue complet Bénin) */}
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-800">Ma zone de livraison (puces sélectionnables)</label>
-              <div className="flex flex-wrap gap-2">
-                {availableZones.map((zone) => {
-                  const isSelected = activeZones.includes(zone);
-                  return (
-                    <button
-                      key={zone}
-                      type="button"
-                      onClick={() => toggleZone(zone)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 ${
-                        isSelected
-                          ? 'bg-blue-600 text-white shadow-xs'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      <span>{zone}</span>
-                      <span className="material-symbols-outlined text-xs">
-                        {isSelected ? 'check' : 'add'}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+              <BeninZoneSelector
+                selectedZones={activeZones}
+                onChange={setActiveZones}
+                label="Mes zones d'intervention et de courses (Bénin Intégral)"
+                helperText="Choisissez toutes les communes, arrondissements et quartiers où vous acceptez de réaliser des courses."
+                role="livreur"
+              />
 
               {/* Note informative obligatoire (Rule 8 & 9) */}
               <div className="mt-3 p-3 rounded-xl bg-slate-50 border-l-4 border-blue-600 flex items-start gap-2.5 text-xs text-slate-700">
@@ -473,23 +451,23 @@ export const LivreurSettings: React.FC = () => {
             </div>
 
             {/* Rule 10 & 11: Breakdown & Transparency Before Mission Acceptance Mockup */}
-            <div className="p-5 rounded-3xl bg-slate-50 border-2 border-blue-600/30 space-y-3">
+            <div className="p-4 sm:p-5 rounded-3xl bg-slate-50 border-2 border-blue-600/30 space-y-3">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-blue-600 text-base">visibility</span>
                 <h3 className="font-bold text-xs text-slate-900">Transparence avant acceptation (Aperçu d'une mission entrante)</h3>
               </div>
-              <div className="p-3.5 bg-white rounded-2xl border border-slate-200 text-xs space-y-1.5 text-slate-700">
-                <div className="flex justify-between">
-                  <span>Prix de la livraison (calculé automatiquement) :</span>
-                  <span className="font-bold text-slate-900">1 000 FCFA</span>
+              <div className="p-3.5 bg-white rounded-2xl border border-slate-200 text-xs space-y-2 text-slate-700">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <span className="text-slate-600">Prix de la livraison (calculé automatiquement) :</span>
+                  <span className="font-bold text-slate-900 font-mono">1 000 FCFA</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>Commission LivraLink (fixée par le système) :</span>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <span className="text-slate-600">Commission LivraLink (fixée par le système) :</span>
                   <span className="font-bold text-emerald-600">0 FCFA (Offre Spéciale MVP 0%)</span>
                 </div>
-                <div className="pt-2 border-t border-slate-100 flex justify-between items-center text-sm font-bold">
-                  <span className="text-emerald-700">Votre gain garanti net :</span>
-                  <span className="text-emerald-700 text-base font-black">1 000 FCFA (100% de la course)</span>
+                <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-1 font-bold">
+                  <span className="text-emerald-700 text-xs sm:text-sm">Votre gain garanti net :</span>
+                  <span className="text-emerald-700 text-sm sm:text-base font-black">1 000 FCFA (100% de la course)</span>
                 </div>
               </div>
             </div>
@@ -497,7 +475,7 @@ export const LivreurSettings: React.FC = () => {
 
           {/* ================= 5. HISTORIQUE DES TRANSACTIONS ================= */}
           <section id="historique" className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
               <div>
                 <h2 className="text-base font-bold text-slate-900">Historique des revenus &amp; Transactions récentes</h2>
                 <p className="text-xs text-slate-500">Relevé clair de chaque course exécutée et calcul de la rémunération nette</p>
@@ -505,15 +483,44 @@ export const LivreurSettings: React.FC = () => {
               <button
                 type="button"
                 onClick={() => showToast('Export PDF généré avec succès !', 'success')}
-                className="text-blue-600 font-bold text-xs hover:underline flex items-center gap-1"
+                className="text-blue-600 font-bold text-xs hover:underline flex items-center gap-1 shrink-0"
               >
                 <span className="material-symbols-outlined text-sm">file_download</span>
                 <span>Exporter (PDF)</span>
               </button>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
+            {/* Mobile Card Architecture (< md) */}
+            <div className="md:hidden space-y-3">
+              {[
+                { date: '14 Oct 2024', ref: '#LL-1024', gross: '1 000 FCFA', net: '1 000 FCFA', method: 'MTN MoMo', status: 'Payé', statusClass: 'bg-emerald-100 text-emerald-800' },
+                { date: '14 Oct 2024', ref: '#LL-1020', gross: '2 500 FCFA', net: '2 500 FCFA', method: 'MTN MoMo', status: 'Payé', statusClass: 'bg-emerald-100 text-emerald-800' },
+                { date: '13 Oct 2024', ref: '#LL-0994', gross: '1 500 FCFA', net: '1 500 FCFA', method: 'Solde compte', status: 'Transféré', statusClass: 'bg-blue-100 text-blue-800' }
+              ].map((tx, idx) => (
+                <article key={idx} className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono font-bold text-xs text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">{tx.ref}</span>
+                    <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] shrink-0 ${tx.statusClass}`}>
+                      {tx.status}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-xs pt-1.5 border-t border-slate-200/60">
+                    <div className="min-w-0 flex-1">
+                      <span className="text-slate-400 text-[11px] block">{tx.date}</span>
+                      <span className="font-medium text-slate-700 text-xs truncate block">{tx.method}</span>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-[10px] text-slate-400 block">Net perçu</span>
+                      <span className="font-black text-emerald-700 text-sm font-mono">{tx.net}</span>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+
+            {/* Desktop Table (>= md) */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs min-w-[700px]">
                 <thead>
                   <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
                     <th className="py-2.5 px-3">Date</th>
@@ -671,6 +678,25 @@ export const LivreurSettings: React.FC = () => {
                   className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-xl font-bold hover:bg-slate-100"
                 >
                   Consulter mon contrat
+                </button>
+              </div>
+
+              {/* Déconnexion de session coursier */}
+              <div className="p-4 bg-red-50/60 rounded-2xl border border-red-200/90 space-y-2 md:col-span-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="font-bold text-red-900 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-base text-red-600">logout</span>
+                    <span>Session &amp; Déconnexion</span>
+                  </h4>
+                  <p className="text-slate-600 text-xs mt-0.5">Fermez votre session coursier sécurisée sur cet appareil.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={logout}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold flex items-center gap-1.5 text-xs shadow-xs active:scale-95 transition-all shrink-0 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm">logout</span>
+                  <span>Se déconnecter</span>
                 </button>
               </div>
             </div>

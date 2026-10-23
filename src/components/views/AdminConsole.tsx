@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useApp, AdminTestResultItem } from '../../context/AppContext';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
+import { BackButton } from '../common/BackButton';
 import { DisputeResolutionModal } from '../modals/DisputeResolutionModal';
 import { Courier, Merchant, DeliveryOrder, DeliveryStatus } from '../../types';
 import { loginWithGoogle } from '../../firebase/authService';
@@ -51,6 +52,7 @@ export const AdminConsole: React.FC = () => {
     openWhatsAppModal,
     setCurrentView,
     setCurrentRole,
+    navigateBack,
     adminActiveTab: activeViewTab,
     setAdminActiveTab: setActiveViewTab
   } = useApp();
@@ -758,17 +760,16 @@ export const AdminConsole: React.FC = () => {
               </div>
             </form>
 
-            {/* Back to Home */}
+            {/* Back to previous page */}
             <div className="text-center pt-2">
               <button
                 type="button"
-                onClick={() => {
-                  setCurrentRole('vendeur');
-                  setCurrentView('landing');
-                }}
-                className="text-slate-400 hover:text-slate-200 text-xs font-medium transition-colors"
+                onClick={navigateBack}
+                className="text-slate-400 hover:text-white text-xs font-bold transition-all inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl hover:bg-slate-800 border border-transparent hover:border-slate-700 cursor-pointer"
+                title="Retour à la page précédente"
               >
-                ← Quitter l'espace sécurisé et retourner à l'accueil
+                <span className="material-symbols-outlined text-sm">arrow_back</span>
+                <span>Retour à la page précédente</span>
               </button>
             </div>
           </div>
@@ -790,9 +791,20 @@ export const AdminConsole: React.FC = () => {
       {/* Main Container */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff]">
         {/* Top Navbar */}
-        <header className="h-[72px] bg-white border-b border-slate-200 px-4 md:px-8 flex justify-between items-center shrink-0 z-20 shadow-xs">
-          {/* Search bar */}
-          <div className="flex items-center gap-2 flex-1 min-w-0 max-w-xs md:w-1/3 md:min-w-[240px]">
+        <header className="h-[72px] bg-white border-b border-slate-200 px-3 md:px-8 flex justify-between items-center shrink-0 z-20 shadow-xs">
+          {/* Back button (PC & Mobile) + Search bar */}
+          <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0 max-w-sm md:w-1/2">
+            <button
+              type="button"
+              onClick={navigateBack}
+              className="inline-flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 hover:text-blue-600 transition-all text-xs font-bold shadow-2xs shrink-0 active:scale-95 cursor-pointer"
+              title="Retour à la page précédente"
+              aria-label="Retour à la page précédente"
+            >
+              <span className="material-symbols-outlined text-base">arrow_back</span>
+              <span className="font-bold">Retour</span>
+            </button>
+
             <div className="relative w-full">
               <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
                 search
@@ -871,6 +883,7 @@ export const AdminConsole: React.FC = () => {
           aria-label="Navigation des modules d'administration mobile"
           className="md:hidden bg-slate-900 border-b border-slate-800 px-3 py-2 flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0 shadow-xs z-10"
         >
+          <BackButton variant="dark" label="Retour" />
           {[
             { id: 'overview', label: 'Synthèse', icon: 'dashboard' },
             { id: 'deliveries', label: 'Courses', icon: 'local_shipping', badge: activeDeliveriesCount > 0 ? `${activeDeliveriesCount}` : undefined },
@@ -914,13 +927,15 @@ export const AdminConsole: React.FC = () => {
         <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-28 md:pb-8">
           {/* Header Title & Tab Navigation */}
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-2 border-b border-slate-200">
-            <div>
-              <div className="flex items-center gap-2 text-xs text-slate-500 font-semibold mb-1">
-                <span className="text-blue-600 font-bold">Plateforme LivraLink CI</span>
-                <span>›</span>
-                <span>Console Administrateur</span>
-                <span>›</span>
-                <span className="font-bold text-slate-900">
+            <div className="flex items-center gap-3">
+              <BackButton />
+              <div>
+                <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 font-semibold mb-1">
+                  <span className="text-blue-600 font-bold">Plateforme LivraLink CI</span>
+                  <span>›</span>
+                  <span>Console Administrateur</span>
+                  <span>›</span>
+                  <span className="font-bold text-slate-900 truncate max-w-[200px] sm:max-w-none">
                   {activeViewTab === 'overview' && 'Tableau de Bord & Vue d\'ensemble'}
                   {activeViewTab === 'deliveries' && 'Supervision des Courses'}
                   {activeViewTab === 'users' && 'Annuaire Utilisateurs'}
@@ -934,8 +949,8 @@ export const AdminConsole: React.FC = () => {
                   {activeViewTab === 'security' && 'Whitelist & Sécurité'}
                 </span>
               </div>
-              <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-                <span className={`p-1.5 text-white rounded-xl material-symbols-outlined text-lg ${
+              <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2 flex-wrap">
+                <span className={`p-1.5 text-white rounded-xl material-symbols-outlined text-lg shrink-0 ${
                   activeViewTab === 'deliveries' ? 'bg-blue-600 shadow-sm' :
                   activeViewTab === 'disputes' ? 'bg-red-600' :
                   activeViewTab === 'kyc' ? 'bg-amber-600' :
@@ -953,7 +968,7 @@ export const AdminConsole: React.FC = () => {
                   {activeViewTab === 'audit' && 'history'}
                   {activeViewTab === 'security' && 'shield_person'}
                 </span>
-                <span>
+                <span className="leading-tight">
                   {activeViewTab === 'deliveries' && 'Supervision des Courses & Live Dispatch'}
                   {activeViewTab === 'overview' && 'Tableau de Bord & Synthèse Générale'}
                   {activeViewTab === 'users' && 'Annuaire Global des Utilisateurs'}
@@ -969,6 +984,7 @@ export const AdminConsole: React.FC = () => {
               </h1>
             </div>
           </div>
+        </div>
 
           {/* =========================================================================
               TAB 1: VUE D'ENSEMBLE (KPIs + Synthèse Globale)
@@ -976,7 +992,7 @@ export const AdminConsole: React.FC = () => {
           {activeViewTab === 'overview' && (
             <div className="space-y-6 animate-in fade-in duration-200">
               {/* 5 KPIs Row */}
-              <section className="grid grid-cols-2 lg:grid-cols-5 gap-3.5">
+              <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
                 <div
                   onClick={() => setActiveViewTab('deliveries')}
                   className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1 hover:border-blue-400 hover:shadow-sm cursor-pointer transition-all active:scale-[0.99]"
@@ -986,7 +1002,7 @@ export const AdminConsole: React.FC = () => {
                     <span className="material-symbols-outlined text-xs text-blue-500">arrow_forward</span>
                   </span>
                   <div className="text-2xl font-black text-slate-900">{deliveries.length}</div>
-                  <div className="text-[11px] text-slate-500 flex justify-between pt-1">
+                  <div className="text-[10px] text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5 pt-1">
                     <span className="text-blue-600 font-bold">{activeDeliveriesCount} actives</span>
                     <span className="text-emerald-600 font-bold">{deliveredCount} OK</span>
                     <span className="text-red-500 font-bold">{disputeCount} litiges</span>
@@ -1001,11 +1017,11 @@ export const AdminConsole: React.FC = () => {
                     <span>Volume COD Traité</span>
                     <span className="material-symbols-outlined text-xs text-blue-500">tune</span>
                   </span>
-                  <div className="text-xl font-black text-slate-900 truncate">
+                  <div className="text-xl sm:text-2xl font-black text-slate-900 truncate">
                     {totalVolumeGMV.toLocaleString('fr-FR')} <span className="text-xs font-normal">FCFA</span>
                   </div>
-                  <div className="text-[11px] text-slate-500">
-                    Frais générés : <strong>{totalDeliveryFees.toLocaleString('fr-FR')} F</strong>
+                  <div className="text-[11px] text-slate-500 truncate">
+                    Frais : <strong>{totalDeliveryFees.toLocaleString('fr-FR')} F</strong>
                   </div>
                 </div>
 
@@ -1043,7 +1059,7 @@ export const AdminConsole: React.FC = () => {
 
                 <div
                   onClick={() => setActiveViewTab(disputeCount > 0 ? 'disputes' : 'deliveries')}
-                  className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1 col-span-2 sm:col-span-1 hover:border-blue-400 hover:shadow-sm cursor-pointer transition-all active:scale-[0.99]"
+                  className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1 hover:border-blue-400 hover:shadow-sm cursor-pointer transition-all active:scale-[0.99]"
                 >
                   <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center justify-between">
                     <span>Taux de Succès POD</span>
@@ -1430,7 +1446,7 @@ export const AdminConsole: React.FC = () => {
 
               {/* Table of all users for Desktop & Tablet */}
               <div className="hidden md:block overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
+                <table className="w-full text-left border-collapse text-xs min-w-[780px]">
                   <thead>
                     <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
                       <th className="py-3 px-3">Utilisateur</th>
@@ -1690,35 +1706,35 @@ export const AdminConsole: React.FC = () => {
                       </div>
 
                       {/* Documents Preview Badges */}
-                      <div className="grid grid-cols-2 gap-2 p-3 bg-white rounded-xl border border-slate-200 text-xs mb-3">
-                        <div className="flex items-center justify-between p-2 rounded-lg bg-slate-50">
-                          <span className="font-semibold text-slate-700">Pièce CNI / Passeport</span>
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${kyc.documents.cni ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 bg-white rounded-xl border border-slate-200 text-xs mb-3">
+                        <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-50 min-w-0">
+                          <span className="font-semibold text-slate-700 truncate">Pièce CNI / Passeport</span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded shrink-0 ${kyc.documents.cni ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
                             {kyc.documents.cni ? '✓ Fourni' : '✗ Manquant'}
                           </span>
                         </div>
-                        <div className="flex items-center justify-between p-2 rounded-lg bg-slate-50">
-                          <span className="font-semibold text-slate-700">Permis de Conduire</span>
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${kyc.documents.permis ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                        <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-50 min-w-0">
+                          <span className="font-semibold text-slate-700 truncate">Permis de Conduire</span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded shrink-0 ${kyc.documents.permis ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
                             {kyc.documents.permis ? '✓ Fourni' : '✗ Manquant'}
                           </span>
                         </div>
                       </div>
 
                       {/* Actions */}
-                      <div className="flex items-center gap-2 pt-1">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
                         {kyc.status === 'en_attente' ? (
                           <>
                             <button
                               onClick={() => approveKYC(kyc.id)}
-                              className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 transition-all active:scale-98"
+                              className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 transition-all active:scale-98"
                             >
                               <span className="material-symbols-outlined text-sm">verified</span>
                               <span>Valider &amp; Activer le Livreur</span>
                             </button>
                             <button
                               onClick={() => rejectKYC(kyc.id)}
-                              className="py-2 px-3 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition-all active:scale-98"
+                              className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition-all active:scale-98 text-center"
                             >
                               Refuser
                             </button>
@@ -1966,7 +1982,7 @@ export const AdminConsole: React.FC = () => {
 
               {/* Couriers Table for Desktop */}
               <div className="hidden md:block overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
+                <table className="w-full text-left border-collapse text-xs min-w-[750px]">
                   <thead>
                     <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
                       <th className="py-3 px-3">Livreur</th>
@@ -2231,7 +2247,7 @@ export const AdminConsole: React.FC = () => {
 
               {/* Table for Desktop */}
               <div className="hidden md:block overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
+                <table className="w-full text-left border-collapse text-xs min-w-[700px]">
                   <thead>
                     <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
                       <th className="py-3 px-3">Boutique &amp; Gérant</th>
@@ -2656,7 +2672,7 @@ export const AdminConsole: React.FC = () => {
 
                 {/* Table for Desktop & Tablets */}
                 <div className="hidden md:block overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
+                  <table className="w-full text-left border-collapse text-xs min-w-[780px]">
                     <thead>
                       <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
                         <th className="py-3 px-3">ID &amp; Détails</th>

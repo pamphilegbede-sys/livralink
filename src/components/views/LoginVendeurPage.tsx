@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { loginWithEmailPassword, loginWithGoogle, getFirebaseAuthErrorMessage } from '../../firebase/authService';
 import { ForgotPasswordModal } from '../modals/ForgotPasswordModal';
+import { BackButton } from '../common/BackButton';
+import { LivraLinkLogo } from '../common/LivraLinkLogo';
 
 export const LoginVendeurPage: React.FC = () => {
   const { setCurrentView, setCurrentRole, setMerchantSettings, setUserProfile, showToast, openGoogleModal, openTestModal } = useApp();
@@ -94,19 +96,17 @@ export const LoginVendeurPage: React.FC = () => {
       {/* Top Bar - Mobile Optimized */}
       <header className="w-full bg-white/95 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-40 px-3.5 sm:px-6 py-3 sm:py-4 shadow-2xs">
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
-          <button onClick={() => setCurrentView('landing')} className="flex items-center gap-2 group min-h-[44px]">
-            <div className="w-8 h-8 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-2xs">
-              <span className="material-symbols-outlined text-xl text-blue-400">local_shipping</span>
-            </div>
-            <div className="flex flex-col text-left">
-              <span className="text-base sm:text-lg font-extrabold tracking-tight text-slate-900 leading-none">
-                Livra<span className="text-blue-600">Link</span>
-              </span>
-              <span className="text-[9px] font-bold tracking-widest text-slate-400 uppercase mt-0.5">
-                MARCHAND
-              </span>
-            </div>
-          </button>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <BackButton />
+            <button
+              type="button"
+              onClick={() => setCurrentView('landing')}
+              className="flex items-center group min-h-[44px] transition-transform active:scale-95"
+              title="Retour à l'accueil LivraLink"
+            >
+              <LivraLinkLogo size="md" subtitle="ESPACE VENDEUR" />
+            </button>
+          </div>
 
           <div className="flex items-center gap-2 text-xs">
             <span className="text-slate-500 hidden md:inline">Pas encore inscrit ?</span>
@@ -126,12 +126,19 @@ export const LoginVendeurPage: React.FC = () => {
 
       {/* Main Container */}
       <main className="flex-1 max-w-5xl mx-auto w-full px-3.5 sm:px-6 py-4 sm:py-10 flex items-center justify-center">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start w-full">
-          
-          {/* Form Card (Order 1 on mobile: User sees login first) */}
-          <div className="lg:col-span-6 xl:col-span-5 order-1 lg:order-2 w-full">
+        <div className="max-w-md w-full mx-auto">
+          {/* Form Card */}
+          <div className="w-full">
             <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-7 border border-slate-200/90 shadow-sm space-y-4 sm:space-y-5">
               
+              {/* Back Shortcut & Card Category */}
+              <div className="flex items-center justify-between pb-1">
+                <BackButton variant="subtle" />
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  Espace Vendeur
+                </span>
+              </div>
+
               {/* Role Toggle Selector */}
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
@@ -215,48 +222,6 @@ export const LoginVendeurPage: React.FC = () => {
                 </span>
               </div>
 
-              {/* Test Accounts Quick Bar - Balanced 3-column grid on mobile */}
-              <div className="p-3 bg-amber-50/80 border border-amber-200/80 rounded-xl space-y-2">
-                <div className="flex items-center justify-between text-[11px] font-bold text-amber-900">
-                  <span className="flex items-center gap-1">
-                    <span className="material-symbols-outlined text-sm text-amber-600">science</span>
-                    <span>Comptes Vendeurs de test :</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={openTestModal}
-                    className="text-[10px] text-amber-700 underline hover:text-amber-900 font-extrabold"
-                  >
-                    Voir tous
-                  </button>
-                </div>
-                <div className="grid grid-cols-3 gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => fillTestAccount('sarah.boutique@gmail.com', 'SarahPassword2025!')}
-                    className="min-h-[36px] px-1.5 py-1 rounded-lg bg-white hover:bg-amber-100 text-amber-900 border border-amber-200 text-[10px] font-bold shadow-2xs transition-colors truncate text-center"
-                    title="Sarah Chic Boutique"
-                  >
-                    1. Sarah
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => fillTestAccount('karim.tech@gmail.com', 'KarimPassword2025#')}
-                    className="min-h-[36px] px-1.5 py-1 rounded-lg bg-white hover:bg-amber-100 text-amber-900 border border-amber-200 text-[10px] font-bold shadow-2xs transition-colors truncate text-center"
-                    title="Karim Tech Store"
-                  >
-                    2. Karim
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => fillTestAccount('amadou.bio@gmail.com', 'AmadouBio2025!')}
-                    className="min-h-[36px] px-1.5 py-1 rounded-lg bg-white hover:bg-amber-100 text-amber-900 border border-amber-200 text-[10px] font-bold shadow-2xs transition-colors truncate text-center"
-                    title="Amadou Bio Marché"
-                  >
-                    3. Amadou
-                  </button>
-                </div>
-              </div>
 
               {/* Form */}
               <form onSubmit={handleLogin} className="space-y-3.5">
@@ -370,75 +335,6 @@ export const LoginVendeurPage: React.FC = () => {
                     Créer mon compte
                   </button>
                 </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Left Column: Reassurance, Features & Live Demo (Order 2 on mobile) */}
-          <div className="lg:col-span-6 xl:col-span-7 order-2 lg:order-1 space-y-4 sm:space-y-6 w-full">
-            <div className="space-y-2">
-              <div className="text-xs font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-sm">verified_user</span>
-                <span>Espace Marchand Certifié</span>
-              </div>
-              <h2 className="text-xl sm:text-3xl font-extrabold text-slate-900 tracking-tight leading-snug">
-                Expédiez en toute confiance, suivez vos colis en direct.
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                Connectez vos ventes WhatsApp, Instagram, TikTok et boutiques physiques directement aux coursiers urbains qualifiés.
-              </p>
-            </div>
-
-            {/* 3 Value Props */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              <div className="bg-white p-3 rounded-xl border border-slate-200/80 shadow-2xs space-y-1">
-                <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-base">bolt</span>
-                </div>
-                <h3 className="font-bold text-xs text-slate-900">En 30 secondes</h3>
-                <p className="text-[11px] text-slate-500 leading-tight">Créez une course et trouvez un coursier à proximité.</p>
-              </div>
-
-              <div className="bg-white p-3 rounded-xl border border-slate-200/80 shadow-2xs space-y-1">
-                <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-base">timeline</span>
-                </div>
-                <h3 className="font-bold text-xs text-slate-900">7 statuts certifiés</h3>
-                <p className="text-[11px] text-slate-500 leading-tight">Suivi transparent du ramassage à la remise en main propre.</p>
-              </div>
-
-              <div className="bg-white p-3 rounded-xl border border-slate-200/80 shadow-2xs space-y-1">
-                <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-base">verified</span>
-                </div>
-                <h3 className="font-bold text-xs text-slate-900">Preuve POD 0 litige</h3>
-                <p className="text-[11px] text-slate-500 leading-tight">Signature électronique, photo et code OTP sécurisé.</p>
-              </div>
-            </div>
-
-            {/* Live Shipment Demo Widget */}
-            <div className="bg-white rounded-2xl p-3.5 sm:p-4 border border-slate-200/80 shadow-2xs space-y-2.5">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100 text-xs">
-                <div className="flex items-center gap-2 truncate">
-                  <span className="p-1 rounded bg-blue-50 text-blue-700 shrink-0">
-                    <span className="material-symbols-outlined text-sm">local_shipping</span>
-                  </span>
-                  <span className="font-bold text-slate-900 truncate">Course #LL-4190</span>
-                  <span className="text-slate-400 hidden sm:inline">• Glam Chic</span>
-                </div>
-                <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full shrink-0">
-                  En route
-                </span>
-              </div>
-              <div className="space-y-1.5 text-xs">
-                <div className="flex justify-between text-slate-600">
-                  <span className="truncate">Destination : Cotonou Fidjrossè</span>
-                  <span className="font-bold text-blue-700 shrink-0 ml-2">ETA 18 min</span>
-                </div>
-                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden flex">
-                  <div className="bg-emerald-500 h-full w-2/3"></div>
-                  <div className="bg-blue-600 h-full w-1/6"></div>
-                </div>
               </div>
             </div>
           </div>
