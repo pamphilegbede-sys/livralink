@@ -586,12 +586,22 @@ export const loginWithEmailPassword = async (
   return { user: authUser, profile };
 };
 
+let isGoogleAuthInProgress = false;
+
 /**
  * Real Firebase Google Sign-In (Popup Flow)
  */
 export const loginWithGoogle = async (
   desiredRole: UserRole = 'vendeur'
 ): Promise<{ user: FirebaseUser; profile: UserProfile }> => {
+  if (isGoogleAuthInProgress) {
+    console.warn('Google Sign-In already in progress, ignoring duplicate call');
+    const cancelErr: any = new Error('Une authentification Google est déjà en cours.');
+    cancelErr.code = 'auth/popup-closed-by-user';
+    throw cancelErr;
+  }
+
+  isGoogleAuthInProgress = true;
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
 
@@ -601,14 +611,25 @@ export const loginWithGoogle = async (
     user = result.user;
   } catch (popupErr: any) {
     console.warn('Firebase signInWithPopup notice:', popupErr);
-    if (popupErr?.code === 'auth/popup-closed-by-user') {
-      throw popupErr;
+    const msg = popupErr?.message || '';
+    if (
+      popupErr?.code === 'auth/popup-closed-by-user' ||
+      popupErr?.code === 'auth/cancelled-popup-request' ||
+      msg.includes('Pending promise was never set') ||
+      msg.includes('popup-closed-by-user')
+    ) {
+      const cancelErr: any = new Error('Connexion Google annulée.');
+      cancelErr.code = 'auth/popup-closed-by-user';
+      throw cancelErr;
     }
     const err: any = new Error(getFirebaseAuthErrorMessage(popupErr));
     err.code = popupErr?.code || 'auth/unauthorized-domain';
     err.originalError = popupErr;
-    err.shouldOpenFallbackModal = true;
     throw err;
+  } finally {
+    setTimeout(() => {
+      isGoogleAuthInProgress = false;
+    }, 1200);
   }
 
   // Retrieve or create profile

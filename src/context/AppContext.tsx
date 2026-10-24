@@ -176,6 +176,10 @@ interface AppContextType {
   adminLogout: () => void;
   verifyAdminPassword: (password: string) => boolean;
   changeAdminPassword: (oldPassword: string, newPassword: string) => { success: boolean; message: string };
+  // Dark Mode
+  isDarkMode: boolean;
+  toggleDarkMode: () => void;
+  setIsDarkMode: (dark: boolean) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -279,6 +283,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [isGoogleModalOpen, setIsGoogleModalOpen] = useState(false);
   const [googleModalRole, setGoogleModalRole] = useState<'vendeur' | 'livreur' | 'admin'>('vendeur');
+
+  // Dark Mode State
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('livralink_dark_mode');
+      if (saved !== null) {
+        return saved === 'true';
+      }
+      return typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      if (isDarkMode) {
+        document.documentElement.classList.add('dark');
+        document.body.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+        document.body.classList.remove('dark');
+      }
+      localStorage.setItem('livralink_dark_mode', String(isDarkMode));
+    } catch (e) {
+      console.warn('Erreur mise à jour mode sombre:', e);
+    }
+  }, [isDarkMode]);
+
+  const toggleDarkMode = () => {
+    setIsDarkMode((prev) => {
+      const next = !prev;
+      showToast(next ? '🌙 Mode sombre activé' : '☀️ Mode clair activé', 'info');
+      return next;
+    });
+  };
 
   // Admin Active Tab state
   const [adminActiveTab, setAdminActiveTab] = useState<AdminTab>('overview');
@@ -419,9 +459,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true, message: 'Mot de passe mis à jour avec succès.' };
   };
 
-  const openGoogleModal = (role: 'vendeur' | 'livreur' | 'admin') => {
-    setGoogleModalRole(role);
-    setIsGoogleModalOpen(true);
+  const openGoogleModal = (_role?: 'vendeur' | 'livreur' | 'admin') => {
+    // In-app Google Modal permanently deactivated in favor of direct authentic Google Auth
+    setIsGoogleModalOpen(false);
   };
 
   const closeGoogleModal = () => {
@@ -1514,7 +1554,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         adminLoginWithGoogle,
         adminLogout,
         verifyAdminPassword,
-        changeAdminPassword
+        changeAdminPassword,
+        isDarkMode,
+        toggleDarkMode,
+        setIsDarkMode
       }}
     >
       {children}

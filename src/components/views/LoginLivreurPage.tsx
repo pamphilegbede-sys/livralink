@@ -6,7 +6,7 @@ import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
 
 export const LoginLivreurPage: React.FC = () => {
-  const { setCurrentView, setCurrentRole, setCourierSettings, setUserProfile, setSelectedCourier, couriers, showToast, openGoogleModal, openTestModal } = useApp();
+  const { setCurrentView, setCurrentRole, setCourierSettings, setUserProfile, setSelectedCourier, couriers, showToast, openTestModal } = useApp();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -118,12 +118,9 @@ export const LoginLivreurPage: React.FC = () => {
       if (err?.code === 'auth/popup-closed-by-user') {
         showToast('Connexion Google annulée.', 'info');
       } else {
-        openGoogleModal('livreur');
-        if (err?.code === 'auth/unauthorized-domain') {
-          showToast('Déploiement Render détecté : ouverture du sélecteur Google certifié Livreur.', 'info');
-        } else {
-          showToast('Ouverture du sélecteur de compte Google Livreur...', 'info');
-        }
+        const errorMsg = getFirebaseAuthErrorMessage(err);
+        setErrorMessage(errorMsg);
+        showToast(errorMsg, 'error');
       }
     } finally {
       setIsLoading(false);
@@ -219,6 +216,7 @@ export const LoginLivreurPage: React.FC = () => {
               <div className="space-y-2">
                 <button
                   type="button"
+                  disabled={isLoading}
                   onClick={handleGoogleLogin}
                   className="w-full min-h-[44px] py-2.5 px-3 bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 rounded-xl text-xs font-bold text-slate-800 shadow-2xs transition-all active:scale-[0.99] flex items-center justify-center gap-2"
                 >
@@ -241,15 +239,6 @@ export const LoginLivreurPage: React.FC = () => {
                     />
                   </svg>
                   <span className="truncate">Continuer avec Google</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => openGoogleModal('livreur')}
-                  className="w-full min-h-[40px] py-2 px-3 bg-emerald-50/70 hover:bg-emerald-100/70 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors active:scale-[0.99]"
-                >
-                  <span className="material-symbols-outlined text-sm">two_wheeler</span>
-                  <span className="truncate">Sélectionner un compte Google Livreur</span>
                 </button>
               </div>
 

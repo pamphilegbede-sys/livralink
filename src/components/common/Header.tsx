@@ -9,12 +9,12 @@ export const Header: React.FC<{
   breadcrumbs?: { label: string; view?: any }[];
   onReturn?: () => void;
 }> = ({ title, subtitle, breadcrumbs }) => {
-  const { currentRole, setCurrentRole, currentView, setCurrentView, merchantSettings, courierSettings, toggleCourierAvailability, showToast, logout } = useApp();
+  const { currentRole, setCurrentRole, currentView, setCurrentView, merchantSettings, courierSettings, toggleCourierAvailability, showToast, logout, isDarkMode, toggleDarkMode } = useApp();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   return (
     <>
-      <header className="h-16 md:h-[72px] bg-white border-b border-slate-200/80 px-3 md:px-8 flex justify-between items-center shrink-0 z-20 shadow-xs">
+      <header className="h-16 md:h-[72px] bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-3 md:px-8 flex justify-between items-center shrink-0 z-20 shadow-xs transition-colors">
         {/* Left Cluster: Mobile Drawer Trigger + Breadcrumbs / Title */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 md:gap-3 min-w-0">
 
@@ -52,10 +52,10 @@ export const Header: React.FC<{
 
           {title && !breadcrumbs && (
             <div className="truncate">
-              <h1 className="text-sm sm:text-base md:text-lg font-bold text-slate-900 tracking-tight leading-tight truncate">
+              <h1 className="text-sm sm:text-base md:text-lg font-bold text-slate-900 dark:text-white tracking-tight leading-tight truncate">
                 {title}
               </h1>
-              {subtitle && <p className="text-[11px] sm:text-xs text-slate-500 truncate hidden xs:block">{subtitle}</p>}
+              {subtitle && <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate hidden xs:block">{subtitle}</p>}
             </div>
           )}
         </div>
@@ -109,10 +109,22 @@ export const Header: React.FC<{
           )}
 
           {/* Action icons */}
-          <div className="flex items-center">
+          <div className="flex items-center gap-0.5">
+            {/* Quick Dark Mode Toggle */}
+            <button
+              type="button"
+              onClick={toggleDarkMode}
+              className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              title={isDarkMode ? 'Basculer en mode clair' : 'Basculer en mode sombre'}
+              aria-label="Basculer le thème visuel"
+            >
+              <span className="material-symbols-outlined text-lg sm:text-xl">
+                {isDarkMode ? 'light_mode' : 'dark_mode'}
+              </span>
+            </button>
             <button
               onClick={() => showToast('Aucune nouvelle alerte non lue.', 'info')}
-              className="p-1.5 sm:p-2 rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors relative"
+              className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-200 transition-colors relative"
               title="Notifications"
             >
               <span className="material-symbols-outlined text-lg sm:text-xl">notifications</span>
@@ -120,7 +132,7 @@ export const Header: React.FC<{
             </button>
             <button
               onClick={() => setCurrentView(currentRole === 'vendeur' ? 'vendeur_settings' : 'livreur_settings')}
-              className="p-1.5 sm:p-2 rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+              className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
               title="Paramètres"
             >
               <span className="material-symbols-outlined text-lg sm:text-xl">tune</span>

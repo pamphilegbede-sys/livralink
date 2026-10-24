@@ -1,11 +1,9 @@
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Toast } from './components/common/Toast';
-import { RoleSwitcherBar } from './components/common/RoleSwitcherBar';
 import { PODValidationModal } from './components/modals/PODValidationModal';
 import { WhatsAppPreviewModal } from './components/modals/WhatsAppPreviewModal';
 import { UrgentMissionModal } from './components/modals/UrgentMissionModal';
-import { GoogleSignInModal } from './components/modals/GoogleSignInModal';
 import { FirebaseTestModal } from './components/modals/FirebaseTestModal';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { FullViewSkeleton } from './components/common/LoadingSkeleton';
@@ -27,7 +25,7 @@ import { LivreurSettings } from './components/views/LivreurSettings';
 import { AdminConsole } from './components/views/AdminConsole';
 
 const MainAppRouter: React.FC = () => {
-  const { currentView, isGoogleModalOpen, closeGoogleModal, googleModalRole, isAuthLoading, isTestModalOpen, closeTestModal } = useApp();
+  const { currentView, isAuthLoading, isTestModalOpen, closeTestModal, isDarkMode } = useApp();
   const [deviceMode, setDeviceMode] = useState<'responsive' | 'mobile-mock'>('responsive');
 
   const renderActiveView = () => {
@@ -70,12 +68,9 @@ const MainAppRouter: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col min-h-screen w-full bg-[#f8fafc] text-[#131b2e] antialiased">
+    <div className={`flex flex-col min-h-screen w-full bg-[#f8fafc] dark:bg-slate-950 text-[#131b2e] dark:text-slate-100 antialiased transition-colors duration-200 ${isDarkMode ? 'dark' : ''}`}>
       {/* Global Toast */}
       <Toast />
-
-      {/* Role and Mode Switcher Bar */}
-      <RoleSwitcherBar deviceMode={deviceMode} setDeviceMode={setDeviceMode} />
 
       {/* View router with optional Mobile Simulator Frame */}
       {deviceMode === 'mobile-mock' ? (
@@ -117,7 +112,6 @@ const MainAppRouter: React.FC = () => {
       <PODValidationModal />
       <WhatsAppPreviewModal />
       <UrgentMissionModal />
-      <GoogleSignInModal isOpen={isGoogleModalOpen} onClose={closeGoogleModal} targetRole={googleModalRole} />
       <FirebaseTestModal isOpen={isTestModalOpen} onClose={closeTestModal} />
     </div>
   );

@@ -6,7 +6,7 @@ import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
 
 export const RegisterPage: React.FC = () => {
-  const { setCurrentView, currentRole, setCurrentRole, setUserProfile, setMerchantSettings, setCourierSettings, showToast, openGoogleModal, openTestModal } = useApp();
+  const { setCurrentView, currentRole, setCurrentRole, setUserProfile, setMerchantSettings, setCourierSettings, showToast, openTestModal } = useApp();
   const [selectedRole, setSelectedRole] = useState<'vendeur' | 'livreur'>(currentRole === 'livreur' ? 'livreur' : 'vendeur');
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
@@ -152,12 +152,9 @@ export const RegisterPage: React.FC = () => {
       if (err?.code === 'auth/popup-closed-by-user') {
         showToast('Inscription Google annulée.', 'info');
       } else {
-        openGoogleModal(selectedRole);
-        if (err?.code === 'auth/unauthorized-domain') {
-          showToast('Déploiement Render détecté : ouverture du sélecteur Google certifié.', 'info');
-        } else {
-          showToast('Ouverture du sélecteur de compte Google...', 'info');
-        }
+        const errorMsg = getFirebaseAuthErrorMessage(err);
+        setErrorMessage(errorMsg);
+        showToast(errorMsg, 'error');
       }
     } finally {
       setIsLoading(false);
@@ -298,6 +295,7 @@ export const RegisterPage: React.FC = () => {
               {/* Google SSO Button */}
               <button
                 type="button"
+                disabled={isLoading}
                 onClick={handleGoogleRegister}
                 className="w-full min-h-[44px] py-2.5 px-3 bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 rounded-xl text-xs font-bold text-slate-800 shadow-2xs transition-all active:scale-[0.99] flex items-center justify-center gap-2"
               >

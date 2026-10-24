@@ -26,7 +26,7 @@ export const Sidebar: React.FC = () => {
   };
 
   return (
-    <aside className="hidden md:flex flex-col justify-between h-screen w-64 bg-white border-r border-slate-200 shadow-sm z-30 shrink-0 select-none sticky top-0">
+    <aside className="hidden md:flex flex-col justify-between h-screen w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm z-30 shrink-0 select-none sticky top-0 transition-colors">
       {/* Top Part: Logo, CTA, Navigation (Scrollable) */}
       <div className="flex-1 flex flex-col p-4 overflow-y-auto custom-scrollbar">
         {/* Brand Logo & Switcher */}
@@ -497,7 +497,7 @@ export const Sidebar: React.FC = () => {
       </div>
 
       {/* Footer Navigation Tabs (Help, Logout, Profile preview) - Always Pinned */}
-      <div className="p-4 border-t border-slate-200 space-y-2 shrink-0 bg-white">
+      <div className="p-4 border-t border-slate-200 dark:border-slate-800 space-y-2 shrink-0 bg-white dark:bg-slate-900 transition-colors">
         <button
           onClick={openTestModal}
           className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold transition-colors border border-amber-200/80 shadow-2xs"
@@ -543,12 +543,12 @@ export const Sidebar: React.FC = () => {
             .slice(0, 2) || 'BT';
 
           return (
-            <div className="mt-2 pt-3 border-t border-slate-200 flex items-center gap-3 px-2">
-              <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs border border-blue-200 shrink-0">
+            <div className="mt-2 pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center gap-3 px-2">
+              <div className="w-9 h-9 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 flex items-center justify-center font-bold text-xs border border-blue-200 dark:border-blue-800 shrink-0">
                 {currentRole === 'vendeur' ? vendorInitials : currentRole === 'livreur' ? courierInitials : 'AD'}
               </div>
               <div className="overflow-hidden min-w-0">
-                <p className="text-xs font-bold text-slate-900 truncate">
+                <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
                   {currentRole === 'vendeur'
                     ? merchantSettings.storeName
                     : currentRole === 'livreur'

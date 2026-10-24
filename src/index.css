@@ -1,8 +1,15 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @layer base {
   :root {
     --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  :root.dark,
+  html.dark {
+    color-scheme: dark;
   }
   
   body {
@@ -10,6 +17,14 @@
     background-color: #faf8ff;
     color: #131b2e;
     -webkit-tap-highlight-color: transparent;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  html.dark body,
+  body.dark,
+  .dark body {
+    background-color: #090d16;
+    color: #f1f5f9;
   }
 
   p, span, h1, h2, h3, h4, h5, h6, td, th {

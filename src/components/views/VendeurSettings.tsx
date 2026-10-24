@@ -6,6 +6,7 @@ import { MobileBottomNav } from '../common/MobileBottomNav';
 import { BackButton } from '../common/BackButton';
 import { BENIN_DEPARTMENTS, getLocationForCommune } from '../../config/maps';
 import { BeninZoneSelector } from '../common/BeninZoneSelector';
+import { DarkModeToggle } from '../common/DarkModeToggle';
 
 export const VendeurSettings: React.FC = () => {
   const { merchantSettings, setMerchantSettings, showToast, setCurrentView, logout } = useApp();
@@ -60,12 +61,12 @@ export const VendeurSettings: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans'] transition-colors duration-200">
       {/* Sidebar Desktop */}
       <Sidebar />
 
       {/* Main Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff]">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff] dark:bg-slate-950 transition-colors duration-200">
         {/* Top Header */}
         <Header
           title="Paramètres du compte Vendeur"
@@ -81,14 +82,14 @@ export const VendeurSettings: React.FC = () => {
               <BackButton />
               <div>
                 <div className="flex items-center gap-2.5 flex-wrap">
-                  <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight">
+                  <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
                     Paramètres Vendeur
                   </h1>
-                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-200 shrink-0">
+                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-xs font-bold border border-emerald-200 dark:border-emerald-800 shrink-0">
                     Compte Vérifié ✓
                   </span>
                 </div>
-                <p className="text-xs text-slate-500 mt-0.5">Configuration des règles et des coordonnées de collecte</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Configuration des règles et des coordonnées de collecte</p>
               </div>
             </div>
 
@@ -96,7 +97,7 @@ export const VendeurSettings: React.FC = () => {
               <button
                 type="button"
                 onClick={() => showToast('Modifications réinitialisées.', 'info')}
-                className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-semibold text-center"
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold text-center transition-colors"
               >
                 Réinitialiser
               </button>
@@ -112,32 +113,41 @@ export const VendeurSettings: React.FC = () => {
           </div>
 
           {/* Quick Anchor Bar */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-1.5 flex items-center gap-1 overflow-x-auto no-scrollbar shadow-xs sticky top-0 z-10 text-xs font-semibold">
-            <a href="#mon-profil" className="px-3.5 py-2 rounded-xl bg-blue-50 text-blue-700 font-bold whitespace-nowrap">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-1.5 flex items-center gap-1 overflow-x-auto no-scrollbar shadow-xs sticky top-0 z-10 text-xs font-semibold transition-colors">
+            <a href="#theme-visuel" className="px-3.5 py-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold whitespace-nowrap flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-sm">palette</span>
+              <span>Mode Sombre</span>
+            </a>
+            <a href="#mon-profil" className="px-3.5 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 whitespace-nowrap">
               Mon Profil
             </a>
-            <a href="#preferences-livraison" className="px-3.5 py-2 rounded-xl text-slate-600 hover:bg-slate-50 whitespace-nowrap">
+            <a href="#preferences-livraison" className="px-3.5 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 whitespace-nowrap">
               Préférences livraison
             </a>
-            <a href="#tarification-commissions" className="px-3.5 py-2 rounded-xl text-slate-600 hover:bg-slate-50 whitespace-nowrap">
+            <a href="#tarification-commissions" className="px-3.5 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 whitespace-nowrap">
               Tarification &amp; Commissions
             </a>
-            <a href="#notifications" className="px-3.5 py-2 rounded-xl text-slate-600 hover:bg-slate-50 whitespace-nowrap">
+            <a href="#notifications" className="px-3.5 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 whitespace-nowrap">
               Notifications
             </a>
-            <a href="#paiements-facturation" className="px-3.5 py-2 rounded-xl text-slate-600 hover:bg-slate-50 whitespace-nowrap">
+            <a href="#paiements-facturation" className="px-3.5 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 whitespace-nowrap">
               Paiements &amp; Facturation
             </a>
-            <a href="#securite" className="px-3.5 py-2 rounded-xl text-slate-600 hover:bg-slate-50 whitespace-nowrap">
+            <a href="#securite" className="px-3.5 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 whitespace-nowrap">
               Sécurité
-            </a>
-            <a href="#aide-support" className="px-3.5 py-2 rounded-xl text-slate-600 hover:bg-slate-50 whitespace-nowrap">
-              Aide &amp; Support
             </a>
           </div>
 
+          {/* ================= 0. THÈME VISUEL & MODE SOMBRE ================= */}
+          <div id="theme-visuel">
+            <DarkModeToggle
+              title="Thème Visuel & Mode Sombre Vendeur"
+              subtitle="Basculez entre le mode clair et le mode sombre pour une gestion agréable de votre catalogue et de vos expéditions."
+            />
+          </div>
+
           {/* ================= 1. MON PROFIL ================= */}
-          <section id="mon-profil" className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-6">
+          <section id="mon-profil" className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-xs space-y-6 transition-colors">
             <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">

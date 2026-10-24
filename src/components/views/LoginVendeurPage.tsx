@@ -6,7 +6,7 @@ import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
 
 export const LoginVendeurPage: React.FC = () => {
-  const { setCurrentView, setCurrentRole, setMerchantSettings, setUserProfile, showToast, openGoogleModal, openTestModal } = useApp();
+  const { setCurrentView, setCurrentRole, setMerchantSettings, setUserProfile, showToast, openTestModal } = useApp();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -79,12 +79,9 @@ export const LoginVendeurPage: React.FC = () => {
       if (err?.code === 'auth/popup-closed-by-user') {
         showToast('Connexion Google annulée.', 'info');
       } else {
-        openGoogleModal('vendeur');
-        if (err?.code === 'auth/unauthorized-domain') {
-          showToast('Déploiement Render détecté : ouverture du sélecteur Google certifié Vendeur.', 'info');
-        } else {
-          showToast('Ouverture du sélecteur de compte Google Vendeur...', 'info');
-        }
+        const errorMsg = getFirebaseAuthErrorMessage(err);
+        setErrorMessage(errorMsg);
+        showToast(errorMsg, 'error');
       }
     } finally {
       setIsLoading(false);
@@ -180,6 +177,7 @@ export const LoginVendeurPage: React.FC = () => {
               <div className="space-y-2">
                 <button
                   type="button"
+                  disabled={isLoading}
                   onClick={handleGoogleLogin}
                   className="w-full min-h-[44px] py-2.5 px-3 bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 rounded-xl text-xs font-bold text-slate-800 shadow-2xs transition-all active:scale-[0.99] flex items-center justify-center gap-2"
                 >
@@ -202,15 +200,6 @@ export const LoginVendeurPage: React.FC = () => {
                     />
                   </svg>
                   <span className="truncate">Continuer avec Google</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => openGoogleModal('vendeur')}
-                  className="w-full min-h-[40px] py-2 px-3 bg-blue-50/70 hover:bg-blue-100/70 border border-blue-200 text-blue-700 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors active:scale-[0.99]"
-                >
-                  <span className="material-symbols-outlined text-sm">manage_accounts</span>
-                  <span className="truncate">Sélectionner un compte Google vérifié</span>
                 </button>
               </div>
 

@@ -1,7 +1,12 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
-import { initializeFirestore, Firestore } from 'firebase/firestore';
+import { getFirestore, Firestore, setLogLevel } from 'firebase/firestore';
 import appletConfig from '../../firebase-applet-config.json';
+
+// Silence non-critical offline timeout warnings
+try {
+  setLogLevel('error');
+} catch {}
 
 // Firebase configuration from provisioned project or environment variables
 export const firebaseConfig = {
@@ -30,13 +35,10 @@ if (!getApps().length) {
 export const app = firebaseApp;
 export const auth: Auth = getAuth(app);
 
-// Initialize Firestore with forced long polling to immediately connect in iframe/preview environments without 10s timeout
+// Initialize Firestore according to standard Firebase specification
 const firestoreDbId = (appletConfig as any)?.firestoreDatabaseId;
-export const db: Firestore = initializeFirestore(
+export const db: Firestore = getFirestore(
   app,
-  {
-    experimentalForceLongPolling: true,
-  },
   firestoreDbId && firestoreDbId !== '(default)' ? firestoreDbId : undefined
 );
 

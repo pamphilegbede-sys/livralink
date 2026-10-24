@@ -5,7 +5,7 @@ import { MobileBottomNav } from '../common/MobileBottomNav';
 import { BackButton } from '../common/BackButton';
 import { DisputeResolutionModal } from '../modals/DisputeResolutionModal';
 import { Courier, Merchant, DeliveryOrder, DeliveryStatus } from '../../types';
-import { loginWithGoogle } from '../../firebase/authService';
+import { loginWithGoogle, getFirebaseAuthErrorMessage } from '../../firebase/authService';
 
 export const AdminConsole: React.FC = () => {
   const {
@@ -48,7 +48,6 @@ export const AdminConsole: React.FC = () => {
     adminLoginWithGoogle,
     adminLogout,
     userProfile,
-    openGoogleModal,
     openWhatsAppModal,
     setCurrentView,
     setCurrentRole,
@@ -574,12 +573,9 @@ export const AdminConsole: React.FC = () => {
         if (err?.code === 'auth/popup-closed-by-user') {
           showToast('Connexion Google annulée.', 'info');
         } else {
-          openGoogleModal('admin');
-          if (err?.code === 'auth/unauthorized-domain') {
-            showToast('Déploiement Render détecté : ouverture du sélecteur Google certifié Admin.', 'info');
-          } else {
-            showToast('Ouverture du sélecteur de compte Google Administrateur...', 'info');
-          }
+          const errorMsg = getFirebaseAuthErrorMessage(err);
+          setAdminLoginError(errorMsg);
+          showToast(errorMsg, 'error');
         }
       } finally {
         setIsLoggingInWithGoogle(false);
