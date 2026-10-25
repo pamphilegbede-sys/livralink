@@ -446,6 +446,28 @@ export const Sidebar: React.FC = () => {
                 onClick={() => {
                   setCurrentRole('admin');
                   setCurrentView('admin_console');
+                  setAdminActiveTab('features');
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs transition-all ${
+                  currentView === 'admin_console' && adminActiveTab === 'features'
+                    ? 'bg-purple-600 text-white font-bold shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="material-symbols-outlined text-xl text-purple-600">toggle_on</span>
+                  <span>Directeur Fonctionnalités</span>
+                </div>
+                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-purple-100 text-purple-800">
+                  Directeur
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentRole('admin');
+                  setCurrentView('admin_console');
                   setAdminActiveTab('tests');
                 }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs transition-all ${

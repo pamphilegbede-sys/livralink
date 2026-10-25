@@ -2,7 +2,11 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 
 export const PODValidationModal: React.FC = () => {
-  const { isPODModalOpen, setIsPODModalOpen, selectedDelivery, validatePOD, showToast } = useApp();
+  const { isPODModalOpen, setIsPODModalOpen, selectedDelivery, validatePOD, showToast, featureFlags } = useApp();
+
+  const requireOtp = featureFlags?.requireOtpPOD ?? true;
+  const requirePhoto = featureFlags?.requireLivePhotoPOD ?? true;
+  const requireSignature = featureFlags?.requireTactileSignaturePOD ?? true;
 
   // Wizard state: 1 = OTP, 2 = Photo Directe, 3 = Signature Client & Nom
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
@@ -299,30 +303,30 @@ export const PODValidationModal: React.FC = () => {
     setSignatureDataUrl(null);
   };
 
-  // Final tri-factor validation submission
+  // Final validation submission (respecting master feature flags)
   const handleFinalCertification = () => {
     if (isSubmitting || !selectedDelivery) return;
 
-    if (!isOtpVerified) {
+    if (requireOtp && !isOtpVerified) {
       showToast('Le code OTP doit être vérifié avant validation.', 'error');
       setCurrentStep(1);
       return;
     }
 
-    if (!photoDataUrl) {
+    if (requirePhoto && !photoDataUrl) {
       showToast('La photo du colis prise en direct est obligatoire.', 'error');
       setCurrentStep(2);
       return;
     }
 
     const trimmedSigner = signerName.trim();
-    if (!trimmedSigner) {
+    if (requireSignature && !trimmedSigner) {
       showToast('Veuillez renseigner le nom et prénom du signataire.', 'error');
       setCurrentStep(3);
       return;
     }
 
-    if (!hasSignaturePoints || !signatureDataUrl) {
+    if (requireSignature && (!hasSignaturePoints || !signatureDataUrl)) {
       showToast('La signature tactile du destinataire est obligatoire.', 'error');
       setCurrentStep(3);
       return;
@@ -331,12 +335,12 @@ export const PODValidationModal: React.FC = () => {
     setIsSubmitting(true);
     stopCameraStream();
 
-    const fullCode = otpDigits.join('');
+    const fullCode = otpDigits.join('') || selectedDelivery.otpCode || '0000';
     validatePOD(selectedDelivery.id, {
       otpCode: fullCode,
-      photoUrl: photoDataUrl,
-      signatureDataUrl: signatureDataUrl,
-      signedByName: trimmedSigner,
+      photoUrl: photoDataUrl || 'https://images.unsplash.com/photo-1549465220-1a8b9238cd48?w=500&auto=format&fit=crop&q=60',
+      signatureDataUrl: signatureDataUrl || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80"><text x="10" y="40" font-family="sans-serif" font-size="20" fill="navy">Validé par Admin</text></svg>',
+      signedByName: trimmedSigner || selectedDelivery.clientName || 'Destinataire Validé',
     });
 
     setTimeout(() => {
@@ -346,7 +350,10 @@ export const PODValidationModal: React.FC = () => {
 
   if (!isPODModalOpen || !selectedDelivery) return null;
 
-  const isAllComplete = isOtpVerified && Boolean(photoDataUrl) && hasSignaturePoints && Boolean(signerName.trim());
+  const isAllComplete =
+    (!requireOtp || isOtpVerified) &&
+    (!requirePhoto || Boolean(photoDataUrl)) &&
+    (!requireSignature || (hasSignaturePoints && Boolean(signerName.trim())));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-md animate-fade-in overflow-y-auto">

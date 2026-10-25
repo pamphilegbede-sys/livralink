@@ -6,6 +6,8 @@ import { BackButton } from '../common/BackButton';
 import { DisputeResolutionModal } from '../modals/DisputeResolutionModal';
 import { Courier, Merchant, DeliveryOrder, DeliveryStatus } from '../../types';
 import { loginWithGoogle, getFirebaseAuthErrorMessage } from '../../firebase/authService';
+import { AdminOverviewDashboard } from './AdminOverviewDashboard';
+import { ResetUserAccessModal, TargetResetUser } from '../modals/ResetUserAccessModal';
 
 export const AdminConsole: React.FC = () => {
   const {
@@ -53,7 +55,15 @@ export const AdminConsole: React.FC = () => {
     setCurrentRole,
     navigateBack,
     adminActiveTab: activeViewTab,
-    setAdminActiveTab: setActiveViewTab
+    setAdminActiveTab: setActiveViewTab,
+    featureFlags,
+    setFeatureFlags,
+    updateFeatureFlag,
+    resetFeatureFlagsToDefault,
+    impersonateMerchant,
+    impersonateCourier,
+    isDirectorModeActive,
+    directorTargetName,
   } = useApp();
 
   // Whitelist management state
@@ -110,6 +120,7 @@ export const AdminConsole: React.FC = () => {
     isVerified?: boolean;
   } | null>(null);
   const [deletingUser, setDeletingUser] = useState<{ id: string; name: string; role: 'livreur' | 'vendeur' } | null>(null);
+  const [resetAccessUser, setResetAccessUser] = useState<TargetResetUser | null>(null);
 
   // Form states for new Delivery Order
   const [newOrderClientName, setNewOrderClientName] = useState('');
@@ -885,6 +896,7 @@ export const AdminConsole: React.FC = () => {
             { id: 'merchants', label: 'Boutiques', icon: 'storefront' },
             { id: 'disputes', label: 'Litiges', icon: 'warning', badge: disputeCount > 0 ? `${disputeCount}` : undefined },
             { id: 'pricing', label: 'Tarifs', icon: 'tune' },
+            { id: 'features', label: 'Directeur Features', icon: 'toggle_on' },
             { id: 'tests', label: 'Tests (8)', icon: 'science' },
             { id: 'audit', label: 'Audit', icon: 'history' },
             { id: 'security', label: 'Sécurité', icon: 'shield_person' },
@@ -936,6 +948,7 @@ export const AdminConsole: React.FC = () => {
                   {activeViewTab === 'merchants' && 'Boutiques Vendeurs'}
                   {activeViewTab === 'disputes' && 'Litiges & Support'}
                   {activeViewTab === 'pricing' && 'Tarifs & Commissions'}
+                  {activeViewTab === 'features' && 'Directeur Général des Fonctionnalités'}
                   {activeViewTab === 'tests' && 'Tests & Validations'}
                   {activeViewTab === 'audit' && 'Journal d\'Audit'}
                   {activeViewTab === 'security' && 'Whitelist & Sécurité'}
@@ -946,6 +959,7 @@ export const AdminConsole: React.FC = () => {
                   activeViewTab === 'deliveries' ? 'bg-blue-600 shadow-sm' :
                   activeViewTab === 'disputes' ? 'bg-red-600' :
                   activeViewTab === 'kyc' ? 'bg-amber-600' :
+                  activeViewTab === 'features' ? 'bg-purple-600 shadow-sm' :
                   activeViewTab === 'tests' ? 'bg-indigo-600' : 'bg-slate-900'
                 }`}>
                   {activeViewTab === 'deliveries' && 'local_shipping'}
@@ -956,6 +970,7 @@ export const AdminConsole: React.FC = () => {
                   {activeViewTab === 'merchants' && 'storefront'}
                   {activeViewTab === 'disputes' && 'warning'}
                   {activeViewTab === 'pricing' && 'tune'}
+                  {activeViewTab === 'features' && 'toggle_on'}
                   {activeViewTab === 'tests' && 'science'}
                   {activeViewTab === 'audit' && 'history'}
                   {activeViewTab === 'security' && 'shield_person'}
@@ -969,6 +984,7 @@ export const AdminConsole: React.FC = () => {
                   {activeViewTab === 'merchants' && 'Gestion des Boutiques Vendeurs'}
                   {activeViewTab === 'disputes' && 'Centre de Résolution des Litiges'}
                   {activeViewTab === 'pricing' && 'Configuration Tarifs & Commissions'}
+                  {activeViewTab === 'features' && 'Directeur des Fonctionnalités (Pages Vendeurs & Livreurs)'}
                   {activeViewTab === 'tests' && 'Suite de Tests & Validations'}
                   {activeViewTab === 'audit' && 'Journal d\'Audit Système'}
                   {activeViewTab === 'security' && 'Sécurité & Whitelist Super-Admin'}
@@ -979,222 +995,10 @@ export const AdminConsole: React.FC = () => {
         </div>
 
           {/* =========================================================================
-              TAB 1: VUE D'ENSEMBLE (KPIs + Synthèse Globale)
+              TAB 1: VUE D'ENSEMBLE (Indicateurs clés + Suivi centralisé de toutes les activités)
              ========================================================================= */}
           {activeViewTab === 'overview' && (
-            <div className="space-y-6 animate-in fade-in duration-200">
-              {/* 5 KPIs Row */}
-              <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
-                <div
-                  onClick={() => setActiveViewTab('deliveries')}
-                  className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1 hover:border-blue-400 hover:shadow-sm cursor-pointer transition-all active:scale-[0.99]"
-                >
-                  <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center justify-between">
-                    <span>Total Livraisons</span>
-                    <span className="material-symbols-outlined text-xs text-blue-500">arrow_forward</span>
-                  </span>
-                  <div className="text-2xl font-black text-slate-900">{deliveries.length}</div>
-                  <div className="text-[10px] text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5 pt-1">
-                    <span className="text-blue-600 font-bold">{activeDeliveriesCount} actives</span>
-                    <span className="text-emerald-600 font-bold">{deliveredCount} OK</span>
-                    <span className="text-red-500 font-bold">{disputeCount} litiges</span>
-                  </div>
-                </div>
-
-                <div
-                  onClick={() => setActiveViewTab('pricing')}
-                  className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1 hover:border-blue-400 hover:shadow-sm cursor-pointer transition-all active:scale-[0.99]"
-                >
-                  <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center justify-between">
-                    <span>Volume COD Traité</span>
-                    <span className="material-symbols-outlined text-xs text-blue-500">tune</span>
-                  </span>
-                  <div className="text-xl sm:text-2xl font-black text-slate-900 truncate">
-                    {totalVolumeGMV.toLocaleString('fr-FR')} <span className="text-xs font-normal">FCFA</span>
-                  </div>
-                  <div className="text-[11px] text-slate-500 truncate">
-                    Frais : <strong>{totalDeliveryFees.toLocaleString('fr-FR')} F</strong>
-                  </div>
-                </div>
-
-                <div
-                  onClick={() => setActiveViewTab('merchants')}
-                  className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1 hover:border-emerald-400 hover:shadow-sm cursor-pointer transition-all active:scale-[0.99]"
-                >
-                  <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center justify-between">
-                    <span>Marchands Actifs</span>
-                    <span className="material-symbols-outlined text-xs text-emerald-500">arrow_forward</span>
-                  </span>
-                  <div className="text-2xl font-black text-emerald-700">
-                    {merchants.filter(m => m.status === 'actif').length} <span className="text-xs text-slate-400">/ {merchants.length}</span>
-                  </div>
-                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
-                    100% connectés WhatsApp
-                  </span>
-                </div>
-
-                <div
-                  onClick={() => setActiveViewTab('couriers')}
-                  className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1 hover:border-blue-400 hover:shadow-sm cursor-pointer transition-all active:scale-[0.99]"
-                >
-                  <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center justify-between">
-                    <span>Flotte Coursiers</span>
-                    <span className="material-symbols-outlined text-xs text-blue-500">arrow_forward</span>
-                  </span>
-                  <div className="text-2xl font-black text-slate-900">
-                    {activeCouriersCount} <span className="text-xs text-slate-400">/ {couriers.length}</span>
-                  </div>
-                  <span className="text-[11px] text-emerald-600 font-bold">
-                    {Math.round((activeCouriersCount / Math.max(1, couriers.length)) * 100)}% disponibles
-                  </span>
-                </div>
-
-                <div
-                  onClick={() => setActiveViewTab(disputeCount > 0 ? 'disputes' : 'deliveries')}
-                  className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1 hover:border-blue-400 hover:shadow-sm cursor-pointer transition-all active:scale-[0.99]"
-                >
-                  <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center justify-between">
-                    <span>Taux de Succès POD</span>
-                    <span className="material-symbols-outlined text-xs text-blue-500">verified</span>
-                  </span>
-                  <div className="text-2xl font-black text-blue-700">
-                    {deliveries.length > 0 ? Math.round((deliveredCount / deliveries.length) * 100) : 100}%
-                  </div>
-                  <span className="text-[11px] text-slate-500">Certification OTP &amp; Photo</span>
-                </div>
-              </section>
-
-              {/* Quick Supervision Matrix */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Couriers Snapshot */}
-                <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                    <div className="flex items-center gap-2">
-                      <span className="p-2 bg-blue-50 text-blue-600 rounded-xl material-symbols-outlined text-base">
-                        two_wheeler
-                      </span>
-                      <div>
-                        <h3 className="font-bold text-sm text-slate-900">Aperçu des Livreurs Actifs</h3>
-                        <p className="text-xs text-slate-400">Contrôle en direct des disponibilités et soldes</p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setActiveViewTab('couriers')}
-                      className="text-xs text-blue-600 font-bold hover:underline"
-                    >
-                      Voir tous ({couriers.length}) →
-                    </button>
-                  </div>
-
-                  <div className="space-y-2.5">
-                    {couriers.slice(0, 4).map(courier => (
-                      <div
-                        key={courier.id}
-                        className="p-3 bg-slate-50 rounded-2xl flex items-center justify-between text-xs"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center text-xs">
-                            {courier.avatarInitials}
-                          </div>
-                          <div>
-                            <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                              <span>{courier.name}</span>
-                              {courier.status === 'suspendu' && (
-                                <span className="px-1.5 py-0.2 bg-red-100 text-red-700 text-[9px] rounded font-bold">Suspendu</span>
-                              )}
-                            </div>
-                            <p className="text-[11px] text-slate-500">{courier.vehicle} • {courier.zone}</p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-slate-800 bg-white px-2 py-1 rounded-lg border border-slate-200 text-[11px]">
-                            {(courier.walletBalanceFCFA || 0).toLocaleString('fr-FR')} F
-                          </span>
-                          <button
-                            onClick={() => toggleCourierStatus(courier.id)}
-                            className={`p-1.5 rounded-lg text-xs font-bold ${
-                              courier.status === 'suspendu'
-                                ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                                : 'bg-red-50 text-red-600 hover:bg-red-100'
-                            }`}
-                            title={courier.status === 'suspendu' ? 'Activer' : 'Suspendre'}
-                          >
-                            <span className="material-symbols-outlined text-sm">
-                              {courier.status === 'suspendu' ? 'lock_open' : 'block'}
-                            </span>
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Merchants Snapshot */}
-                <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                    <div className="flex items-center gap-2">
-                      <span className="p-2 bg-emerald-50 text-emerald-600 rounded-xl material-symbols-outlined text-base">
-                        storefront
-                      </span>
-                      <div>
-                        <h3 className="font-bold text-sm text-slate-900">Aperçu des Vendeurs Partenaires</h3>
-                        <p className="text-xs text-slate-400">Canaux de vente et volumes traités</p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setActiveViewTab('merchants')}
-                      className="text-xs text-emerald-600 font-bold hover:underline"
-                    >
-                      Voir tous ({merchants.length}) →
-                    </button>
-                  </div>
-
-                  <div className="space-y-2.5">
-                    {merchants.slice(0, 4).map(merchant => (
-                      <div
-                        key={merchant.id}
-                        className="p-3 bg-slate-50 rounded-2xl flex items-center justify-between text-xs"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white font-bold flex items-center justify-center text-xs">
-                            <span className="material-symbols-outlined text-base">store</span>
-                          </div>
-                          <div>
-                            <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                              <span>{merchant.storeName}</span>
-                              {merchant.isVerified && (
-                                <span className="material-symbols-outlined text-blue-500 text-xs" title="Vérifié">verified</span>
-                              )}
-                            </div>
-                            <p className="text-[11px] text-slate-500">{merchant.channel} • {merchant.commune}</p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
-                            {merchant.totalOrders} courses
-                          </span>
-                          <button
-                            onClick={() => toggleMerchantStatus(merchant.id)}
-                            className={`p-1.5 rounded-lg text-xs font-bold ${
-                              merchant.status === 'suspendu'
-                                ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                                : 'bg-red-50 text-red-600 hover:bg-red-100'
-                            }`}
-                            title={merchant.status === 'suspendu' ? 'Activer' : 'Suspendre'}
-                          >
-                            <span className="material-symbols-outlined text-sm">
-                              {merchant.status === 'suspendu' ? 'lock_open' : 'block'}
-                            </span>
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <AdminOverviewDashboard onNavigateTab={setActiveViewTab} />
           )}
 
           {/* =========================================================================
@@ -1205,29 +1009,31 @@ export const AdminConsole: React.FC = () => {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                 <div>
                   <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <span className="material-symbols-outlined text-blue-600">group</span>
-                    <span>Annuaire Global des Utilisateurs ({couriers.length + merchants.length})</span>
+                    <span className="material-symbols-outlined text-blue-600">manage_accounts</span>
+                    <span>Tableau de Gestion des Utilisateurs &amp; Accès ({couriers.length + merchants.length})</span>
                   </h2>
-                  <p className="text-xs text-slate-500">Supervision centralisée des livreurs indépendants et marchands partenaires</p>
+                  <p className="text-xs text-slate-500">
+                    Contrôle des comptes vendeurs et livreurs : suspension/déblocage instantané et réinitialisation des mots de passe
+                  </p>
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
                   <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl text-xs font-bold">
                     <button
                       onClick={() => setUserTypeFilter('all')}
-                      className={`px-2.5 py-1 rounded-lg ${userTypeFilter === 'all' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-600'}`}
+                      className={`px-2.5 py-1 rounded-lg transition-all ${userTypeFilter === 'all' ? 'bg-white text-blue-700 shadow-2xs font-extrabold' : 'text-slate-600'}`}
                     >
                       Tous ({couriers.length + merchants.length})
                     </button>
                     <button
                       onClick={() => setUserTypeFilter('livreur')}
-                      className={`px-2.5 py-1 rounded-lg ${userTypeFilter === 'livreur' ? 'bg-white text-emerald-700 shadow-2xs' : 'text-slate-600'}`}
+                      className={`px-2.5 py-1 rounded-lg transition-all ${userTypeFilter === 'livreur' ? 'bg-white text-blue-700 shadow-2xs font-extrabold' : 'text-slate-600'}`}
                     >
                       🛵 Livreurs ({couriers.length})
                     </button>
                     <button
                       onClick={() => setUserTypeFilter('vendeur')}
-                      className={`px-2.5 py-1 rounded-lg ${userTypeFilter === 'vendeur' ? 'bg-white text-purple-700 shadow-2xs' : 'text-slate-600'}`}
+                      className={`px-2.5 py-1 rounded-lg transition-all ${userTypeFilter === 'vendeur' ? 'bg-white text-emerald-700 shadow-2xs font-extrabold' : 'text-slate-600'}`}
                     >
                       🏪 Vendeurs ({merchants.length})
                     </button>
@@ -1235,14 +1041,14 @@ export const AdminConsole: React.FC = () => {
 
                   <button
                     onClick={() => setIsAddCourierModalOpen(true)}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1"
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
                   >
                     <span className="material-symbols-outlined text-sm">person_add</span>
                     <span>+ Livreur</span>
                   </button>
                   <button
                     onClick={() => setIsAddMerchantModalOpen(true)}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1"
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
                   >
                     <span className="material-symbols-outlined text-sm">store</span>
                     <span>+ Boutique</span>
@@ -1286,8 +1092,12 @@ export const AdminConsole: React.FC = () => {
                           <span className="font-bold text-blue-700">LIVREUR ({c.vehicle})</span>
                         </div>
                         <div className="flex justify-between text-slate-600">
-                          <span className="text-slate-400">Téléphone:</span>
+                          <span className="text-slate-400">Contact:</span>
                           <span className="font-mono font-semibold">{c.phone}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-600">
+                          <span className="text-slate-400">E-mail:</span>
+                          <span className="font-mono text-[11px] text-slate-700">{c.email || 'N/A'}</span>
                         </div>
                         <div className="flex justify-between text-slate-600">
                           <span className="text-slate-400">Zone:</span>
@@ -1300,6 +1110,25 @@ export const AdminConsole: React.FC = () => {
                       </div>
 
                       <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-200/60 flex-wrap">
+                        {/* Réinitialiser Accès Button */}
+                        <button
+                          type="button"
+                          onClick={() => setResetAccessUser({
+                            id: c.id,
+                            name: c.name,
+                            email: c.email || `${c.name.toLowerCase().replace(/[^a-z0-9]/g, '.')}@livralink.bj`,
+                            phone: c.phone,
+                            role: 'livreur',
+                            status: c.status,
+                            vehicle: c.vehicle,
+                          })}
+                          className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg text-xs active:scale-95 flex items-center gap-1 shadow-xs cursor-pointer"
+                          title="Réinitialiser le mot de passe et les accès"
+                        >
+                          <span className="material-symbols-outlined text-xs">vpn_key</span>
+                          <span>Accès</span>
+                        </button>
+
                         <button
                           type="button"
                           onClick={() => setWalletModalCourier(c)}
@@ -1328,10 +1157,10 @@ export const AdminConsole: React.FC = () => {
                           type="button"
                           onClick={() => toggleCourierStatus(c.id)}
                           className={`px-2.5 py-1 rounded-lg text-xs font-bold active:scale-95 ${
-                            c.status === 'suspendu' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                            c.status === 'suspendu' ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-red-50 text-red-700 hover:bg-red-100'
                           }`}
                         >
-                          {c.status === 'suspendu' ? 'Activer' : 'Suspendre'}
+                          {c.status === 'suspendu' ? 'Débloquer' : 'Suspendre'}
                         </button>
                         <button
                           type="button"
@@ -1380,6 +1209,10 @@ export const AdminConsole: React.FC = () => {
                           <span className="font-mono font-semibold">{m.phone}</span>
                         </div>
                         <div className="flex justify-between text-slate-600">
+                          <span className="text-slate-400">E-mail:</span>
+                          <span className="font-mono text-[11px] text-slate-700">{m.email || 'N/A'}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-600">
                           <span className="text-slate-400">Commune:</span>
                           <span>{m.commune}</span>
                         </div>
@@ -1390,6 +1223,25 @@ export const AdminConsole: React.FC = () => {
                       </div>
 
                       <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-200/60 flex-wrap">
+                        {/* Réinitialiser Accès Button */}
+                        <button
+                          type="button"
+                          onClick={() => setResetAccessUser({
+                            id: m.id,
+                            name: m.storeName,
+                            email: m.email || `${m.storeName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@livralink.bj`,
+                            phone: m.phone,
+                            role: 'vendeur',
+                            status: m.status,
+                            storeName: m.storeName,
+                          })}
+                          className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg text-xs active:scale-95 flex items-center gap-1 shadow-xs cursor-pointer"
+                          title="Réinitialiser le mot de passe et les accès"
+                        >
+                          <span className="material-symbols-outlined text-xs">vpn_key</span>
+                          <span>Accès</span>
+                        </button>
+
                         <button
                           type="button"
                           onClick={() => toggleMerchantVerification(m.id)}
@@ -1438,16 +1290,16 @@ export const AdminConsole: React.FC = () => {
 
               {/* Table of all users for Desktop & Tablet */}
               <div className="hidden md:block overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs min-w-[780px]">
+                <table className="w-full text-left border-collapse text-xs min-w-[850px]">
                   <thead>
                     <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
                       <th className="py-3 px-3">Utilisateur</th>
                       <th className="py-3 px-3">Rôle &amp; Type</th>
-                      <th className="py-3 px-3">Contact Téléphone</th>
+                      <th className="py-3 px-3">Coordonnées (Tél &amp; E-mail)</th>
                       <th className="py-3 px-3">Zone / Commune</th>
                       <th className="py-3 px-3">Activité &amp; Solde</th>
-                      <th className="py-3 px-3">Statut</th>
-                      <th className="py-3 px-3 text-right">Actions Superviseur</th>
+                      <th className="py-3 px-3">Statut du Compte</th>
+                      <th className="py-3 px-3 text-right">Actions (Suspendre &amp; Réinitialiser)</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -1479,7 +1331,10 @@ export const AdminConsole: React.FC = () => {
                               <span>LIVREUR ({c.vehicle})</span>
                             </span>
                           </td>
-                          <td className="py-3 px-3 font-semibold text-slate-800">{c.phone}</td>
+                          <td className="py-3 px-3">
+                            <div className="font-semibold text-slate-900">{c.phone}</div>
+                            <span className="text-[10px] font-mono text-slate-500 block">{c.email || 'N/A'}</span>
+                          </td>
                           <td className="py-3 px-3 text-slate-700">{c.zone}</td>
                           <td className="py-3 px-3">
                             <div className="font-mono font-bold text-blue-700">
@@ -1488,19 +1343,74 @@ export const AdminConsole: React.FC = () => {
                             <span className="text-[10px] text-slate-400">Solde caution</span>
                           </td>
                           <td className="py-3 px-3">
-                            {c.status === 'en_ligne' && <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">🟢 En ligne</span>}
-                            {c.status === 'en_course' && <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">🔵 En course</span>}
-                            {c.status === 'suspendu' && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">🔴 Suspendu</span>}
+                            {c.status === 'en_ligne' && (
+                              <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold inline-flex items-center gap-1">
+                                <span>🟢</span>
+                                <span>En ligne</span>
+                              </span>
+                            )}
+                            {c.status === 'en_course' && (
+                              <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold inline-flex items-center gap-1">
+                                <span>🔵</span>
+                                <span>En course</span>
+                              </span>
+                            )}
+                            {c.status === 'suspendu' && (
+                              <span className="px-2.5 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold inline-flex items-center gap-1">
+                                <span>🔴</span>
+                                <span>Suspendu</span>
+                              </span>
+                            )}
+                            {c.status === 'hors_ligne' && (
+                              <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold inline-flex items-center gap-1">
+                                <span>⚪</span>
+                                <span>Hors ligne</span>
+                              </span>
+                            )}
                           </td>
                           <td className="py-3 px-3 text-right">
                             <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                              {/* 1. Réinitialiser Accès Button */}
+                              <button
+                                onClick={() => setResetAccessUser({
+                                  id: c.id,
+                                  name: c.name,
+                                  email: c.email || `${c.name.toLowerCase().replace(/[^a-z0-9]/g, '.')}@livralink.bj`,
+                                  phone: c.phone,
+                                  role: 'livreur',
+                                  status: c.status,
+                                  vehicle: c.vehicle,
+                                })}
+                                className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg text-xs flex items-center gap-1 active:scale-95 transition-all shadow-xs cursor-pointer"
+                                title="Réinitialiser le mot de passe et les identifiants de connexion"
+                              >
+                                <span className="material-symbols-outlined text-xs">vpn_key</span>
+                                <span>Accès</span>
+                              </button>
+
+                              {/* 2. Suspendre / Débloquer Button */}
+                              <button
+                                onClick={() => toggleCourierStatus(c.id)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold active:scale-95 transition-all cursor-pointer ${
+                                  c.status === 'suspendu'
+                                    ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                                    : 'bg-red-50 text-red-700 hover:bg-red-100 border border-red-200'
+                                }`}
+                                title={c.status === 'suspendu' ? 'Réactiver le compte' : 'Suspendre le compte'}
+                              >
+                                {c.status === 'suspendu' ? 'Débloquer' : 'Suspendre'}
+                              </button>
+
+                              {/* 3. Portefeuille */}
                               <button
                                 onClick={() => setWalletModalCourier(c)}
-                                className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold"
-                                title="Recharger ou débiter le portefeuille"
+                                className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold cursor-pointer"
+                                title="Recharger ou débiter la caution"
                               >
                                 Portefeuille
                               </button>
+
+                              {/* 4. Modifier */}
                               <button
                                 onClick={() => openEditUser({
                                   id: c.id,
@@ -1513,23 +1423,16 @@ export const AdminConsole: React.FC = () => {
                                   vehicle: c.vehicle,
                                   plate: c.vehiclePlate
                                 })}
-                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
+                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold cursor-pointer"
                                 title="Modifier les coordonnées du livreur"
                               >
                                 Modifier
                               </button>
-                              <button
-                                onClick={() => toggleCourierStatus(c.id)}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
-                                  c.status === 'suspendu' ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
-                                }`}
-                                title={c.status === 'suspendu' ? 'Activer le compte' : 'Suspendre le compte'}
-                              >
-                                {c.status === 'suspendu' ? 'Activer' : 'Suspendre'}
-                              </button>
+
+                              {/* 5. Supprimer */}
                               <button
                                 onClick={() => setDeletingUser({ id: c.id, name: c.name, role: 'livreur' })}
-                                className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                                 title="Supprimer définitivement"
                               >
                                 <span className="material-symbols-outlined text-sm">delete</span>
@@ -1565,25 +1468,78 @@ export const AdminConsole: React.FC = () => {
                               <span>VENDEUR ({m.channel})</span>
                             </span>
                           </td>
-                          <td className="py-3 px-3 font-semibold text-slate-800">{m.phone}</td>
+                          <td className="py-3 px-3">
+                            <div className="font-semibold text-slate-900">{m.phone}</div>
+                            <span className="text-[10px] font-mono text-slate-500 block">{m.email || 'N/A'}</span>
+                          </td>
                           <td className="py-3 px-3 text-slate-700">{m.commune}</td>
                           <td className="py-3 px-3">
                             <div className="font-mono font-bold text-slate-900">{m.totalOrders} courses</div>
                             <span className="text-[10px] text-emerald-600 font-bold">{(m.totalVolumeFCFA || 0).toLocaleString('fr-FR')} F</span>
                           </td>
                           <td className="py-3 px-3">
-                            {m.status === 'actif' && <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">🟢 Actif</span>}
-                            {m.status === 'suspendu' && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">🔴 Bloqué</span>}
+                            {m.status === 'actif' && (
+                              <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold inline-flex items-center gap-1">
+                                <span>🟢</span>
+                                <span>Actif</span>
+                              </span>
+                            )}
+                            {m.status === 'suspendu' && (
+                              <span className="px-2.5 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold inline-flex items-center gap-1">
+                                <span>🔴</span>
+                                <span>Bloqué / Suspendu</span>
+                              </span>
+                            )}
+                            {m.status === 'en_attente_kyc' && (
+                              <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold inline-flex items-center gap-1">
+                                <span>🟡</span>
+                                <span>En attente KYC</span>
+                              </span>
+                            )}
                           </td>
                           <td className="py-3 px-3 text-right">
                             <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                              {/* 1. Réinitialiser Accès Button */}
+                              <button
+                                onClick={() => setResetAccessUser({
+                                  id: m.id,
+                                  name: m.storeName,
+                                  email: m.email || `${m.storeName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@livralink.bj`,
+                                  phone: m.phone,
+                                  role: 'vendeur',
+                                  status: m.status,
+                                  storeName: m.storeName,
+                                })}
+                                className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg text-xs flex items-center gap-1 active:scale-95 transition-all shadow-xs cursor-pointer"
+                                title="Réinitialiser le mot de passe et les identifiants de connexion"
+                              >
+                                <span className="material-symbols-outlined text-xs">vpn_key</span>
+                                <span>Accès</span>
+                              </button>
+
+                              {/* 2. Suspendre / Débloquer Button */}
+                              <button
+                                onClick={() => toggleMerchantStatus(m.id)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold active:scale-95 transition-all cursor-pointer ${
+                                  m.status === 'suspendu'
+                                    ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                                    : 'bg-red-50 text-red-700 hover:bg-red-100 border border-red-200'
+                                }`}
+                                title={m.status === 'suspendu' ? 'Débloquer la boutique' : 'Suspendre la boutique'}
+                              >
+                                {m.status === 'suspendu' ? 'Débloquer' : 'Suspendre'}
+                              </button>
+
+                              {/* 3. Badge */}
                               <button
                                 onClick={() => toggleMerchantVerification(m.id)}
-                                className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold"
+                                className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold cursor-pointer"
                                 title="Accorder ou révoquer le badge"
                               >
                                 {m.isVerified ? 'Badge ✓' : '+ Badge'}
                               </button>
+
+                              {/* 4. Modifier */}
                               <button
                                 onClick={() => openEditUser({
                                   id: m.id,
@@ -1596,22 +1552,16 @@ export const AdminConsole: React.FC = () => {
                                   channel: m.channel,
                                   isVerified: m.isVerified
                                 })}
-                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
+                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold cursor-pointer"
                                 title="Modifier la boutique"
                               >
                                 Modifier
                               </button>
-                              <button
-                                onClick={() => toggleMerchantStatus(m.id)}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
-                                  m.status === 'suspendu' ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-red-50 text-red-600 hover:bg-red-100'
-                                }`}
-                              >
-                                {m.status === 'suspendu' ? 'Débloquer' : 'Bloquer'}
-                              </button>
+
+                              {/* 5. Supprimer */}
                               <button
                                 onClick={() => setDeletingUser({ id: m.id, name: m.storeName, role: 'vendeur' })}
-                                className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                                 title="Supprimer la boutique"
                               >
                                 <span className="material-symbols-outlined text-sm">delete</span>
@@ -1935,6 +1885,15 @@ export const AdminConsole: React.FC = () => {
                       <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-100 flex-wrap">
                         <button
                           type="button"
+                          onClick={() => impersonateCourier(courier.id)}
+                          className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold active:scale-95 flex items-center gap-1 shadow-sm"
+                          title="Piloter ce livreur en direct (Mode Directeur)"
+                        >
+                          <span>👑</span>
+                          <span>Piloter</span>
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => setWalletModalCourier(courier)}
                           className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold active:scale-95"
                         >
@@ -2051,6 +2010,30 @@ export const AdminConsole: React.FC = () => {
                         </td>
                         <td className="py-3 px-3 text-right">
                           <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            <button
+                              onClick={() => impersonateCourier(courier.id)}
+                              className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm active:scale-95"
+                              title="Piloter ce livreur en direct (Mode Directeur)"
+                            >
+                              <span>👑</span>
+                              <span>Piloter</span>
+                            </button>
+                            <button
+                              onClick={() => setResetAccessUser({
+                                id: courier.id,
+                                name: courier.name,
+                                email: courier.email || `${courier.name.toLowerCase().replace(/[^a-z0-9]/g, '.')}@livralink.bj`,
+                                phone: courier.phone,
+                                role: 'livreur',
+                                status: courier.status,
+                                vehicle: courier.vehicle,
+                              })}
+                              className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg text-xs flex items-center gap-1 active:scale-95 shadow-xs cursor-pointer"
+                              title="Réinitialiser le mot de passe et les accès"
+                            >
+                              <span className="material-symbols-outlined text-xs">vpn_key</span>
+                              <span>Accès</span>
+                            </button>
                             <button
                               onClick={() => setWalletModalCourier(courier)}
                               className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold"
@@ -2200,6 +2183,15 @@ export const AdminConsole: React.FC = () => {
                       <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-100 flex-wrap">
                         <button
                           type="button"
+                          onClick={() => impersonateMerchant(merchant.id)}
+                          className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold active:scale-95 flex items-center gap-1 shadow-sm"
+                          title="Piloter cette boutique en direct (Mode Directeur)"
+                        >
+                          <span>👑</span>
+                          <span>Piloter</span>
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => openEditMerchant(merchant)}
                           className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold active:scale-95"
                         >
@@ -2300,6 +2292,30 @@ export const AdminConsole: React.FC = () => {
                         </td>
                         <td className="py-3 px-3 text-right">
                           <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            <button
+                              onClick={() => impersonateMerchant(merchant.id)}
+                              className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm active:scale-95"
+                              title="Piloter cette boutique en direct (Mode Directeur)"
+                            >
+                              <span>👑</span>
+                              <span>Piloter</span>
+                            </button>
+                            <button
+                              onClick={() => setResetAccessUser({
+                                id: merchant.id,
+                                name: merchant.storeName,
+                                email: merchant.email || `${merchant.storeName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@livralink.bj`,
+                                phone: merchant.phone,
+                                role: 'vendeur',
+                                status: merchant.status,
+                                storeName: merchant.storeName,
+                              })}
+                              className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg text-xs flex items-center gap-1 active:scale-95 shadow-xs cursor-pointer"
+                              title="Réinitialiser le mot de passe et les accès"
+                            >
+                              <span className="material-symbols-outlined text-xs">vpn_key</span>
+                              <span>Accès</span>
+                            </button>
                             <button
                               onClick={() => openEditMerchant(merchant)}
                               className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
@@ -2986,6 +3002,303 @@ export const AdminConsole: React.FC = () => {
                     <p>• Gain net reversé au Livreur : <strong>{(2500 * (1 - pricingRules.commissionRatePercent / 100)).toLocaleString('fr-FR')} FCFA</strong></p>
                     <p>• Revenu Plateforme LivraLink : <strong>{(2500 * (pricingRules.commissionRatePercent / 100)).toLocaleString('fr-FR')} FCFA</strong></p>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* =========================================================================
+              TAB: DIRECTEUR GÉNÉRAL DES FONCTIONNALITÉS (MASTER FEATURE FLAGS)
+             ========================================================================= */}
+          {activeViewTab === 'features' && (
+            <div className="space-y-6 animate-in fade-in duration-200">
+              {/* Header Card */}
+              <div className="bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 text-white p-6 rounded-3xl shadow-xl border border-purple-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-start gap-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-purple-500/20 text-purple-300 border border-purple-400/30 flex items-center justify-center shrink-0 shadow-inner">
+                    <span className="material-symbols-outlined text-2xl">tune</span>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h2 className="text-lg font-black text-white">Directeur Général des Fonctionnalités</h2>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-400 text-slate-950 border border-amber-300">
+                        👑 Contrôle Absolu
+                      </span>
+                    </div>
+                    <p className="text-xs text-purple-200 leading-relaxed max-w-2xl">
+                      Cette interface donne à l'administrateur le pouvoir de piloter, ajouter ou supprimer en direct n'importe quelle fonctionnalité sur les espaces <strong>Vendeurs</strong> et <strong>Livreurs</strong>, ou de verrouiller temporairement des accès.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
+                  <button
+                    type="button"
+                    onClick={resetFeatureFlagsToDefault}
+                    className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-all border border-white/20 flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                    title="Restaurer toutes les fonctionnalités activées par défaut"
+                  >
+                    <span className="material-symbols-outlined text-sm">restart_alt</span>
+                    <span>Valeurs standard</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => showToast('Toutes les modifications sont actives et propagées en temps réel !', 'success')}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black transition-all shadow-md shadow-emerald-600/30 flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-sm">check_circle</span>
+                    <span>Appliqué en direct</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 1. Global Platform Controls: Maintenance & Emergency Broadcast */}
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-5">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <span className="w-8 h-8 rounded-xl bg-red-100 text-red-700 flex items-center justify-center font-bold">
+                      <span className="material-symbols-outlined text-lg">shield_with_heart</span>
+                    </span>
+                    <div>
+                      <h3 className="font-extrabold text-slate-900 text-sm">1. Contrôle Global &amp; Verrouillage d'Espaces</h3>
+                      <p className="text-xs text-slate-500">Activez ou coupez temporairement l'accès aux pages vendeurs ou livreurs</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Vendor Space Switch */}
+                  <div className={`p-4 rounded-2xl border transition-all space-y-3 ${
+                    featureFlags.vendeurSpaceEnabled ? 'bg-slate-50 border-slate-200' : 'bg-amber-50/80 border-amber-300'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-blue-600">storefront</span>
+                        <span className="font-bold text-xs text-slate-900">Espace Vendeurs</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => updateFeatureFlag('vendeurSpaceEnabled', !featureFlags.vendeurSpaceEnabled)}
+                        className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                          featureFlags.vendeurSpaceEnabled ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-red-100 text-red-800 border border-red-300'
+                        }`}
+                      >
+                        {featureFlags.vendeurSpaceEnabled ? '🟢 Ouvert & Actif' : '🔴 En Maintenance'}
+                      </button>
+                    </div>
+                    {!featureFlags.vendeurSpaceEnabled && (
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-slate-700 block">Message affiché aux vendeurs :</label>
+                        <input
+                          type="text"
+                          value={featureFlags.vendeurMaintenanceNotice}
+                          onChange={(e) => updateFeatureFlag('vendeurMaintenanceNotice', e.target.value)}
+                          className="w-full text-xs p-2 bg-white rounded-lg border border-amber-300 text-slate-800 font-medium focus:outline-none"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Courier Space Switch */}
+                  <div className={`p-4 rounded-2xl border transition-all space-y-3 ${
+                    featureFlags.livreurSpaceEnabled ? 'bg-slate-50 border-slate-200' : 'bg-amber-50/80 border-amber-300'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-indigo-600">two_wheeler</span>
+                        <span className="font-bold text-xs text-slate-900">Espace Livreurs</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => updateFeatureFlag('livreurSpaceEnabled', !featureFlags.livreurSpaceEnabled)}
+                        className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                          featureFlags.livreurSpaceEnabled ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-red-100 text-red-800 border border-red-300'
+                        }`}
+                      >
+                        {featureFlags.livreurSpaceEnabled ? '🟢 Ouvert & Actif' : '🔴 En Maintenance'}
+                      </button>
+                    </div>
+                    {!featureFlags.livreurSpaceEnabled && (
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-slate-700 block">Message affiché aux livreurs :</label>
+                        <input
+                          type="text"
+                          value={featureFlags.livreurMaintenanceNotice}
+                          onChange={(e) => updateFeatureFlag('livreurMaintenanceNotice', e.target.value)}
+                          className="w-full text-xs p-2 bg-white rounded-lg border border-amber-300 text-slate-800 font-medium focus:outline-none"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Emergency Broadcast Announcement Bar */}
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-200 space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-orange-900">
+                      <span className="material-symbols-outlined text-orange-600">campaign</span>
+                      <span>Bandeau d'Alerte / Annonce Officielle de Direction</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => updateFeatureFlag('emergencyBroadcastActive', !featureFlags.emergencyBroadcastActive)}
+                      className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                        featureFlags.emergencyBroadcastActive ? 'bg-orange-600 text-white shadow-xs' : 'bg-slate-200 text-slate-700'
+                      }`}
+                    >
+                      {featureFlags.emergencyBroadcastActive ? '📢 Diffusé en direct' : '⏸️ Inactif'}
+                    </button>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-slate-700 block">Texte de l'annonce diffusée au sommet de toutes les pages :</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={featureFlags.emergencyBroadcastMessage}
+                        onChange={(e) => updateFeatureFlag('emergencyBroadcastMessage', e.target.value)}
+                        placeholder="Ex : Alerte fortes pluies sur Cotonou • Délais de livraison rallongés de 15 min"
+                        className="flex-1 text-xs p-2.5 bg-white rounded-xl border border-orange-300 text-slate-900 font-medium focus:outline-none shadow-2xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateFeatureFlag('emergencyBroadcastActive', true);
+                          showToast('Annonce officielle diffusée en direct sur tous les écrans !', 'success');
+                        }}
+                        className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer shadow-xs active:scale-95"
+                      >
+                        Diffuser
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Vendor Pages Features Controls */}
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <span className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
+                      <span className="material-symbols-outlined text-lg">storefront</span>
+                    </span>
+                    <div>
+                      <h3 className="font-extrabold text-slate-900 text-sm">2. Fonctionnalités de la Page Vendeur</h3>
+                      <p className="text-xs text-slate-500">Ajoutez ou supprimez des options pour les boutiques en direct</p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200">
+                    7 Modules Vendeur
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {[
+                    { key: 'allowExpressCreation' as const, title: 'Création Express de Colis', desc: 'Permet aux vendeurs d\'enregistrer de nouvelles courses', icon: 'add_circle' },
+                    { key: 'allowWhatsAppOrdering' as const, title: 'Commandes WhatsApp Direct', desc: 'Intégration du checkout et notifications WhatsApp', icon: 'chat' },
+                    { key: 'allowCODCollection' as const, title: 'Paiement à la livraison (COD)', desc: 'Encaissement des fonds marchandise par le livreur', icon: 'payments' },
+                    { key: 'requireClientVerification' as const, title: 'Vérification Client Requise', desc: 'Exige un numéro client valide au Bénin (+229)', icon: 'verified' },
+                    { key: 'allowManualCourierAssignment' as const, title: 'Sélection Manuelle du Livreur', desc: 'Permet au vendeur de choisir un coursier précis', icon: 'person_pin' },
+                    { key: 'showCourierLiveGPS' as const, title: 'Suivi GPS Livreur en Direct', desc: 'Affiche la position sur la carte Google Maps', icon: 'map' },
+                    { key: 'allowVendorReports' as const, title: 'Rapports & Statistiques', desc: 'Accès aux bilans comptables et volumes COD', icon: 'analytics' },
+                  ].map((feat) => {
+                    const isEnabled = featureFlags[feat.key];
+                    return (
+                      <div
+                        key={feat.key}
+                        className={`p-3.5 rounded-2xl border transition-all flex flex-col justify-between gap-3 ${
+                          isEnabled ? 'bg-slate-50 border-slate-200' : 'bg-red-50/50 border-red-200 opacity-80'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="material-symbols-outlined text-lg text-blue-600">{feat.icon}</span>
+                            <span className="font-extrabold text-xs text-slate-900">{feat.title}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => updateFeatureFlag(feat.key, !isEnabled)}
+                            className={`w-10 h-6 flex items-center rounded-full p-1 transition-colors cursor-pointer shrink-0 ${
+                              isEnabled ? 'bg-blue-600' : 'bg-slate-300'
+                            }`}
+                          >
+                            <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                              isEnabled ? 'translate-x-4' : 'translate-x-0'
+                            }`} />
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-slate-500 leading-relaxed">{feat.desc}</p>
+                        <div className="text-[10px] font-bold pt-1 border-t border-slate-100 flex items-center justify-between">
+                          <span className={isEnabled ? 'text-emerald-700' : 'text-red-700'}>
+                            {isEnabled ? '✓ Activée sur page vendeur' : '✕ Supprimée / Désactivée'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 3. Courier Pages Features Controls */}
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <span className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold">
+                      <span className="material-symbols-outlined text-lg">two_wheeler</span>
+                    </span>
+                    <div>
+                      <h3 className="font-extrabold text-slate-900 text-sm">3. Fonctionnalités de la Page Livreur</h3>
+                      <p className="text-xs text-slate-500">Ajoutez ou supprimez des options pour les coursiers en direct</p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-200">
+                    7 Modules Livreur
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {[
+                    { key: 'allowInstantWithdrawal' as const, title: 'Retraits d\'argent MoMo / Celtiis', desc: 'Permet les demandes de transfert de gains du portefeuille', icon: 'account_balance_wallet' },
+                    { key: 'allowMissionRefusal' as const, title: 'Droit de Refuser une Course', desc: 'Permet au coursier de rejeter une proposition de mission', icon: 'cancel' },
+                    { key: 'requireOtpPOD' as const, title: 'Obligation Code Secret OTP', desc: 'Force la saisie du code transmis au client', icon: 'pin' },
+                    { key: 'requireLivePhotoPOD' as const, title: 'Obligation Photo Directe Colis', desc: 'Force la prise directe de photo sans visage', icon: 'photo_camera' },
+                    { key: 'requireTactileSignaturePOD' as const, title: 'Obligation Signature Tactile', desc: 'Force le client à signer avec son nom sur smartphone', icon: 'draw' },
+                    { key: 'allowDirectCallClient' as const, title: 'Appel Téléphonique Direct', desc: 'Permet au livreur de contacter directement le destinataire', icon: 'call' },
+                    { key: 'showVendorStoreDetails' as const, title: 'Coordonnées Complètes Boutique', desc: 'Affiche l\'adresse précise et contacts gérant de la boutique', icon: 'store' },
+                  ].map((feat) => {
+                    const isEnabled = featureFlags[feat.key];
+                    return (
+                      <div
+                        key={feat.key}
+                        className={`p-3.5 rounded-2xl border transition-all flex flex-col justify-between gap-3 ${
+                          isEnabled ? 'bg-slate-50 border-slate-200' : 'bg-red-50/50 border-red-200 opacity-80'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="material-symbols-outlined text-lg text-indigo-600">{feat.icon}</span>
+                            <span className="font-extrabold text-xs text-slate-900">{feat.title}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => updateFeatureFlag(feat.key, !isEnabled)}
+                            className={`w-10 h-6 flex items-center rounded-full p-1 transition-colors cursor-pointer shrink-0 ${
+                              isEnabled ? 'bg-indigo-600' : 'bg-slate-300'
+                            }`}
+                          >
+                            <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                              isEnabled ? 'translate-x-4' : 'translate-x-0'
+                            }`} />
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-slate-500 leading-relaxed">{feat.desc}</p>
+                        <div className="text-[10px] font-bold pt-1 border-t border-slate-100 flex items-center justify-between">
+                          <span className={isEnabled ? 'text-emerald-700' : 'text-red-700'}>
+                            {isEnabled ? '✓ Activée sur page livreur' : '✕ Supprimée / Désactivée'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -4737,6 +5050,12 @@ export const AdminConsole: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* 16. Modal Réinitialisation des Accès & Sécurité */}
+      <ResetUserAccessModal
+        user={resetAccessUser}
+        onClose={() => setResetAccessUser(null)}
+      />
 
       {/* Mobile Bottom Navigation */}
       <MobileBottomNav />

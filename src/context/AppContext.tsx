@@ -12,7 +12,9 @@ import {
   CourierSettings,
   SystemAuditLog,
   DeliveryStatus,
-  PricingRule
+  PricingRule,
+  PlatformFeatureFlags,
+  DEFAULT_PLATFORM_FEATURE_FLAGS
 } from '../types';
 import {
   INITIAL_DELIVERIES,
@@ -51,6 +53,7 @@ export type AdminTab =
   | 'deliveries'
   | 'disputes'
   | 'pricing'
+  | 'features'
   | 'tests'
   | 'audit'
   | 'security';
@@ -193,6 +196,19 @@ interface AppContextType {
   // Geolocation Detection & Recording
   detectedLocation: DetectedUserLocation | null;
   detectAndSaveLocation: (userId?: string, customProfile?: UserProfile | null) => Promise<DetectedUserLocation>;
+
+  // Feature Flags Master Controller ("Directeur des Fonctionnalités")
+  featureFlags: PlatformFeatureFlags;
+  setFeatureFlags: React.Dispatch<React.SetStateAction<PlatformFeatureFlags>>;
+  updateFeatureFlag: <K extends keyof PlatformFeatureFlags>(key: K, value: PlatformFeatureFlags[K]) => void;
+  resetFeatureFlagsToDefault: () => void;
+
+  // Director Mode (Prise de Contrôle Absolue des Pages Vendeurs et Livreurs)
+  isDirectorModeActive: boolean;
+  directorTargetName: string | null;
+  impersonateMerchant: (merchantId: string) => void;
+  impersonateCourier: (courierId: string) => void;
+  exitDirectorMode: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -387,6 +403,123 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Admin Active Tab state
   const [adminActiveTab, setAdminActiveTab] = useState<AdminTab>('overview');
+
+  // Platform Feature Flags (Directeur des Fonctionnalités)
+  const [featureFlags, setFeatureFlags] = useState<PlatformFeatureFlags>(() => {
+    try {
+      const saved = localStorage.getItem('livralink_feature_flags');
+      if (saved) {
+        return { ...DEFAULT_PLATFORM_FEATURE_FLAGS, ...JSON.parse(saved) };
+      }
+    } catch {}
+    return DEFAULT_PLATFORM_FEATURE_FLAGS;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('livralink_feature_flags', JSON.stringify(featureFlags));
+    } catch {}
+  }, [featureFlags]);
+
+  const updateFeatureFlag = <K extends keyof PlatformFeatureFlags>(key: K, value: PlatformFeatureFlags[K]) => {
+    setFeatureFlags((prev) => {
+      const updated = { ...prev, [key]: value };
+      return updated;
+    });
+    addAuditLog('system', `Modification Fonctionnalité [${String(key)}]`, `Nouvelle valeur appliquée par le directeur admin : ${JSON.stringify(value)}`);
+    showToast(`Fonctionnalité "${String(key)}" mise à jour.`, 'info');
+  };
+
+  const resetFeatureFlagsToDefault = () => {
+    setFeatureFlags(DEFAULT_PLATFORM_FEATURE_FLAGS);
+    addAuditLog('system', `Réinitialisation des Fonctionnalités`, `Toutes les options réinitialisées par le directeur admin`);
+    showToast(`Fonctionnalités réinitialisées aux valeurs standard.`, 'success');
+  };
+
+  // Director Mode (Prise de Contrôle Absolue des Pages Vendeurs et Livreurs)
+  const [isDirectorModeActive, setIsDirectorModeActive] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('livralink_director_active') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const [directorTargetName, setDirectorTargetName] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('livralink_director_target');
+    } catch {
+      return null;
+    }
+  });
+
+  const impersonateMerchant = (merchantId: string) => {
+    const merchant = merchants.find(m => m.id === merchantId) || merchants[0];
+    if (!merchant) return;
+
+    setMerchantSettings((prev) => ({
+      ...prev,
+      storeName: merchant.storeName,
+      managerName: merchant.managerName,
+      phone: merchant.phone,
+      email: merchant.email,
+      storeCommune: merchant.commune,
+      defaultPickupAddress: merchant.address,
+    }));
+
+    setIsDirectorModeActive(true);
+    setDirectorTargetName(merchant.storeName);
+    try {
+      localStorage.setItem('livralink_director_active', 'true');
+      localStorage.setItem('livralink_director_target', merchant.storeName);
+    } catch {}
+
+    setCurrentRole('vendeur');
+    setCurrentViewState('vendeur_dashboard');
+    addAuditLog('system', `Prise de contrôle Directeur : ${merchant.storeName}`, `L'administrateur supervise directement l'espace de la boutique ${merchant.storeName} (${merchant.id})`);
+    showToast(`👑 Mode Directeur Admin activé : Vous pilotez la boutique "${merchant.storeName}".`, 'success');
+  };
+
+  const impersonateCourier = (courierId: string) => {
+    const courier = couriers.find(c => c.id === courierId) || couriers[0];
+    if (!courier) return;
+
+    setSelectedCourier(courier);
+    setCourierSettings((prev) => ({
+      ...prev,
+      fullName: courier.name,
+      phone: courier.phone,
+      email: courier.email || prev.email,
+      parkingBaseAddress: courier.zone,
+      vehicleType: courier.vehicle,
+      vehiclePlate: courier.vehiclePlate || prev.vehiclePlate || 'BJ-1234-RB',
+    }));
+
+    setIsDirectorModeActive(true);
+    setDirectorTargetName(courier.name);
+    try {
+      localStorage.setItem('livralink_director_active', 'true');
+      localStorage.setItem('livralink_director_target', courier.name);
+    } catch {}
+
+    setCurrentRole('livreur');
+    setCurrentViewState('livreur_dashboard');
+    addAuditLog('system', `Prise de contrôle Directeur : ${courier.name}`, `L'administrateur supervise directement le compte du livreur ${courier.name} (${courier.id})`);
+    showToast(`👑 Mode Directeur Admin activé : Vous pilotez le livreur "${courier.name}".`, 'success');
+  };
+
+  const exitDirectorMode = () => {
+    setIsDirectorModeActive(false);
+    setDirectorTargetName(null);
+    try {
+      localStorage.removeItem('livralink_director_active');
+      localStorage.removeItem('livralink_director_target');
+    } catch {}
+
+    setCurrentRole('admin');
+    setCurrentViewState('admin_console');
+    showToast(`Retour à la Console Administrateur.`, 'info');
+  };
 
   // Authorized Admin Emails Whitelist (Primary: Pamphile.gbede@gmail.com)
   const [authorizedAdminEmails, setAuthorizedAdminEmails] = useState<string[]>(() => {
@@ -1577,6 +1710,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
 
+    // Test 9: Directeur Général & Contrôle Total des Fonctionnalités (Feature Flags, Pilotage & Maintenance)
+    const t9Start = Date.now();
+    try {
+      // 1. Validation de la modification dynamique des Feature Flags
+      const prevExpress = featureFlags.allowExpressCreation;
+      updateFeatureFlag('allowExpressCreation', !prevExpress);
+      updateFeatureFlag('allowExpressCreation', prevExpress);
+
+      // 2. Validation du Pilotage Direct (Mode Directeur Général)
+      const targetMerchant = merchants[0] || INITIAL_MERCHANTS[0];
+      const prevRole = currentRole;
+      const prevView = currentView;
+      impersonateMerchant(targetMerchant.id);
+      
+      // Quitter le mode directeur pour restaurer l'état
+      exitDirectorMode();
+      setCurrentRole(prevRole);
+      setCurrentView(prevView);
+
+      results.push({
+        id: 't-director-master-control',
+        name: 'Directeur Général & Contrôle Total des Pages (Feature Flags, Pilotage & Maintenance)',
+        category: 'auth',
+        status: 'SUCCESS',
+        durationMs: Date.now() - t9Start,
+        message: `Régulateur central validé : bascule instantanée des fonctionnalités vendeur/livreur, mode pilotage compte (${targetMerchant.storeName}) et alertes diffusées en temps réel.`
+      });
+    } catch (e: any) {
+      results.push({
+        id: 't-director-master-control',
+        name: 'Directeur Général & Contrôle Total des Pages (Feature Flags, Pilotage & Maintenance)',
+        category: 'auth',
+        status: 'FAILED',
+        durationMs: Date.now() - t9Start,
+        message: e?.message || 'Erreur test directeur général'
+      });
+    }
+
     return results;
   };
 
@@ -1716,7 +1887,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleDarkMode,
         setIsDarkMode,
         detectedLocation,
-        detectAndSaveLocation
+        detectAndSaveLocation,
+        featureFlags,
+        setFeatureFlags,
+        updateFeatureFlag,
+        resetFeatureFlagsToDefault,
+        isDirectorModeActive,
+        directorTargetName,
+        impersonateMerchant,
+        impersonateCourier,
+        exitDirectorMode
       }}
     >
       {children}

@@ -179,3 +179,56 @@ export interface SystemAuditLog {
   title: string;
   details: string;
 }
+
+export interface PlatformFeatureFlags {
+  // Contrôle global d'accès aux espaces
+  vendeurSpaceEnabled: boolean;
+  vendeurMaintenanceNotice: string;
+  livreurSpaceEnabled: boolean;
+  livreurMaintenanceNotice: string;
+  emergencyBroadcastActive: boolean;
+  emergencyBroadcastMessage: string;
+
+  // Contrôle des fonctionnalités Vendeurs
+  allowExpressCreation: boolean;
+  allowWhatsAppOrdering: boolean;
+  allowCODCollection: boolean;
+  requireClientVerification: boolean;
+  allowManualCourierAssignment: boolean;
+  showCourierLiveGPS: boolean;
+  allowVendorReports: boolean;
+
+  // Contrôle des fonctionnalités Livreurs
+  allowInstantWithdrawal: boolean;
+  allowMissionRefusal: boolean;
+  requireLivePhotoPOD: boolean;
+  requireTactileSignaturePOD: boolean;
+  requireOtpPOD: boolean;
+  allowDirectCallClient: boolean;
+  showVendorStoreDetails: boolean;
+}
+
+export const DEFAULT_PLATFORM_FEATURE_FLAGS: PlatformFeatureFlags = {
+  vendeurSpaceEnabled: true,
+  vendeurMaintenanceNotice: "L'espace Vendeur est temporairement en maintenance planifiée pour amélioration de service.",
+  livreurSpaceEnabled: true,
+  livreurMaintenanceNotice: "L'espace Livreur est temporairement en maintenance planifiée pour amélioration de service.",
+  emergencyBroadcastActive: false,
+  emergencyBroadcastMessage: "Alerte Météo Cotonou : Fortes pluies prévues, retards de livraison possibles. Conduite prudente conseillée !",
+
+  allowExpressCreation: true,
+  allowWhatsAppOrdering: true,
+  allowCODCollection: true,
+  requireClientVerification: true,
+  allowManualCourierAssignment: true,
+  showCourierLiveGPS: true,
+  allowVendorReports: true,
+
+  allowInstantWithdrawal: true,
+  allowMissionRefusal: true,
+  requireLivePhotoPOD: true,
+  requireTactileSignaturePOD: true,
+  requireOtpPOD: true,
+  allowDirectCallClient: true,
+  showVendorStoreDetails: true,
+};

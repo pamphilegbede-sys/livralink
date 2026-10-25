@@ -20,6 +20,7 @@ export const VendeurDashboard: React.FC = () => {
     showToast,
     userProfile,
     merchantSettings,
+    featureFlags,
   } = useApp();
 
   const greetingName = userProfile?.fullName || merchantSettings.managerName || merchantSettings.storeName || 'Commerçant';
@@ -93,8 +94,24 @@ export const VendeurDashboard: React.FC = () => {
   };
 
   const handleWhatsAppAction = (order: DeliveryOrder) => {
+    if (!featureFlags.allowWhatsAppOrdering) {
+      showToast("L'assistance WhatsApp client a été suspendue par l'administrateur.", 'error');
+      return;
+    }
     const msg = `Bonjour ${order.clientName}, votre commande chez Boutique Glam Chic (${order.id}) est suivie sur LivraLink. Votre coursier est en route !`;
     openWhatsAppModal(order.clientPhone, order.clientName, msg);
+  };
+
+  const handleNewDeliveryClick = () => {
+    if (!featureFlags.vendeurSpaceEnabled) {
+      showToast("L'espace vendeur est actuellement verrouillé par l'administrateur.", 'error');
+      return;
+    }
+    if (!featureFlags.allowExpressCreation) {
+      showToast("La création de courses express est temporairement suspendue par l'administrateur.", 'error');
+      return;
+    }
+    setCurrentView('vendeur_new_delivery');
   };
 
   const handleRelaunchSearch = (orderId: string) => {
@@ -144,14 +161,50 @@ export const VendeurDashboard: React.FC = () => {
                 <span>Guide de démarrage</span>
               </button>
               <button
-                onClick={() => setCurrentView('vendeur_new_delivery')}
-                className="py-2.5 sm:py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/20 active:scale-95 transition-all flex items-center justify-center gap-2"
+                type="button"
+                onClick={handleNewDeliveryClick}
+                className={`py-2.5 sm:py-3 px-4 rounded-xl text-xs font-bold shadow-md active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                  !featureFlags.vendeurSpaceEnabled || !featureFlags.allowExpressCreation
+                    ? 'bg-slate-300 dark:bg-slate-700 text-slate-500 dark:text-slate-400 cursor-not-allowed shadow-none'
+                    : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-600/20'
+                }`}
+                title={
+                  !featureFlags.vendeurSpaceEnabled
+                    ? "Espace vendeur verrouillé par l'administrateur"
+                    : !featureFlags.allowExpressCreation
+                    ? "Création de course désactivée par l'administrateur"
+                    : "Créer une nouvelle course"
+                }
               >
-                <span className="material-symbols-outlined text-lg">add</span>
+                <span className="material-symbols-outlined text-lg">
+                  {!featureFlags.vendeurSpaceEnabled || !featureFlags.allowExpressCreation ? 'lock' : 'add'}
+                </span>
                 <span>+ Nouvelle livraison</span>
               </button>
             </div>
           </div>
+
+          {/* Admin Space Maintenance Alert if disabled */}
+          {!featureFlags.vendeurSpaceEnabled && (
+            <div className="p-4 sm:p-5 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 text-amber-950 dark:text-amber-200 flex items-start gap-4 shadow-sm animate-pulse">
+              <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md">
+                <span className="material-symbols-outlined text-2xl">admin_panel_settings</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-extrabold text-sm sm:text-base text-amber-950 dark:text-amber-100">
+                    Espace Vendeur Sous Contrôle Administrateur (Maintenance Active)
+                  </h3>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 font-bold uppercase tracking-wider">
+                    Verrouillage Admin
+                  </span>
+                </div>
+                <p className="text-xs sm:text-sm text-amber-900/90 dark:text-amber-300/90 mt-1">
+                  {featureFlags.vendeurMaintenanceNotice || "L'espace commerçant est temporairement suspendu pour maintenance par l'administrateur général LivraLink. La création et l'envoi de nouvelles courses sont verrouillés."}
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Interactive Onboarding Welcome Banner */}
           <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-600/15 flex flex-col sm:flex-row sm:items-center justify-between gap-4">

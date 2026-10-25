@@ -889,6 +889,74 @@ export const resetPassword = async (email: string) => {
   return requestPasswordResetCode(email);
 };
 
+/**
+ * Administrator Direct Password Reset
+ * Allows an authorized admin to immediately reset a seller or courier password without OTP challenge.
+ */
+export const adminResetUserPassword = async (
+  email: string,
+  newPassword: string
+): Promise<{ success: boolean; message: string }> => {
+  const cleanEmail = email.toLowerCase().trim();
+  if (!newPassword || newPassword.length < 6) {
+    throw new Error('Le nouveau mot de passe doit comporter au moins 6 caractères.');
+  }
+
+  // 1. Update in local stored users
+  const stored = getStoredUsers();
+  let userEntry = stored[cleanEmail];
+
+  if (!userEntry) {
+    const testMatch = ALL_TEST_PROFILES.find((p) => p.email.toLowerCase() === cleanEmail);
+    if (testMatch) {
+      userEntry = {
+        profile: {
+          uid: `test_uid_${testMatch.id}`,
+          email: testMatch.email,
+          fullName: testMatch.name,
+          phone: testMatch.phone,
+          role: testMatch.role,
+          vehicleType: testMatch.vehicleType,
+          storeName: testMatch.storeName,
+          createdAt: new Date().toISOString(),
+        },
+        passwordHash: btoa(newPassword),
+      };
+    } else {
+      userEntry = {
+        profile: {
+          uid: 'usr_' + Math.random().toString(36).substring(2, 10),
+          email: cleanEmail,
+          fullName: cleanEmail.split('@')[0],
+          phone: '+229 97 00 00 00',
+          role: 'livreur',
+          createdAt: new Date().toISOString(),
+        },
+        passwordHash: btoa(newPassword),
+      };
+    }
+  }
+
+  userEntry.passwordHash = btoa(newPassword);
+  saveStoredUser(cleanEmail, userEntry.profile, btoa(newPassword));
+
+  // 2. Try notifying backend server if endpoint exists
+  try {
+    await fetch('/api/auth/admin-force-reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: cleanEmail, newPassword }),
+    });
+  } catch {
+    // Fallback silent
+  }
+
+  return {
+    success: true,
+    message: `Le mot de passe de ${userEntry.profile.fullName || cleanEmail} a été réinitialisé avec succès.`,
+  };
+};
+
 export const directResetPassword = async (email: string, newPassword: string) => {
   return verifyResetCodeAndSetPassword(email, '123456', newPassword);
 };

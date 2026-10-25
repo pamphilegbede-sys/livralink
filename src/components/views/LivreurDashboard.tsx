@@ -28,6 +28,7 @@ export const LivreurDashboard: React.FC = () => {
     updateDeliveryStatus,
     createDelivery,
     setCurrentView,
+    featureFlags,
   } = useApp();
 
   const [expandedMapOrderId, setExpandedMapOrderId] = useState<string | null>(null);
@@ -90,15 +91,27 @@ export const LivreurDashboard: React.FC = () => {
   };
 
   const handleWhatsApp = (order: DeliveryOrder) => {
+    if (!featureFlags.allowDirectCallClient) {
+      showToast("Le contact direct avec le client a été restreint par l'administrateur.", 'error');
+      return;
+    }
     const msg = `Bonjour ${order.clientName}, je suis votre livreur LivraLink pour votre commande ${order.id}. Je suis en route pour la livraison. Êtes-vous bien disponible ?`;
     openWhatsAppModal(order.clientPhone, order.clientName, msg);
   };
 
   const handleAcceptOrder = (order: DeliveryOrder) => {
+    if (!featureFlags.livreurSpaceEnabled) {
+      showToast("L'espace livreur est actuellement verrouillé par l'administrateur.", 'error');
+      return;
+    }
     acceptDelivery(order.id);
   };
 
   const handleRefuseOrder = (orderId: string) => {
+    if (!featureFlags.allowMissionRefusal) {
+      showToast("Le refus de mission a été désactivé par l'administrateur. Toutes les courses doivent être prises en charge.", 'error');
+      return;
+    }
     refuseDelivery(orderId);
   };
 
@@ -236,6 +249,28 @@ export const LivreurDashboard: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {/* Admin Space Maintenance Alert if disabled */}
+          {!featureFlags.livreurSpaceEnabled && (
+            <div className="p-4 sm:p-5 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 text-amber-950 dark:text-amber-200 flex items-start gap-4 shadow-sm animate-pulse mb-6">
+              <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md">
+                <span className="material-symbols-outlined text-2xl">admin_panel_settings</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-extrabold text-sm sm:text-base text-amber-950 dark:text-amber-100">
+                    Espace Livreur Sous Contrôle Administrateur (Maintenance Active)
+                  </h3>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 font-bold uppercase tracking-wider">
+                    Verrouillage Admin
+                  </span>
+                </div>
+                <p className="text-xs sm:text-sm text-amber-900/90 dark:text-amber-300/90 mt-1">
+                  {featureFlags.livreurMaintenanceNotice || "L'espace coursier est temporairement suspendu pour maintenance par l'administrateur général LivraLink. L'acceptation de missions et les opérations financières sont suspendues."}
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Interactive Onboarding Welcome Banner for Couriers */}
           <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-teal-600 via-emerald-600 to-indigo-600 text-white shadow-lg shadow-emerald-600/15 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -510,13 +545,16 @@ export const LivreurDashboard: React.FC = () => {
                         </button>
 
                         <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleRefuseOrder(order.id)}
-                            className="min-h-[44px] px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition active:scale-95 flex items-center justify-center"
-                          >
-                            Refuser
-                          </button>
+                          {featureFlags.allowMissionRefusal && (
+                            <button
+                              type="button"
+                              onClick={() => handleRefuseOrder(order.id)}
+                              className="min-h-[44px] px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition active:scale-95 flex items-center justify-center cursor-pointer"
+                              title="Refuser cette mission"
+                            >
+                              Refuser
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => handleAcceptOrder(order)}

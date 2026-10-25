@@ -7,6 +7,8 @@ import { UrgentMissionModal } from './components/modals/UrgentMissionModal';
 import { FirebaseTestModal } from './components/modals/FirebaseTestModal';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { FullViewSkeleton } from './components/common/LoadingSkeleton';
+import { AdminDirectorFloatingBanner } from './components/common/AdminDirectorFloatingBanner';
+import { PlatformBroadcastBanner } from './components/common/PlatformBroadcastBanner';
 
 // Views
 import { LandingPage } from './components/views/LandingPage';
@@ -71,6 +73,12 @@ const MainAppRouter: React.FC = () => {
     <div className={`flex flex-col min-h-screen w-full bg-[#f8fafc] dark:bg-slate-950 text-[#131b2e] dark:text-slate-100 antialiased transition-colors duration-200 ${isDarkMode ? 'dark' : ''}`}>
       {/* Global Toast */}
       <Toast />
+
+      {/* Admin Director Mode Sticky Banner */}
+      <AdminDirectorFloatingBanner />
+
+      {/* Platform Emergency / Official Broadcast Banner */}
+      <PlatformBroadcastBanner />
 
       {/* View router with optional Mobile Simulator Frame */}
       {deviceMode === 'mobile-mock' ? (
