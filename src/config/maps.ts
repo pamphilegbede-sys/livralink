@@ -2,7 +2,8 @@
 // Google Maps Platform integration for LivraLink Bénin (77 Communes réparties sur 12 Départements)
 
 export const GOOGLE_MAPS_API_KEY =
-  (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string) ||
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GOOGLE_MAPS_API_KEY) ||
+  (typeof process !== 'undefined' && process.env?.VITE_GOOGLE_MAPS_API_KEY) ||
   'AIzaSyBLh57o8sYGPEtQn7H4DMRAihFykyXbFgM';
 
 export const RATE_PER_KM_FCFA = 100; // 100 FCFA par kilomètre
@@ -1050,3 +1051,115 @@ export function getLocationForCommune(communeName: string): LocationPoint {
   // Par défaut: Cotonou Haie Vive
   return BENIN_COMMUNES_COORDS['Cotonou - Haie Vive'];
 }
+
+/**
+ * Trouve la commune béninoise la plus proche de coordonnées GPS données (lat, lng).
+ */
+export function findClosestBeninCommune(
+  lat: number,
+  lng: number
+): { communeKey: string; point: LocationPoint; distanceKm: number } {
+  let closestKey = 'Cotonou - Haie Vive';
+  let closestPoint = BENIN_COMMUNES_COORDS['Cotonou - Haie Vive'];
+  let minDistance = Infinity;
+
+  for (const [key, point] of Object.entries(BENIN_COMMUNES_COORDS)) {
+    const dist = calculateDistanceKm({ lat, lng }, { lat: point.lat, lng: point.lng });
+    if (dist < minDistance) {
+      minDistance = dist;
+      closestKey = key;
+      closestPoint = point;
+    }
+  }
+
+  return {
+    communeKey: closestKey,
+    point: closestPoint,
+    distanceKm: minDistance
+  };
+}
+
+export interface DetectedUserLocation {
+  lat: number;
+  lng: number;
+  commune: string;
+  address: string;
+  gpsCoordinates: string;
+  accuracyMeters?: number;
+  source: 'browser_gps' | 'benin_default';
+  detectedAt: string;
+}
+
+/**
+ * Détecte automatiquement la position géographique de l'utilisateur (HTML5 Geolocation API).
+ * Si autorisé, identifie la commune béninoise la plus proche et retourne les coordonnées formatées.
+ * Si non disponible, refusé ou hors-délai, utilise la commune de référence (Cotonou - Haie Vive).
+ */
+export async function detectUserGeolocation(): Promise<DetectedUserLocation> {
+  const defaultLoc: DetectedUserLocation = {
+    lat: 6.3571,
+    lng: 2.4175,
+    commune: 'Cotonou - Haie Vive',
+    address: 'Avenue Jean-Paul II, Cotonou, Bénin',
+    gpsCoordinates: '6.3571, 2.4175',
+    source: 'benin_default',
+    detectedAt: new Date().toISOString()
+  };
+
+  if (typeof window === 'undefined' || !navigator.geolocation) {
+    return defaultLoc;
+  }
+
+  return new Promise<DetectedUserLocation>((resolve) => {
+    let resolved = false;
+
+    // Timeout de sécurité de 5000ms
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        resolve(defaultLoc);
+      }
+    }, 5000);
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+
+        const lat = Math.round(pos.coords.latitude * 10000) / 10000;
+        const lng = Math.round(pos.coords.longitude * 10000) / 10000;
+        const accuracy = Math.round(pos.coords.accuracy);
+
+        // Trouve la commune béninoise la plus proche
+        const match = findClosestBeninCommune(lat, lng);
+        const commune = match.point.commune || match.communeKey;
+        const address = match.point.address || `${commune}, Bénin`;
+
+        resolve({
+          lat,
+          lng,
+          commune,
+          address,
+          gpsCoordinates: `${lat}, ${lng}`,
+          accuracyMeters: accuracy,
+          source: 'browser_gps',
+          detectedAt: new Date().toISOString()
+        });
+      },
+      (err) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        console.warn('Geolocation detection fallback notice:', err.message);
+        resolve(defaultLoc);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 5000,
+        maximumAge: 60000
+      }
+    );
+  });
+}
+

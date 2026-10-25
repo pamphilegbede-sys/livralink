@@ -7,6 +7,7 @@ import { BackButton } from '../common/BackButton';
 import { DeliveryOrder } from '../../types';
 import { EmptyState } from '../common/EmptyState';
 import { PaginationControls } from '../common/PaginationControls';
+import { OnboardingGuideModal } from '../modals/OnboardingGuideModal';
 
 export const VendeurDashboard: React.FC = () => {
   const {
@@ -27,6 +28,16 @@ export const VendeurDashboard: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
+
+  // Onboarding Guide Auto-Display on first load
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(() => {
+    try {
+      const completed = localStorage.getItem('livralink_onboarding_completed_vendeur');
+      return completed !== 'true';
+    } catch {
+      return false;
+    }
+  });
 
   // Counters
   const totalCount = deliveries.length;
@@ -116,18 +127,55 @@ export const VendeurDashboard: React.FC = () => {
             <div className="flex items-center gap-3">
               <BackButton />
               <div>
-                <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight">
+                <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
                   Tableau de bord Vendeur
                 </h1>
-                <p className="text-xs text-slate-500">Supervision directe de votre flotte et vos colis</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Supervision directe de votre flotte et vos colis</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsOnboardingOpen(true)}
+                className="py-2.5 sm:py-3 px-3.5 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                title="Consulter le guide de démarrage interactif"
+              >
+                <span className="material-symbols-outlined text-lg text-indigo-600 dark:text-indigo-400">help_outline</span>
+                <span>Guide de démarrage</span>
+              </button>
+              <button
+                onClick={() => setCurrentView('vendeur_new_delivery')}
+                className="py-2.5 sm:py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/20 active:scale-95 transition-all flex items-center justify-center gap-2"
+              >
+                <span className="material-symbols-outlined text-lg">add</span>
+                <span>+ Nouvelle livraison</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Interactive Onboarding Welcome Banner */}
+          <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-600/15 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+              <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-white/20 backdrop-blur-md text-white flex items-center justify-center shrink-0 shadow-inner">
+                <span className="material-symbols-outlined text-2xl">rocket_launch</span>
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-sm sm:text-base font-extrabold flex items-center gap-2 flex-wrap">
+                  <span>Nouveau sur LivraLink ? Maîtrisez la plateforme en 2 min</span>
+                  <span className="px-2 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-bold">Guide Pas-à-Pas</span>
+                </h2>
+                <p className="text-xs text-blue-100 mt-0.5">
+                  Découvrez comment créer une course en 30s, partager le suivi WhatsApp au client et encaisser vos paiements.
+                </p>
               </div>
             </div>
             <button
-              onClick={() => setCurrentView('vendeur_new_delivery')}
-              className="py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/20 active:scale-95 transition-all flex items-center justify-center gap-2"
+              type="button"
+              onClick={() => setIsOnboardingOpen(true)}
+              className="px-4 py-2.5 rounded-xl bg-white hover:bg-blue-50 text-blue-700 font-bold text-xs shadow-md transition-all active:scale-95 shrink-0 flex items-center justify-center gap-1.5 cursor-pointer"
             >
-              <span className="material-symbols-outlined text-lg">add</span>
-              <span>+ Nouvelle livraison</span>
+              <span className="material-symbols-outlined text-base">play_circle</span>
+              <span>Lancer le guide</span>
             </button>
           </div>
 
@@ -697,6 +745,13 @@ export const VendeurDashboard: React.FC = () => {
 
       {/* Mobile Bottom Navigation Bar */}
       <MobileBottomNav />
+
+      {/* Onboarding Walkthrough Modal */}
+      <OnboardingGuideModal
+        isOpen={isOnboardingOpen}
+        onClose={() => setIsOnboardingOpen(false)}
+        role="vendeur"
+      />
     </div>
   );
 };

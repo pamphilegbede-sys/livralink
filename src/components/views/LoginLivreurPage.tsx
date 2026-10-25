@@ -6,7 +6,7 @@ import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
 
 export const LoginLivreurPage: React.FC = () => {
-  const { setCurrentView, setCurrentRole, setCourierSettings, setUserProfile, setSelectedCourier, couriers, showToast, openTestModal } = useApp();
+  const { setCurrentView, setCurrentRole, setCourierSettings, setUserProfile, setSelectedCourier, couriers, showToast, openTestModal, detectAndSaveLocation } = useApp();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -44,7 +44,7 @@ export const LoginLivreurPage: React.FC = () => {
         totalDeliveries: 385,
         vehicle: profile.vehicleType || 'Scooter Électrique / Moto',
         vehiclePlate: 'BJ-6621-RB',
-        zone: 'Cotonou & Alentours',
+        zone: profile.locationCommune || 'Cotonou & Alentours',
         distanceKm: 0.9,
         etaMinutes: 5,
         status: 'en_ligne',
@@ -67,6 +67,9 @@ export const LoginLivreurPage: React.FC = () => {
     try {
       const { user, profile } = await loginWithEmailPassword(identifier, password, 'livreur');
       const resolvedRole = profile?.role || 'livreur';
+
+      // Détection automatique et enregistrement de la position géographique de l'utilisateur
+      detectAndSaveLocation(user.uid, profile).catch((err) => console.warn('Erreur détection position:', err));
       
       setCurrentRole(resolvedRole);
       if (resolvedRole === 'vendeur') {
@@ -100,7 +103,7 @@ export const LoginLivreurPage: React.FC = () => {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const { user, profile } = await loginWithGoogle('livreur');
+      const { user, profile, location } = await loginWithGoogle('livreur');
       setCurrentRole('livreur');
       if (profile) {
         setUserProfile(profile);
@@ -109,19 +112,17 @@ export const LoginLivreurPage: React.FC = () => {
           fullName: profile.fullName || prev.fullName,
           phone: profile.phone || prev.phone,
           email: profile.email || prev.email,
+          parkingBaseAddress: location?.commune || profile.locationCommune || prev.parkingBaseAddress,
+          gpsCoordinates: location?.gpsCoordinates || profile.gpsCoordinates || prev.gpsCoordinates,
         }));
         syncCourierIdentity(profile);
       }
       setCurrentView('livreur_dashboard');
-      showToast(`Connexion Google réussie ! Bienvenue ${profile?.fullName || user.displayName || 'Coursier'}.`, 'success');
+      showToast(`Connexion Google réussie ! Bienvenue ${profile?.fullName || user.displayName || 'Coursier'}. Position enregistrée : ${location?.commune || 'Cotonou'} (${location?.gpsCoordinates || '6.3571, 2.4175'}).`, 'success');
     } catch (err: any) {
-      if (err?.code === 'auth/popup-closed-by-user') {
-        showToast('Connexion Google annulée.', 'info');
-      } else {
-        const errorMsg = getFirebaseAuthErrorMessage(err);
-        setErrorMessage(errorMsg);
-        showToast(errorMsg, 'error');
-      }
+      const errorMsg = getFirebaseAuthErrorMessage(err);
+      setErrorMessage(errorMsg);
+      showToast(errorMsg, 'error');
     } finally {
       setIsLoading(false);
     }

@@ -345,7 +345,7 @@ export const LivreurMissions: React.FC = () => {
                           className="min-h-[44px] flex-1 sm:flex-initial px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all flex items-center justify-center gap-1.5"
                         >
                           <span className="material-symbols-outlined text-base">verified_user</span>
-                          <span>Valider POD (Preuve)</span>
+                          <span>Valider POD (OTP + Photo + Signature)</span>
                         </button>
                       )}
 

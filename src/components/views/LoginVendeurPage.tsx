@@ -6,7 +6,7 @@ import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
 
 export const LoginVendeurPage: React.FC = () => {
-  const { setCurrentView, setCurrentRole, setMerchantSettings, setUserProfile, showToast, openTestModal } = useApp();
+  const { setCurrentView, setCurrentRole, setMerchantSettings, setUserProfile, showToast, openTestModal, detectAndSaveLocation } = useApp();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -29,6 +29,9 @@ export const LoginVendeurPage: React.FC = () => {
     try {
       const { user, profile } = await loginWithEmailPassword(identifier, password, 'vendeur');
       const resolvedRole = profile?.role || 'vendeur';
+
+      // Détection automatique et enregistrement de la position géographique de l'utilisateur
+      detectAndSaveLocation(user.uid, profile).catch((err) => console.warn('Erreur détection position:', err));
 
       setCurrentRole(resolvedRole);
       if (resolvedRole === 'livreur') {
@@ -62,7 +65,7 @@ export const LoginVendeurPage: React.FC = () => {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const { user, profile } = await loginWithGoogle('vendeur');
+      const { user, profile, location } = await loginWithGoogle('vendeur');
       setCurrentRole('vendeur');
       if (profile) {
         setUserProfile(profile);
@@ -71,18 +74,17 @@ export const LoginVendeurPage: React.FC = () => {
           managerName: profile.fullName || prev.managerName,
           storeName: profile.storeName || `Boutique ${profile.fullName}` || prev.storeName,
           email: profile.email || prev.email,
+          storeCommune: location?.commune || profile.locationCommune || prev.storeCommune,
+          defaultPickupAddress: location?.address || profile.locationAddress || prev.defaultPickupAddress,
+          storeCoordinates: location ? [location.lat, location.lng] : prev.storeCoordinates,
         }));
       }
       setCurrentView('vendeur_dashboard');
-      showToast(`Connexion Google réussie ! Bienvenue ${profile?.fullName || user.displayName || 'Vendeur'}.`, 'success');
+      showToast(`Connexion Google réussie ! Bienvenue ${profile?.fullName || user.displayName || 'Vendeur'}. Position enregistrée : ${location?.commune || 'Cotonou'} (${location?.gpsCoordinates || '6.3571, 2.4175'}).`, 'success');
     } catch (err: any) {
-      if (err?.code === 'auth/popup-closed-by-user') {
-        showToast('Connexion Google annulée.', 'info');
-      } else {
-        const errorMsg = getFirebaseAuthErrorMessage(err);
-        setErrorMessage(errorMsg);
-        showToast(errorMsg, 'error');
-      }
+      const errorMsg = getFirebaseAuthErrorMessage(err);
+      setErrorMessage(errorMsg);
+      showToast(errorMsg, 'error');
     } finally {
       setIsLoading(false);
     }

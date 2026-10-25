@@ -15,6 +15,12 @@
         "storeCommune": { "type": "string", "maxLength": 128, "description": "Commune du magasin" },
         "storeAddress": { "type": "string", "maxLength": 256, "description": "Adresse physique du magasin" },
         "vehicleType": { "type": "string", "maxLength": 64, "description": "Type de véhicule du livreur" },
+        "gpsCoordinates": { "type": "string", "maxLength": 64, "description": "Coordonnées GPS détectées" },
+        "locationCommune": { "type": "string", "maxLength": 128, "description": "Commune détectée" },
+        "locationAddress": { "type": "string", "maxLength": 256, "description": "Adresse détectée" },
+        "locationLat": { "type": "number", "description": "Latitude GPS détectée" },
+        "locationLng": { "type": "number", "description": "Longitude GPS détectée" },
+        "locationUpdatedAt": { "type": "string", "maxLength": 64, "description": "Horodatage de la détection de position" },
         "createdAt": { "type": "string", "maxLength": 64, "description": "Horodatage de création du compte" },
         "updatedAt": { "type": "string", "maxLength": 64, "description": "Horodatage de mise à jour" }
       },

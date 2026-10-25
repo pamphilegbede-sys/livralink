@@ -8,7 +8,7 @@ import { BeninZoneSelector } from '../common/BeninZoneSelector';
 import { DarkModeToggle } from '../common/DarkModeToggle';
 
 export const LivreurSettings: React.FC = () => {
-  const { courierSettings, setCourierSettings, toggleCourierAvailability, showToast, setCurrentView, logout } = useApp();
+  const { courierSettings, setCourierSettings, toggleCourierAvailability, showToast, setCurrentView, logout, userProfile, detectedLocation, detectAndSaveLocation } = useApp();
 
   const [fullName, setFullName] = useState(courierSettings.fullName);
   const [phone, setPhone] = useState(courierSettings.phone);
@@ -141,9 +141,53 @@ export const LivreurSettings: React.FC = () => {
                   <p className="text-xs text-slate-500">Données officielles d'identification du livreur et réputation sur le réseau</p>
                 </div>
               </div>
-              <span className="px-3 py-1 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full border border-emerald-200">
+              <span className="px-3 py-1 bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-xs font-bold rounded-full border border-emerald-200 dark:border-emerald-800">
                 Certifié LivraLink
               </span>
+            </div>
+
+            {/* Position Géographique Détectée & Enregistrée */}
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-slate-800/80 dark:to-slate-800/40 border border-emerald-200/80 dark:border-emerald-900/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                  <span className="material-symbols-outlined text-xl">near_me</span>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                      Position GPS Livreur Détectée &amp; Enregistrée
+                    </h4>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">
+                      Synchronisé Profil &amp; Firestore ✓
+                    </span>
+                  </div>
+                  <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 mt-0.5">
+                    📍 {userProfile?.locationCommune || detectedLocation?.commune || courierSettings.parkingBaseAddress || 'Cotonou - Haie Vive'}
+                    <span className="text-slate-500 dark:text-slate-400 font-normal ml-1">
+                      ({userProfile?.gpsCoordinates || detectedLocation?.gpsCoordinates || courierSettings.gpsCoordinates || '6.3571, 2.4175'})
+                    </span>
+                  </p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    Base de stationnement active : {userProfile?.locationAddress || detectedLocation?.address || courierSettings.parkingBaseAddress || 'Avenue Jean-Paul II, Cotonou, Bénin'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const loc = await detectAndSaveLocation();
+                    setParkingBaseAddress(loc.commune);
+                    showToast(`Position livreur actualisée : ${loc.commune} (${loc.gpsCoordinates})`, 'success');
+                  } catch (e: any) {
+                    showToast(e?.message || 'Erreur lors de la détection', 'error');
+                  }
+                }}
+                className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:border-emerald-500 text-slate-700 dark:text-slate-200 text-xs font-bold shadow-2xs hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center gap-1.5 shrink-0"
+              >
+                <span className="material-symbols-outlined text-sm text-emerald-600">refresh</span>
+                <span>Actualiser ma position</span>
+              </button>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

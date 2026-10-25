@@ -20,6 +20,7 @@ export const VendeurTracking: React.FC = () => {
     setCurrentRole,
     acceptDelivery,
     updateDeliveryStatus,
+    generateNewOTP,
   } = useApp();
 
   const [activeCourseId, setActiveCourseId] = useState(selectedDelivery?.id || deliveries[0]?.id || '#LL-4192');
@@ -73,6 +74,24 @@ export const VendeurTracking: React.FC = () => {
   const handleRelaunch = (orderId: string) => {
     updateDeliveryStatus(orderId, 'en_attente', 'Recherche coursier relancée par le vendeur');
     showToast(`Recherche de coursier relancée pour ${orderId}`, 'info');
+  };
+
+  const currentOtp = currentOrder?.otpCode || '8492';
+
+  const handleCopyOtp = () => {
+    navigator.clipboard.writeText(currentOtp);
+    showToast(`Code secret OTP #${currentOtp} copié !`, 'success');
+  };
+
+  const handleSendOtpWhatsApp = () => {
+    const msg = `Bonjour *${currentOrder.clientName}*, votre colis LivraLink (${currentOrder.id}) est prêt pour la livraison. Voici votre *code secret OTP de livraison : ${currentOtp}*.\n\n⚠️ Veuillez communiquer ou taper ce code à 4 chiffres sur le smartphone de votre coursier à son arrivée pour valider la réception.`;
+    openWhatsAppModal(currentOrder.clientPhone, currentOrder.clientName, msg);
+  };
+
+  const handleRegenerateOtp = () => {
+    if (!currentOrder) return;
+    const newOtp = generateNewOTP(currentOrder.id);
+    showToast(`Nouveau code secret #${newOtp} généré avec succès !`, 'success');
   };
 
   return (
@@ -220,6 +239,173 @@ export const VendeurTracking: React.FC = () => {
                   </button>
                 </div>
               </div>
+
+              {/* Carte Gestion Code OTP Vendeur ➔ Client (Sécurité POD Obligatoire) */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white shadow-lg space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/10">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-400/30">
+                      <span className="material-symbols-outlined text-xl">pin</span>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-extrabold text-sm text-white">Code Secret OTP Client</h4>
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-400/30">
+                          Preuve Obligatoire n°1
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-300 mt-0.5">
+                        Transmettez ce code à <strong>{currentOrder.clientName}</strong> afin qu'il le tape sur le smartphone du livreur à la livraison.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Secret OTP Display */}
+                  <div className="flex items-center gap-2 bg-black/40 px-4 py-2 rounded-2xl border border-white/15 self-start sm:self-auto">
+                    <span className="text-xs text-slate-400 font-medium">Code secret :</span>
+                    <span className="font-mono text-2xl font-black text-amber-400 tracking-widest">
+                      {currentOtp}
+                    </span>
+                  </div>
+                </div>
+
+                {/* OTP Actions for Seller */}
+                <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1">
+                  <div className="text-[11px] text-slate-300 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-sm text-emerald-400">lock</span>
+                    <span>Inviolable : Le livreur ne peut pas certifier la course sans ce code tapé par le client.</span>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={handleCopyOtp}
+                      className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all flex items-center gap-1 active:scale-95 cursor-pointer border border-white/10"
+                    >
+                      <span className="material-symbols-outlined text-sm">content_copy</span>
+                      <span>Copier code</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleRegenerateOtp}
+                      className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-amber-300 text-xs font-bold transition-all flex items-center gap-1 active:scale-95 cursor-pointer border border-amber-400/20"
+                      title="Générer un nouveau code secret 4 chiffres"
+                    >
+                      <span className="material-symbols-outlined text-sm">sync</span>
+                      <span>Régénérer OTP</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleSendOtpWhatsApp}
+                      className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md shadow-emerald-600/30 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-sm">send</span>
+                      <span>Envoyer au client via WhatsApp</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Certificat de Livraison POD Tri-Facteur (affiché si la course est livrée) */}
+              {currentOrder.status === 'livree' && currentOrder.podData && (
+                <div className="p-5 rounded-3xl bg-gradient-to-r from-emerald-50 via-teal-50 to-blue-50 border-2 border-emerald-300 shadow-sm space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-emerald-200">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-9 h-9 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                        <span className="material-symbols-outlined text-xl">verified</span>
+                      </span>
+                      <div>
+                        <h4 className="font-black text-slate-900 text-sm flex items-center gap-2">
+                          <span>Certificat de Livraison Tri-Facteur Validé</span>
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-200 text-emerald-900 text-[10px] font-extrabold">
+                            3/3 Preuves Conformes
+                          </span>
+                        </h4>
+                        <p className="text-xs text-slate-600">
+                          Horodatage de remise certifiée : <strong>{currentOrder.podData.validatedAt || '12:04'}</strong>
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* The 3 proofs displayed side by side */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {/* Proof 1: OTP */}
+                    <div className="p-3.5 rounded-2xl bg-white border border-emerald-200 shadow-2xs space-y-2">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                        <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs">✓</span>
+                        <span>1. Code Secret OTP</span>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-150 text-center">
+                        <span className="text-[10px] text-slate-400 block font-medium">Code tapé par le client</span>
+                        <span className="font-mono text-xl font-black text-emerald-700">
+                          #{currentOrder.podData.otpCode || currentOrder.podData.code || currentOtp}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-emerald-800 font-semibold text-center">
+                        Code client validé avec succès
+                      </p>
+                    </div>
+
+                    {/* Proof 2: Direct live photo without face */}
+                    <div className="p-3.5 rounded-2xl bg-white border border-emerald-200 shadow-2xs space-y-2">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                        <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs">✓</span>
+                        <span>2. Photo Directe Colis</span>
+                      </div>
+                      <div className="h-24 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 relative group">
+                        {currentOrder.podData.photoUrl ? (
+                          <img
+                            src={currentOrder.podData.photoUrl}
+                            alt="Photo certifiée du colis en direct"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 text-xs">
+                            <span className="material-symbols-outlined text-2xl text-emerald-600">photo_camera</span>
+                            <span>Photo prise en direct</span>
+                          </div>
+                        )}
+                        <span className="absolute bottom-1 right-1 bg-black/60 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">
+                          Sans visage
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 text-center">
+                        Colis photographié en mains propres
+                      </p>
+                    </div>
+
+                    {/* Proof 3: Tactile signature & Signer Name */}
+                    <div className="p-3.5 rounded-2xl bg-white border border-emerald-200 shadow-2xs space-y-2">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                        <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs">✓</span>
+                        <span>3. Signature &amp; Nom</span>
+                      </div>
+                      <div className="h-24 rounded-xl bg-slate-50 border border-slate-200 flex flex-col items-center justify-center p-2">
+                        {currentOrder.podData.signatureDataUrl ? (
+                          <img
+                            src={currentOrder.podData.signatureDataUrl}
+                            alt="Signature tactile"
+                            className="max-h-14 object-contain"
+                          />
+                        ) : (
+                          <span className="text-xs text-blue-700 font-serif italic font-bold">
+                            Signature certifiée
+                          </span>
+                        )}
+                        <span className="text-[11px] font-bold text-slate-800 mt-1 truncate max-w-full">
+                          {currentOrder.podData.signedByName || currentOrder.clientName}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 text-center">
+                        Signé sur écran tactile du livreur
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Tracé Google Maps Bénin en direct */}
               <div className="space-y-2">

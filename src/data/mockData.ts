@@ -292,6 +292,8 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
     statusNote: 'En cours d\'acheminement - ETA 14:38 (~6 min)',
     createdAt: '13:45',
     estimatedArrival: '14:38',
+    otpCode: '8492',
+    otpGeneratedAt: '13:46',
     courier: INITIAL_COURIERS[0], // Awa Véloce Livraisons
     timeline: [
       { id: 't1', stepNumber: 1, title: 'Commande créée', description: 'Enregistrée via WhatsApp Checkout', timestamp: '13:45', status: 'completed' },
@@ -299,7 +301,7 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
       { id: 't3', stepNumber: 3, title: 'Mission acceptée', description: 'Coursière en route vers la boutique', timestamp: '13:55', status: 'completed' },
       { id: 't4', stepNumber: 4, title: 'Colis récupéré', description: 'Scan QR & vérification au comptoir', timestamp: '14:10', status: 'completed' },
       { id: 't5', stepNumber: 5, title: 'En cours de livraison', description: 'En transit vers Cadjehoun (1.2 km restant)', timestamp: '14:38', status: 'active' },
-      { id: 't6', stepNumber: 6, title: 'Preuve de livraison (POD)', description: 'Validation par code OTP 4 chiffres & photo', status: 'pending' }
+      { id: 't6', stepNumber: 6, title: 'Preuve de livraison (POD)', description: 'Validation obligatoire : Code OTP + Photo en direct + Signature tactile', status: 'pending' }
     ]
   },
   {
@@ -330,6 +332,8 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
     statusNote: 'Course acceptée - Prise en charge en cours',
     createdAt: '14:00',
     estimatedArrival: '15:15',
+    otpCode: '3914',
+    otpGeneratedAt: '14:01',
     courier: INITIAL_COURIERS[4], // Moussa T.
     timeline: [
       { id: 't1', stepNumber: 1, title: 'Commande créée', description: 'Enregistrée via WhatsApp', timestamp: '14:00', status: 'completed' },
@@ -337,7 +341,7 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
       { id: 't3', stepNumber: 3, title: 'Mission acceptée', description: 'En route vers boutique Glam Chic (~4 min)', timestamp: '14:08', status: 'active' },
       { id: 't4', stepNumber: 4, title: 'Colis récupéré', description: 'Enlèvement boutique', status: 'pending' },
       { id: 't5', stepNumber: 5, title: 'En cours de livraison', description: 'Trajet vers Ganhi / Cadjehoun', status: 'pending' },
-      { id: 't6', stepNumber: 6, title: 'Livrée (POD)', description: 'Signature client', status: 'pending' }
+      { id: 't6', stepNumber: 6, title: 'Livrée (POD)', description: 'Validation obligatoire OTP + Photo + Signature', status: 'pending' }
     ]
   },
   {
@@ -367,6 +371,8 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
     status: 'en_attente',
     statusNote: 'En recherche de coursier disponible',
     createdAt: '14:15',
+    otpCode: '7251',
+    otpGeneratedAt: '14:15',
     timeline: [
       { id: 't1', stepNumber: 1, title: 'Commande créée', description: 'Enregistrée par vendeur', timestamp: '14:15', status: 'completed' },
       { id: 't2', stepNumber: 2, title: 'Diffusion coursier', description: 'Rayon étendu à 3.5 km', timestamp: '14:16', status: 'active' },
@@ -401,12 +407,18 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
     deliveryFee: 2000,
     totalCustomerPayable: 57000,
     status: 'livree',
-    statusNote: 'Livrée avec succès (Preuve POD validée)',
+    statusNote: 'Livrée avec succès (Preuve POD Tri-Facteur validée)',
     createdAt: '11:20',
     estimatedArrival: '12:05',
+    otpCode: '8492',
+    otpGeneratedAt: '11:21',
     courier: INITIAL_COURIERS[5], // Seydou D.
     podData: {
-      type: 'otp',
+      type: 'complete_tri_factor',
+      otpCode: '8492',
+      photoUrl: 'https://images.unsplash.com/photo-1549465220-1a8b9238cd48?w=500&auto=format&fit=crop&q=60',
+      signatureDataUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="220" height="70" viewBox="0 0 220 70"><path d="M 20 50 C 45 15, 75 60, 115 30 S 170 55, 200 35" stroke="%231e3a8a" stroke-width="3" fill="none" stroke-linecap="round"/></svg>',
+      signedByName: 'Clarisse N\'Guessan',
       validatedAt: '12:04',
       code: '8492'
     },
@@ -416,7 +428,7 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
       { id: 't3', stepNumber: 3, title: 'Mission acceptée', description: 'Confirmée', timestamp: '11:25', status: 'completed' },
       { id: 't4', stepNumber: 4, title: 'Colis récupéré', description: 'Boutique Glam Chic Cotonou', timestamp: '11:40', status: 'completed' },
       { id: 't5', stepNumber: 5, title: 'En livraison', description: 'Vers Fidjrossè', timestamp: '11:58', status: 'completed' },
-      { id: 't6', stepNumber: 6, title: 'Livrée (POD validée)', description: 'Code OTP #8492 vérifié à 12:04', timestamp: '12:04', status: 'completed' }
+      { id: 't6', stepNumber: 6, title: 'Livrée (POD Tri-Facteur certifiée)', description: 'Code OTP #8492, photo colis & signature Clarisse N\'Guessan', timestamp: '12:04', status: 'completed' }
     ]
   },
   {
@@ -446,6 +458,8 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
     status: 'echec',
     statusNote: 'Échec de livraison : Client injoignable après 3 appels',
     createdAt: '09:40',
+    otpCode: '5820',
+    otpGeneratedAt: '09:41',
     courier: INITIAL_COURIERS[2], // Ibrahim K.
     timeline: [
       { id: 't1', stepNumber: 1, title: 'Commande créée', description: 'Validée', timestamp: '09:40', status: 'completed' },
@@ -481,20 +495,27 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
     deliveryFee: 2000,
     totalCustomerPayable: 40000,
     status: 'livree',
-    statusNote: 'Livrée avec succès (Photo POD validée)',
+    statusNote: 'Livrée avec succès (Preuve POD Tri-Facteur validée)',
     createdAt: '08:30',
     estimatedArrival: '09:15',
+    otpCode: '4619',
+    otpGeneratedAt: '08:31',
     courier: INITIAL_COURIERS[4], // Moussa T.
     podData: {
-      type: 'photo',
-      validatedAt: '09:12'
+      type: 'complete_tri_factor',
+      otpCode: '4619',
+      photoUrl: 'https://images.unsplash.com/photo-1549465220-1a8b9238cd48?w=500&auto=format&fit=crop&q=60',
+      signatureDataUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="220" height="70" viewBox="0 0 220 70"><path d="M 25 45 C 55 15, 85 55, 125 30 S 165 60, 195 30" stroke="%231e3a8a" stroke-width="3" fill="none" stroke-linecap="round"/></svg>',
+      signedByName: 'Estelle Touré',
+      validatedAt: '09:12',
+      code: '4619'
     },
     timeline: [
       { id: 't1', stepNumber: 1, title: 'Commande créée', description: 'WhatsApp direct', timestamp: '08:30', status: 'completed' },
       { id: 't2', stepNumber: 2, title: 'Livreur assigné', description: 'Moussa T.', timestamp: '08:35', status: 'completed' },
       { id: 't3', stepNumber: 3, title: 'Colis récupéré', description: 'Pris en charge', timestamp: '08:50', status: 'completed' },
       { id: 't4', stepNumber: 4, title: 'En cours', description: 'Trajet Cadjehoun', timestamp: '09:05', status: 'completed' },
-      { id: 't5', stepNumber: 5, title: 'Livrée (POD)', description: 'Photo de remise horodatée validée', timestamp: '09:12', status: 'completed' }
+      { id: 't5', stepNumber: 5, title: 'Livrée (POD Tri-Facteur certifiée)', description: 'Code OTP #4619, photo & signature d\'Estelle Touré', timestamp: '09:12', status: 'completed' }
     ]
   },
   {
@@ -524,12 +545,14 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
     statusNote: 'En transit - 4.2 km • Arrivée estimée dans ~10 min',
     createdAt: '14:15',
     estimatedArrival: '14:45',
+    otpCode: '2938',
+    otpGeneratedAt: '14:16',
     courier: INITIAL_COURIERS[0], // David K.
     timeline: [
       { id: 't1', stepNumber: 1, title: 'Créée', description: 'WhatsApp', timestamp: '14:15', status: 'completed' },
       { id: 't2', stepNumber: 2, title: 'Colis récupéré', description: 'Enlevé à 14:22', timestamp: '14:22', status: 'completed' },
       { id: 't3', stepNumber: 3, title: 'En transit', description: 'Vers Cotonou Akpakpa', timestamp: '14:35', status: 'active' },
-      { id: 't4', stepNumber: 4, title: 'Livrée', description: 'Attente', status: 'pending' }
+      { id: 't4', stepNumber: 4, title: 'Livrée', description: 'Attente validation obligatoire POD', status: 'pending' }
     ]
   },
   {
@@ -559,6 +582,8 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
     statusNote: 'Assignée à Ibrahim K. - Prise en charge en route',
     createdAt: '14:20',
     estimatedArrival: '14:55',
+    otpCode: '6145',
+    otpGeneratedAt: '14:21',
     courier: INITIAL_COURIERS[2], // Ibrahim K.
     timeline: [
       { id: 't1', stepNumber: 1, title: 'Créée', description: 'Instagram Shop', timestamp: '14:20', status: 'completed' },
@@ -592,6 +617,8 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
     status: 'en_attente',
     statusNote: 'En attente coursier • Recherche élargie à 3.5 km',
     createdAt: '14:10',
+    otpCode: '9312',
+    otpGeneratedAt: '14:11',
     timeline: [
       { id: 't1', stepNumber: 1, title: 'Créée', description: 'TikTok Shop', timestamp: '14:10', status: 'completed' },
       { id: 't2', stepNumber: 2, title: 'Diffusion', description: 'Rayon 3.5 km', timestamp: '14:12', status: 'active' }
@@ -623,6 +650,8 @@ export const INITIAL_DELIVERIES: DeliveryOrder[] = [
     status: 'echec',
     statusNote: '🔴 Litige adresse : Bloqué sur place depuis 22 min • Numéro client non attribué',
     createdAt: '13:50',
+    otpCode: '1784',
+    otpGeneratedAt: '13:51',
     courier: INITIAL_COURIERS[1], // Paul M.
     timeline: [
       { id: 't1', stepNumber: 1, title: 'Créée', description: 'Kréa Fashion', timestamp: '13:50', status: 'completed' },

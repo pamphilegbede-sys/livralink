@@ -91,11 +91,16 @@ export interface DeliveryOrder {
   statusNote?: string;
   createdAt: string;
   estimatedArrival?: string;
+  otpCode?: string; // Code secret à 4 chiffres généré par le vendeur et transmis au client
+  otpGeneratedAt?: string;
   podData?: {
-    type: 'otp' | 'photo' | 'signature';
+    type?: 'otp' | 'photo' | 'signature' | 'complete_tri_factor';
+    otpCode?: string;
+    photoUrl?: string;
+    signatureDataUrl?: string;
+    signedByName?: string;
     validatedAt: string;
     code?: string;
-    photoUrl?: string;
   };
   timeline: DeliveryTimelineStep[];
 }
@@ -154,6 +159,7 @@ export interface CourierSettings {
   phone: string;
   email: string;
   parkingBaseAddress: string;
+  gpsCoordinates?: string;
   isAvailable: boolean;
   workingHours: string;
   soundAlerts: boolean;

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User as FirebaseUser, onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from '../firebase/config';
-import { UserProfile, getUserProfile, logoutUser } from '../firebase/authService';
+import { UserProfile, getUserProfile, logoutUser, detectAndSaveUserLocation } from '../firebase/authService';
 import {
   UserRole,
   DeliveryOrder,
@@ -24,7 +24,7 @@ import {
   INITIAL_AUDIT_LOGS,
   PRICING_RULES
 } from '../data/mockData';
-import { calculateDeliveryPrice, calculateDistanceKm } from '../config/maps';
+import { calculateDeliveryPrice, calculateDistanceKm, DetectedUserLocation } from '../config/maps';
 
 export type AppView =
   | 'landing'
@@ -106,7 +106,17 @@ interface AppContextType {
   refuseDelivery: (orderId: string, reason?: string) => void;
   updateDeliveryStatus: (orderId: string, newStatus: DeliveryStatus, note?: string) => void;
   assignCourierToDelivery: (orderId: string, courierId: string) => void;
-  validatePOD: (orderId: string, method: 'otp' | 'photo' | 'signature', code?: string) => void;
+  validatePOD: (
+    orderId: string,
+    methodOrData: 'otp' | 'photo' | 'signature' | 'complete_tri_factor' | {
+      otpCode: string;
+      photoUrl: string;
+      signatureDataUrl: string;
+      signedByName: string;
+    },
+    code?: string
+  ) => void;
+  generateNewOTP: (orderId: string) => string;
   toggleCourierAvailability: () => void;
   selectActiveCourier: (courierOrId: Courier | string) => void;
   approveKYC: (requestId: string) => void;
@@ -180,6 +190,9 @@ interface AppContextType {
   isDarkMode: boolean;
   toggleDarkMode: () => void;
   setIsDarkMode: (dark: boolean) => void;
+  // Geolocation Detection & Recording
+  detectedLocation: DetectedUserLocation | null;
+  detectAndSaveLocation: (userId?: string, customProfile?: UserProfile | null) => Promise<DetectedUserLocation>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -318,6 +331,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast(next ? '🌙 Mode sombre activé' : '☀️ Mode clair activé', 'info');
       return next;
     });
+  };
+
+  // Geolocation state (persistent in localStorage)
+  const [detectedLocation, setDetectedLocation] = useState<DetectedUserLocation | null>(() => {
+    try {
+      const saved = localStorage.getItem('livralink_user_detected_location');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const detectAndSaveLocation = async (
+    userId?: string,
+    customProfile?: UserProfile | null
+  ): Promise<DetectedUserLocation> => {
+    const targetUid = userId || userProfile?.uid || firebaseUser?.uid;
+    const targetProfile = customProfile || userProfile;
+    const detected = await detectAndSaveUserLocation(targetUid, targetProfile);
+    setDetectedLocation(detected);
+
+    if (targetProfile) {
+      setUserProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              gpsCoordinates: detected.gpsCoordinates,
+              locationCommune: detected.commune,
+              locationAddress: detected.address,
+              locationLat: detected.lat,
+              locationLng: detected.lng,
+              locationUpdatedAt: detected.detectedAt,
+            }
+          : null
+      );
+    }
+
+    setMerchantSettings((prev) => ({
+      ...prev,
+      storeCommune: detected.commune || prev.storeCommune,
+      defaultPickupAddress: detected.address || prev.defaultPickupAddress,
+      storeCoordinates: [detected.lat, detected.lng],
+    }));
+
+    setCourierSettings((prev) => ({
+      ...prev,
+      parkingBaseAddress: detected.commune || prev.parkingBaseAddress,
+      gpsCoordinates: detected.gpsCoordinates,
+    }));
+
+    showToast(`📍 Position détectée et enregistrée : ${detected.commune} (${detected.gpsCoordinates})`, 'success');
+    return detected;
   };
 
   // Admin Active Tab state
@@ -534,6 +599,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               setIsAdminSessionUnlocked(true);
             }
           }
+
+          // Détection automatique de la position géographique de l'utilisateur à la connexion et synchronisation
+          detectAndSaveUserLocation(user.uid, profile).then((loc) => {
+            setDetectedLocation(loc);
+          }).catch((locErr) => {
+            console.warn('Notice détection position connexion:', locErr);
+          });
         } catch (err) {
           console.warn('Erreur chargement profil Firestore:', err);
         }
@@ -644,6 +716,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         : `Course publiée • Disponible pour tous les livreurs de la zone`),
       createdAt: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
       estimatedArrival: 'Dans ~20 min',
+      otpCode: newOrderData.otpCode || Math.floor(1000 + Math.random() * 9000).toString(),
+      otpGeneratedAt: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
       timeline: [
         { id: 't1', stepNumber: 1, title: 'Commande créée', description: 'Enregistrée avec succès', timestamp: 'Maintenant', status: 'completed' },
         { 
@@ -663,7 +737,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         },
         { id: 't4', stepNumber: 4, title: 'Colis récupéré', description: 'Point de collecte boutique', status: 'pending' },
         { id: 't5', stepNumber: 5, title: 'En cours de livraison', description: 'En transit vers client', status: 'pending' },
-        { id: 't6', stepNumber: 6, title: 'Preuve de livraison (POD)', description: 'OTP ou photo', status: 'pending' }
+        { id: 't6', stepNumber: 6, title: 'Preuve de livraison (POD)', description: 'Validation obligatoire : Code OTP + Photo en direct + Signature tactile', status: 'pending' }
       ]
     };
 
@@ -923,29 +997,111 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`Course ${orderId} assignée à ${courier.name}`, 'success');
   };
 
-  const validatePOD = (orderId: string, method: 'otp' | 'photo' | 'signature', code?: string) => {
-    const nowTime = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const generateNewOTP = (orderId: string): string => {
+    const newOtp = Math.floor(1000 + Math.random() * 9000).toString();
+    const timestamp = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
     setDeliveries(prev =>
       prev.map(ord => {
         if (ord.id === orderId) {
           return {
             ...ord,
-            status: 'livree',
-            statusNote: `Livrée avec succès (Preuve ${method.toUpperCase()} validée)`,
-            podData: {
-              type: method,
-              validatedAt: nowTime,
-              code: code || '8492'
-            },
-            timeline: ord.timeline.map(s => ({ ...s, status: 'completed' as const }))
+            otpCode: newOtp,
+            otpGeneratedAt: timestamp,
           };
         }
         return ord;
       })
     );
+    if (selectedDelivery && selectedDelivery.id === orderId) {
+      setSelectedDelivery(prev => prev ? { ...prev, otpCode: newOtp, otpGeneratedAt: timestamp } : null);
+    }
+    addAuditLog('system', `Nouveau code OTP généré pour ${orderId}`, `Code secret généré par le marchand : ${newOtp}`);
+    showToast(`Nouveau code secret #${newOtp} généré pour le client !`, 'success');
+    return newOtp;
+  };
+
+  const validatePOD = (
+    orderId: string,
+    methodOrData: 'otp' | 'photo' | 'signature' | 'complete_tri_factor' | {
+      otpCode: string;
+      photoUrl: string;
+      signatureDataUrl: string;
+      signedByName: string;
+    },
+    code?: string
+  ) => {
+    const nowTime = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const isTriFactorObject = typeof methodOrData === 'object' && methodOrData !== null;
+
+    const podData = isTriFactorObject
+      ? {
+          type: 'complete_tri_factor' as const,
+          otpCode: methodOrData.otpCode,
+          photoUrl: methodOrData.photoUrl,
+          signatureDataUrl: methodOrData.signatureDataUrl,
+          signedByName: methodOrData.signedByName,
+          validatedAt: nowTime,
+          code: methodOrData.otpCode,
+        }
+      : {
+          type: methodOrData as 'otp' | 'photo' | 'signature',
+          validatedAt: nowTime,
+          code: code || '8492',
+        };
+
+    const statusNote = isTriFactorObject
+      ? `Livrée avec succès (Preuve Tri-Facteur : OTP #${methodOrData.otpCode}, Photo directe & Signature de ${methodOrData.signedByName})`
+      : `Livrée avec succès (Preuve ${(methodOrData as string).toUpperCase()} validée)`;
+
+    setDeliveries(prev =>
+      prev.map(ord => {
+        if (ord.id === orderId) {
+          const updatedTimeline = ord.timeline.map(s => {
+            if (s.stepNumber === 6) {
+              return {
+                ...s,
+                status: 'completed' as const,
+                title: 'Livrée (POD Tri-Facteur certifiée)',
+                description: isTriFactorObject
+                  ? `Certifiée à ${nowTime} : OTP #${methodOrData.otpCode}, Photo & Signature (${methodOrData.signedByName})`
+                  : `Validation effectuée à ${nowTime}`,
+                timestamp: nowTime
+              };
+            }
+            return { ...s, status: 'completed' as const };
+          });
+
+          return {
+            ...ord,
+            status: 'livree' as const,
+            statusNote,
+            podData,
+            timeline: updatedTimeline,
+          };
+        }
+        return ord;
+      })
+    );
+
+    if (selectedDelivery && selectedDelivery.id === orderId) {
+      setSelectedDelivery(prev => prev ? {
+        ...prev,
+        status: 'livree' as const,
+        statusNote,
+        podData,
+        timeline: prev.timeline.map(s => ({ ...s, status: 'completed' as const }))
+      } : null);
+    }
+
     setIsPODModalOpen(false);
-    addAuditLog('system', `Preuve de livraison certifiée ${orderId}`, `Validation par ${method.toUpperCase()}`);
-    showToast(`Preuve de livraison validée pour ${orderId} !`, 'success');
+    addAuditLog(
+      'system',
+      `Preuve de livraison certifiée ${orderId}`,
+      isTriFactorObject
+        ? `Validation Tri-Facteur obligatoire (OTP #${methodOrData.otpCode}, Photo directe sans visage, Signature de ${methodOrData.signedByName})`
+        : `Validation par ${methodOrData}`
+    );
+    showToast(`🎉 Livraison ${orderId} certifiée et validée avec succès !`, 'success');
   };
 
   const toggleCourierAvailability = () => {
@@ -1501,6 +1657,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateDeliveryStatus,
         assignCourierToDelivery,
         validatePOD,
+        generateNewOTP,
         toggleCourierAvailability,
         selectActiveCourier,
         approveKYC,
@@ -1557,7 +1714,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         changeAdminPassword,
         isDarkMode,
         toggleDarkMode,
-        setIsDarkMode
+        setIsDarkMode,
+        detectedLocation,
+        detectAndSaveLocation
       }}
     >
       {children}

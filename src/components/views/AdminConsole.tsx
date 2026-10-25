@@ -570,13 +570,9 @@ export const AdminConsole: React.FC = () => {
           setAdminLoginError(result.error || "Adresse Google non autorisée sur la Whitelist administrateur.");
         }
       } catch (err: any) {
-        if (err?.code === 'auth/popup-closed-by-user') {
-          showToast('Connexion Google annulée.', 'info');
-        } else {
-          const errorMsg = getFirebaseAuthErrorMessage(err);
-          setAdminLoginError(errorMsg);
-          showToast(errorMsg, 'error');
-        }
+        const errorMsg = getFirebaseAuthErrorMessage(err);
+        setAdminLoginError(errorMsg);
+        showToast(errorMsg, 'error');
       } finally {
         setIsLoggingInWithGoogle(false);
       }

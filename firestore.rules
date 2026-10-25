@@ -43,7 +43,13 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'email', 'fullName', 'phone', 'role']) &&
-             data.keys().hasOnly(['uid', 'email', 'fullName', 'phone', 'role', 'avatarUrl', 'storeName', 'storeCommune', 'storeAddress', 'vehicleType', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly([
+               'uid', 'email', 'fullName', 'phone', 'role', 'avatarUrl',
+               'storeName', 'storeCommune', 'storeAddress', 'vehicleType',
+               'gpsCoordinates', 'locationCommune', 'locationAddress',
+               'locationLat', 'locationLng', 'locationUpdatedAt',
+               'createdAt', 'updatedAt'
+             ]) &&
              data.uid == request.auth.uid &&
              data.email is string && data.email.size() <= 128 &&
              data.fullName is string && data.fullName.size() <= 128 &&
@@ -54,7 +60,13 @@ service cloud.firestore {
              (!('storeName' in data) || (data.storeName is string && data.storeName.size() <= 128)) &&
              (!('storeCommune' in data) || (data.storeCommune is string && data.storeCommune.size() <= 128)) &&
              (!('storeAddress' in data) || (data.storeAddress is string && data.storeAddress.size() <= 256)) &&
-             (!('vehicleType' in data) || (data.vehicleType is string && data.vehicleType.size() <= 64));
+             (!('vehicleType' in data) || (data.vehicleType is string && data.vehicleType.size() <= 64)) &&
+             (!('gpsCoordinates' in data) || (data.gpsCoordinates is string && data.gpsCoordinates.size() <= 64)) &&
+             (!('locationCommune' in data) || (data.locationCommune is string && data.locationCommune.size() <= 128)) &&
+             (!('locationAddress' in data) || (data.locationAddress is string && data.locationAddress.size() <= 256)) &&
+             (!('locationLat' in data) || (data.locationLat is number)) &&
+             (!('locationLng' in data) || (data.locationLng is number)) &&
+             (!('locationUpdatedAt' in data) || (data.locationUpdatedAt is string && data.locationUpdatedAt.size() <= 64));
     }
 
     // -------------------------------------------------------------------------

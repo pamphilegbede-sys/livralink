@@ -8,6 +8,7 @@ import { BackButton } from '../common/BackButton';
 import { GoogleMapDelivery } from '../maps/GoogleMapDelivery';
 import { getLocationForCommune, calculateDistanceKm, calculateDeliveryPrice } from '../../config/maps';
 import { DeliveryOrder } from '../../types';
+import { OnboardingGuideModal } from '../modals/OnboardingGuideModal';
 
 export const LivreurDashboard: React.FC = () => {
   const {
@@ -30,6 +31,16 @@ export const LivreurDashboard: React.FC = () => {
   } = useApp();
 
   const [expandedMapOrderId, setExpandedMapOrderId] = useState<string | null>(null);
+
+  // Onboarding Guide Auto-Display on first load
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(() => {
+    try {
+      const completed = localStorage.getItem('livralink_onboarding_completed_livreur');
+      return completed !== 'true';
+    } catch {
+      return false;
+    }
+  });
 
   // Livraisons en attente d'acceptation par les livreurs (créées par les vendeurs, ouvertes à tous)
   const pendingDeliveries = deliveries.filter(
@@ -204,17 +215,52 @@ export const LivreurDashboard: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 self-start md:self-auto">
+            <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
+              <button
+                type="button"
+                onClick={() => setIsOnboardingOpen(true)}
+                className="px-3.5 py-2 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 rounded-xl text-xs font-bold border border-indigo-200/80 dark:border-indigo-800 flex items-center gap-1.5 transition-all active:scale-95 shadow-2xs cursor-pointer"
+                title="Consulter le guide de prise en main coursier"
+              >
+                <span className="material-symbols-outlined text-base text-indigo-600 dark:text-indigo-400">help_outline</span>
+                <span>Guide coursier</span>
+              </button>
               <button
                 type="button"
                 onClick={handleCreateTestOrder}
-                className="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-bold border border-blue-200 flex items-center gap-1.5 transition-colors"
+                className="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-bold border border-blue-200 flex items-center gap-1.5 transition-colors cursor-pointer"
                 title="Simuler une course créée par un vendeur"
               >
                 <span className="material-symbols-outlined text-base">add_circle</span>
                 <span>+ Simuler course vendeur</span>
               </button>
             </div>
+          </div>
+
+          {/* Interactive Onboarding Welcome Banner for Couriers */}
+          <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-teal-600 via-emerald-600 to-indigo-600 text-white shadow-lg shadow-emerald-600/15 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+              <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-white/20 backdrop-blur-md text-white flex items-center justify-center shrink-0 shadow-inner">
+                <span className="material-symbols-outlined text-2xl">two_wheeler</span>
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-sm sm:text-base font-extrabold flex items-center gap-2 flex-wrap">
+                  <span>Nouveau coursier ? Maîtrisez vos missions et vos retraits</span>
+                  <span className="px-2 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-bold">Guide Pas-à-Pas</span>
+                </h2>
+                <p className="text-xs text-teal-100 mt-0.5">
+                  Découvrez comment accepter une course, naviguer avec Google Maps, valider la preuve POD et retirer vos gains via MoMo.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsOnboardingOpen(true)}
+              className="px-4 py-2.5 rounded-xl bg-white hover:bg-teal-50 text-teal-800 font-bold text-xs shadow-md transition-all active:scale-95 shrink-0 flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-base">play_circle</span>
+              <span>Lancer le guide</span>
+            </button>
           </div>
 
           {/* 2. Key Stats Grid */}
@@ -672,7 +718,7 @@ export const LivreurDashboard: React.FC = () => {
                     className="py-3.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 active:scale-95 transition-all"
                   >
                     <span className="material-symbols-outlined text-lg">task_alt</span>
-                    <span>Valider la remise POD (Photo / OTP)</span>
+                    <span>Valider la remise POD (3 étapes obligatoires : OTP + Photo + Signature)</span>
                   </button>
                 </div>
               </div>
@@ -720,6 +766,13 @@ export const LivreurDashboard: React.FC = () => {
 
       {/* Mobile Bottom Nav */}
       <MobileBottomNav />
+
+      {/* Onboarding Walkthrough Modal */}
+      <OnboardingGuideModal
+        isOpen={isOnboardingOpen}
+        onClose={() => setIsOnboardingOpen(false)}
+        role="livreur"
+      />
     </div>
   );
 };
