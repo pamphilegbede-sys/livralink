@@ -6,14 +6,36 @@ import { MobileBottomNav } from '../common/MobileBottomNav';
 import { BackButton } from '../common/BackButton';
 
 export const LivreurWallet: React.FC = () => {
-  const { courierSettings, showToast } = useApp();
-  const [payoutAmount, setPayoutAmount] = useState('25000');
+  const { courierSettings, showToast, couriers, selectedCourier, userProfile, deliveries } = useApp();
+  const [payoutAmount, setPayoutAmount] = useState('5000');
   const [payoutOperator, setPayoutOperator] = useState<'wave' | 'orange' | 'mtn' | 'moov'>('wave');
   const [isRequesting, setIsRequesting] = useState(false);
 
-  const availableBalance = 38500;
-  const pendingCODToReturn = 84000;
-  const totalEarnedMonth = 142000;
+  // Trouver le livreur connecté pour isoler strictement son solde
+  const matchingCourier = couriers.find(
+    (c) =>
+      (userProfile?.uid && c.id === userProfile.uid) ||
+      (userProfile?.email && c.email?.toLowerCase() === userProfile.email.toLowerCase()) ||
+      (c.name.toLowerCase() === (userProfile?.fullName || courierSettings.fullName).toLowerCase())
+  ) || (userProfile?.fullName ? undefined : selectedCourier);
+
+  // Pour un nouveau livreur fraîchement inscrit : solde initial = 0 FCFA (aucune fuite de données d'un autre utilisateur)
+  const availableBalance = matchingCourier?.walletBalanceFCFA ?? 0;
+
+  // Calcul dynamique des fonds COD des livraisons de ce livreur
+  const myDeliveries = deliveries.filter(
+    (d) =>
+      (d.courier && matchingCourier && (d.courier.id === matchingCourier.id || d.courier.name === matchingCourier.name)) ||
+      (d.courier && userProfile && (d.courier.id === userProfile.uid || d.courier.name === userProfile.fullName))
+  );
+
+  const pendingCODToReturn = myDeliveries
+    .filter((d) => d.status === 'livree')
+    .reduce((sum, d) => sum + (d.itemValueCOD || 0), 0);
+
+  const totalEarnedMonth = myDeliveries
+    .filter((d) => d.status === 'livree')
+    .reduce((sum, d) => sum + (d.deliveryFee || 0), availableBalance);
 
   const handleRequestPayout = async (e: React.FormEvent) => {
     e.preventDefault();

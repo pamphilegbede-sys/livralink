@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
-import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
 import { BackButton } from '../common/BackButton';
 import { DeliveryOrder } from '../../types';
@@ -21,35 +20,76 @@ export const VendeurTracking: React.FC = () => {
     acceptDelivery,
     updateDeliveryStatus,
     generateNewOTP,
+    userProfile,
+    merchantSettings,
+    isDirectorModeActive,
+    directorTargetName,
   } = useApp();
 
-  const [activeCourseId, setActiveCourseId] = useState(selectedDelivery?.id || deliveries[0]?.id || '#LL-4192');
-  const [activeFilter, setActiveFilter] = useState<'all' | 'en_cours' | 'en_attente' | 'livree' | 'echec'>('all');
+  // Isolation stricte des livraisons pour le suivi vendeur
+  const merchantDeliveries = deliveries.filter((d) => {
+    if (isDirectorModeActive && directorTargetName) {
+      return (
+        (d.pickupLocation?.name && d.pickupLocation.name.toLowerCase().includes(directorTargetName.toLowerCase())) ||
+        (d.merchantStoreName && d.merchantStoreName.toLowerCase().includes(directorTargetName.toLowerCase()))
+      );
+    }
+    if (userProfile?.role === 'vendeur') {
+      const isDemoAccount =
+        userProfile.email?.toLowerCase() === 'contact@glamchic-cotonou.bj' ||
+        userProfile.fullName === 'Sarah Kouamé';
+      if (isDemoAccount) {
+        return !d.merchantId || d.merchantId === userProfile.uid || d.pickupLocation.name.includes('Glam Chic');
+      }
+      return (
+        (d.merchantId && d.merchantId === userProfile.uid) ||
+        (d.merchantEmail && userProfile.email && d.merchantEmail.toLowerCase() === userProfile.email.toLowerCase()) ||
+        (merchantSettings.storeName && d.merchantStoreName && d.merchantStoreName.toLowerCase() === merchantSettings.storeName.toLowerCase()) ||
+        (merchantSettings.storeName && d.pickupLocation.name && d.pickupLocation.name.toLowerCase() === merchantSettings.storeName.toLowerCase())
+      );
+    }
+    return true;
+  });
+
+  const [activeCourseId, setActiveCourseId] = useState(selectedDelivery?.id || merchantDeliveries[0]?.id || '');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'en_attente' | 'en_cours' | 'terminees'>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
   // Sync active course when selected delivery changes (e.g. after creating new order)
   React.useEffect(() => {
     if (selectedDelivery?.id) {
       setActiveCourseId(selectedDelivery.id);
+    } else if (merchantDeliveries[0]?.id && !activeCourseId) {
+      setActiveCourseId(merchantDeliveries[0].id);
     }
-  }, [selectedDelivery]);
+  }, [selectedDelivery, merchantDeliveries]);
 
-  const currentOrder = deliveries.find((d) => d.id === activeCourseId) || selectedDelivery || deliveries[0];
+  const currentOrder = merchantDeliveries.find((d) => d.id === activeCourseId) || selectedDelivery || merchantDeliveries[0];
 
-  const filteredDeliveries = deliveries.filter((order) => {
-    if (activeFilter === 'en_cours' && !(order.status === 'en_cours' || order.status === 'acceptee' || order.status === 'colis_recupere')) return false;
+  // Calcul dynamique des compteurs de statut pour les onglets
+  const countAll = merchantDeliveries.length;
+  const countPending = merchantDeliveries.filter((d) => d.status === 'en_attente' || d.status === 'assignee').length;
+  const countOngoing = merchantDeliveries.filter((d) => d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere').length;
+  const countCompleted = merchantDeliveries.filter((d) => d.status === 'livree').length;
+
+  const filteredDeliveries = merchantDeliveries.filter((order) => {
+    // Filtres par statut demandés par l'utilisateur : en attente, en cours, terminées
     if (activeFilter === 'en_attente' && !(order.status === 'en_attente' || order.status === 'assignee')) return false;
-    if (activeFilter === 'livree' && order.status !== 'livree') return false;
-    if (activeFilter === 'echec' && order.status !== 'echec') return false;
+    if (activeFilter === 'en_cours' && !(order.status === 'en_cours' || order.status === 'acceptee' || order.status === 'colis_recupere')) return false;
+    if (activeFilter === 'terminees' && order.status !== 'livree') return false;
 
+    // Barre de recherche textuelle multi-critères
     if (searchTerm.trim()) {
-      const q = searchTerm.toLowerCase();
+      const q = searchTerm.toLowerCase().trim();
       return (
         order.id.toLowerCase().includes(q) ||
         order.clientName.toLowerCase().includes(q) ||
-        order.clientPhone.includes(q) ||
+        order.clientPhone.toLowerCase().includes(q) ||
         order.dropoffLocation.commune.toLowerCase().includes(q) ||
-        order.itemDescription.toLowerCase().includes(q)
+        order.dropoffLocation.address.toLowerCase().includes(q) ||
+        order.pickupLocation.commune.toLowerCase().includes(q) ||
+        order.itemDescription.toLowerCase().includes(q) ||
+        (order.courier && order.courier.name.toLowerCase().includes(q))
       );
     }
     return true;
@@ -95,21 +135,16 @@ export const VendeurTracking: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
-      {/* Sidebar Desktop */}
-      <Sidebar />
+    <div className="flex flex-col min-h-[100dvh] w-full overflow-x-hidden bg-[#faf8ff] dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans']">
+      {/* Top Header */}
+      <Header
+        title="Mes Livraisons"
+        subtitle="Suivi temps réel, traçabilité GPS et gestion des colis expédiés"
+        showReturn
+      />
 
-      {/* Main Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff]">
-        {/* Top Header */}
-        <Header
-          title="Mes Livraisons"
-          subtitle="Suivi temps réel, traçabilité GPS et gestion des colis expédiés"
-          showReturn
-        />
-
-        {/* Scrollable Canvas */}
-        <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-28 md:pb-8">
+      {/* Scrollable Canvas */}
+      <main className="flex-1 p-3.5 sm:p-5 md:p-8 space-y-6 pb-28 md:pb-12 max-w-7xl mx-auto w-full">
           {/* Header Action Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs">
             <div className="flex items-center gap-3">
@@ -570,45 +605,170 @@ export const VendeurTracking: React.FC = () => {
           )}
 
           {/* All Deliveries Table with Filter & Search */}
-          <section className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <section className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-5">
+            {/* Header: Title and Status Filter Buttons */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <div>
-                <h3 className="font-bold text-slate-900 text-sm">Toutes vos expéditions ({filteredDeliveries.length})</h3>
-                <p className="text-xs text-slate-500">Cliquez sur une course pour afficher ses détails de suivi</p>
+                <h3 className="font-extrabold text-slate-900 dark:text-white text-base sm:text-lg flex items-center gap-2">
+                  <span>Toutes vos expéditions</span>
+                  <span className="px-2.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200 text-xs font-bold font-mono">
+                    {filteredDeliveries.length} / {merchantDeliveries.length}
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Recherchez et filtrez vos livraisons par statut pour faciliter la gestion de vos commandes
+                </p>
               </div>
 
-              {/* Filter Tabs */}
-              <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl text-xs font-semibold overflow-x-auto">
+              {/* Status Filter Tabs (Demandés : En attente, En cours, Terminées) */}
+              <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-2xl text-xs font-semibold overflow-x-auto no-scrollbar border border-slate-200/60 dark:border-slate-700/60">
                 <button
                   type="button"
                   onClick={() => setActiveFilter('all')}
-                  className={`px-3 py-1.5 rounded-lg transition-colors ${activeFilter === 'all' ? 'bg-white text-blue-700 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'}`}
+                  className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                    activeFilter === 'all'
+                      ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-xs font-bold'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
                 >
-                  Toutes
+                  <span>Toutes</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200 dark:bg-slate-700 font-mono">
+                    {countAll}
+                  </span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveFilter('en_cours')}
-                  className={`px-3 py-1.5 rounded-lg transition-colors ${activeFilter === 'en_cours' ? 'bg-white text-blue-700 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'}`}
-                >
-                  En cours
-                </button>
+
                 <button
                   type="button"
                   onClick={() => setActiveFilter('en_attente')}
-                  className={`px-3 py-1.5 rounded-lg transition-colors ${activeFilter === 'en_attente' ? 'bg-white text-blue-700 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'}`}
+                  className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                    activeFilter === 'en_attente'
+                      ? 'bg-amber-500 text-white shadow-xs font-bold'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
                 >
-                  En attente
+                  <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                  <span>En attente</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                    activeFilter === 'en_attente' ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-slate-700'
+                  }`}>
+                    {countPending}
+                  </span>
                 </button>
+
                 <button
                   type="button"
-                  onClick={() => setActiveFilter('livree')}
-                  className={`px-3 py-1.5 rounded-lg transition-colors ${activeFilter === 'livree' ? 'bg-white text-blue-700 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'}`}
+                  onClick={() => setActiveFilter('en_cours')}
+                  className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                    activeFilter === 'en_cours'
+                      ? 'bg-blue-600 text-white shadow-xs font-bold'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
                 >
-                  Livrées
+                  <span className="w-2 h-2 rounded-full bg-blue-300 animate-pulse"></span>
+                  <span>En cours</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                    activeFilter === 'en_cours' ? 'bg-blue-700 text-white' : 'bg-slate-200 dark:bg-slate-700'
+                  }`}>
+                    {countOngoing}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveFilter('terminees')}
+                  className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                    activeFilter === 'terminees'
+                      ? 'bg-emerald-600 text-white shadow-xs font-bold'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                  <span>Terminées</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                    activeFilter === 'terminees' ? 'bg-emerald-700 text-white' : 'bg-slate-200 dark:bg-slate-700'
+                  }`}>
+                    {countCompleted}
+                  </span>
                 </button>
               </div>
             </div>
+
+            {/* Dedicated Search Bar Input with Quick Clear and Stats */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+              <div className="relative flex-1">
+                <span className="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-lg">
+                  search
+                </span>
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Rechercher par N° commande (#LL-...), client, téléphone, commune, livreur..."
+                  className="w-full pl-10 pr-10 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl text-xs sm:text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all shadow-2xs"
+                />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center text-xs transition-colors cursor-pointer"
+                    title="Effacer la recherche"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {(searchTerm || activeFilter !== 'all') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTerm('');
+                    setActiveFilter('all');
+                  }}
+                  className="px-3.5 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold flex items-center justify-center gap-1.5 transition-all shrink-0 cursor-pointer border border-slate-200/80 dark:border-slate-700"
+                  title="Réinitialiser tous les filtres"
+                >
+                  <span className="material-symbols-outlined text-sm">restart_alt</span>
+                  <span>Réinitialiser</span>
+                </button>
+              )}
+            </div>
+
+            {/* Empty State when no orders match filter or search */}
+            {filteredDeliveries.length === 0 && (
+              <div className="py-12 px-4 text-center bg-slate-50/80 dark:bg-slate-800/40 rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 space-y-3">
+                <div className="w-12 h-12 mx-auto rounded-2xl bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-2xl">search_off</span>
+                </div>
+                <h4 className="font-bold text-slate-800 dark:text-slate-200 text-sm">
+                  Aucune commande ne correspond à vos critères
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+                  {searchTerm
+                    ? `Aucun résultat pour "${searchTerm}" dans le filtre sélectionné (${
+                        activeFilter === 'all'
+                          ? 'Toutes'
+                          : activeFilter === 'en_attente'
+                          ? 'En attente'
+                          : activeFilter === 'en_cours'
+                          ? 'En cours'
+                          : 'Terminées'
+                      }).`
+                    : `Aucune expédition n'est actuellement dans le statut sélectionné.`}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTerm('');
+                    setActiveFilter('all');
+                  }}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer inline-flex items-center gap-1.5"
+                >
+                  <span className="material-symbols-outlined text-sm">restart_alt</span>
+                  <span>Voir toutes les expéditions</span>
+                </button>
+              </div>
+            )}
 
             {/* Mobile Cards View (Smartphones) */}
             <div className="md:hidden divide-y divide-slate-100 p-3 space-y-3">
@@ -770,10 +930,9 @@ export const VendeurTracking: React.FC = () => {
             </div>
           </section>
         </main>
-      </div>
 
-      {/* Mobile Bottom Navigation */}
-      <MobileBottomNav />
-    </div>
+        {/* Mobile Bottom Navigation */}
+        <MobileBottomNav />
+      </div>
   );
 };

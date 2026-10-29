@@ -6,16 +6,49 @@ import { MobileBottomNav } from '../common/MobileBottomNav';
 import { BackButton } from '../common/BackButton';
 
 export const VendeurReports: React.FC = () => {
-  const { deliveries, setCurrentView, showToast } = useApp();
+  const { 
+    deliveries, 
+    setCurrentView, 
+    showToast,
+    userProfile,
+    merchantSettings,
+    isDirectorModeActive,
+    directorTargetName,
+  } = useApp();
   const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month' | 'year'>('week');
 
-  const totalOrders = deliveries.length;
-  const deliveredOrders = deliveries.filter((d) => d.status === 'livree').length;
+  // Isolation stricte des livraisons pour les rapports
+  const merchantDeliveries = deliveries.filter((d) => {
+    if (isDirectorModeActive && directorTargetName) {
+      return (
+        (d.pickupLocation?.name && d.pickupLocation.name.toLowerCase().includes(directorTargetName.toLowerCase())) ||
+        (d.merchantStoreName && d.merchantStoreName.toLowerCase().includes(directorTargetName.toLowerCase()))
+      );
+    }
+    if (userProfile?.role === 'vendeur') {
+      const isDemoAccount =
+        userProfile.email?.toLowerCase() === 'contact@glamchic-cotonou.bj' ||
+        userProfile.fullName === 'Sarah Kouamé';
+      if (isDemoAccount) {
+        return !d.merchantId || d.merchantId === userProfile.uid || d.pickupLocation.name.includes('Glam Chic');
+      }
+      return (
+        (d.merchantId && d.merchantId === userProfile.uid) ||
+        (d.merchantEmail && userProfile.email && d.merchantEmail.toLowerCase() === userProfile.email.toLowerCase()) ||
+        (merchantSettings.storeName && d.merchantStoreName && d.merchantStoreName.toLowerCase() === merchantSettings.storeName.toLowerCase()) ||
+        (merchantSettings.storeName && d.pickupLocation.name && d.pickupLocation.name.toLowerCase() === merchantSettings.storeName.toLowerCase())
+      );
+    }
+    return true;
+  });
+
+  const totalOrders = merchantDeliveries.length;
+  const deliveredOrders = merchantDeliveries.filter((d) => d.status === 'livree').length;
   const deliverySuccessRate = Math.round((deliveredOrders / (totalOrders || 1)) * 100);
-  const totalCODCollected = deliveries
+  const totalCODCollected = merchantDeliveries
     .filter((d) => d.status === 'livree')
     .reduce((sum, d) => sum + (d.itemValueCOD || 0), 0);
-  const totalDeliveryFees = deliveries
+  const totalDeliveryFees = merchantDeliveries
     .reduce((sum, d) => sum + (d.deliveryFee || 0), 0);
 
   const handleExportPDF = () => {

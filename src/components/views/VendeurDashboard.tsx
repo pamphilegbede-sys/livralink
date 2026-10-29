@@ -21,6 +21,9 @@ export const VendeurDashboard: React.FC = () => {
     userProfile,
     merchantSettings,
     featureFlags,
+    isDirectorModeActive,
+    directorTargetName,
+    openEmailCenter,
   } = useApp();
 
   const greetingName = userProfile?.fullName || merchantSettings.managerName || merchantSettings.storeName || 'Commerçant';
@@ -40,16 +43,41 @@ export const VendeurDashboard: React.FC = () => {
     }
   });
 
-  // Counters
-  const totalCount = deliveries.length;
-  const pendingCount = deliveries.filter((d) => d.status === 'en_attente' || d.status === 'assignee').length;
-  const inProgressCount = deliveries.filter((d) => d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere').length;
-  const deliveredCount = deliveries.filter((d) => d.status === 'livree').length;
-  const failedCount = deliveries.filter((d) => d.status === 'echec').length;
-  const liveOrder = deliveries.find((d) => d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere');
+  // Isolation stricte des livraisons : chaque compte marchand voit exclusivement ses propres commandes
+  const merchantDeliveries = deliveries.filter((d) => {
+    if (isDirectorModeActive && directorTargetName) {
+      return (
+        (d.pickupLocation?.name && d.pickupLocation.name.toLowerCase().includes(directorTargetName.toLowerCase())) ||
+        (d.merchantStoreName && d.merchantStoreName.toLowerCase().includes(directorTargetName.toLowerCase()))
+      );
+    }
+    if (userProfile?.role === 'vendeur') {
+      const isDemoAccount =
+        userProfile.email?.toLowerCase() === 'contact@glamchic-cotonou.bj' ||
+        userProfile.fullName === 'Sarah Kouamé';
+      if (isDemoAccount) {
+        return !d.merchantId || d.merchantId === userProfile.uid || d.pickupLocation.name.includes('Glam Chic');
+      }
+      return (
+        (d.merchantId && d.merchantId === userProfile.uid) ||
+        (d.merchantEmail && userProfile.email && d.merchantEmail.toLowerCase() === userProfile.email.toLowerCase()) ||
+        (merchantSettings.storeName && d.merchantStoreName && d.merchantStoreName.toLowerCase() === merchantSettings.storeName.toLowerCase()) ||
+        (merchantSettings.storeName && d.pickupLocation.name && d.pickupLocation.name.toLowerCase() === merchantSettings.storeName.toLowerCase())
+      );
+    }
+    return true;
+  });
+
+  // Counters basés sur les livraisons propres à ce vendeur
+  const totalCount = merchantDeliveries.length;
+  const pendingCount = merchantDeliveries.filter((d) => d.status === 'en_attente' || d.status === 'assignee').length;
+  const inProgressCount = merchantDeliveries.filter((d) => d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere').length;
+  const deliveredCount = merchantDeliveries.filter((d) => d.status === 'livree').length;
+  const failedCount = merchantDeliveries.filter((d) => d.status === 'echec').length;
+  const liveOrder = merchantDeliveries.find((d) => d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere');
 
   // Filtered deliveries
-  const filteredDeliveries = deliveries.filter((order) => {
+  const filteredDeliveries = merchantDeliveries.filter((order) => {
     // Tab filter
     if (activeFilter === 'en_attente' && !(order.status === 'en_attente' || order.status === 'assignee')) return false;
     if (activeFilter === 'en_cours' && !(order.status === 'en_cours' || order.status === 'acceptee' || order.status === 'colis_recupere')) return false;
@@ -151,6 +179,15 @@ export const VendeurDashboard: React.FC = () => {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={openEmailCenter}
+                className="py-2.5 sm:py-3 px-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                title="Consulter les e-mails envoyés (Bienvenue, Codes, Sécurité)"
+              >
+                <span className="material-symbols-outlined text-base text-blue-600 dark:text-blue-400">mail</span>
+                <span className="hidden sm:inline">Boîte E-mails</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setIsOnboardingOpen(true)}

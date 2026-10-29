@@ -4,9 +4,21 @@ import { loginWithEmailPassword, loginWithGoogle, getFirebaseAuthErrorMessage } 
 import { ForgotPasswordModal } from '../modals/ForgotPasswordModal';
 import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
+import { createFreshCourierSettings, createFreshCourierEntity } from '../../utils/userIsolation';
 
 export const LoginLivreurPage: React.FC = () => {
-  const { setCurrentView, setCurrentRole, setCourierSettings, setUserProfile, setSelectedCourier, couriers, showToast, openTestModal, detectAndSaveLocation } = useApp();
+  const { 
+    setCurrentView, 
+    setCurrentRole, 
+    setCourierSettings, 
+    setUserProfile, 
+    setSelectedCourier, 
+    couriers, 
+    setCouriers,
+    showToast, 
+    openTestModal, 
+    detectAndSaveLocation 
+  } = useApp();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -25,7 +37,7 @@ export const LoginLivreurPage: React.FC = () => {
     if (!profile) return;
     const driverName = profile.fullName || 'Livreur Partenaire';
     const matched = couriers.find(
-      (c) => c.name.toLowerCase() === driverName.toLowerCase() || c.id === profile.uid
+      (c) => c.name.toLowerCase() === driverName.toLowerCase() || c.id === profile.uid || (c.email && c.email.toLowerCase() === (profile.email || '').toLowerCase())
     );
     if (matched) {
       setSelectedCourier({
@@ -33,29 +45,16 @@ export const LoginLivreurPage: React.FC = () => {
         name: driverName,
       });
     } else {
-      const initials = driverName.split(' ').map((n: string) => n[0]).filter(Boolean).join('').toUpperCase().substring(0, 2) || 'LV';
-      setSelectedCourier({
-        id: profile.uid || `c-${Date.now()}`,
-        name: driverName,
-        phone: profile.phone || '+229 95 87 65 43',
-        email: profile.email || 'livreur@livralink.bj',
-        avatarInitials: initials,
-        rating: 5.0,
-        totalDeliveries: 385,
-        vehicle: profile.vehicleType || 'Scooter Électrique / Moto',
-        vehiclePlate: 'BJ-6621-RB',
-        zone: profile.locationCommune || 'Cotonou & Alentours',
-        distanceKm: 0.9,
-        etaMinutes: 5,
-        status: 'en_ligne',
-        walletBalanceFCFA: 62000,
-        priceFCFA: 100,
-        commissionFCFA: 0,
-        netEarningFCFA: 100,
-        badge: 'Livreur Vérifié ★',
-        isKycVerified: true,
-        createdAt: new Date().toISOString(),
+      const freshCourier = createFreshCourierEntity({
+        uid: profile.uid || `c-${Date.now()}`,
+        fullName: driverName,
+        phone: profile.phone || '',
+        email: profile.email || '',
+        vehicleType: profile.vehicleType || 'Moto 125cc',
+        locationCommune: profile.locationCommune,
       });
+      setCouriers((prev) => [freshCourier, ...prev.filter((c) => c.id !== freshCourier.id)]);
+      setSelectedCourier(freshCourier);
     }
   };
 
@@ -80,12 +79,18 @@ export const LoginLivreurPage: React.FC = () => {
         setCurrentView('livreur_dashboard');
         if (profile) {
           setUserProfile(profile);
-          setCourierSettings((prev) => ({
-            ...prev,
-            fullName: profile.fullName || prev.fullName,
-            phone: profile.phone || prev.phone,
-            email: profile.email || prev.email,
-          }));
+          let loaded = null;
+          try {
+            const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
+            if (saved) loaded = JSON.parse(saved);
+          } catch {}
+          if (!loaded) {
+            loaded = createFreshCourierSettings(profile);
+            try {
+              localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loaded));
+            } catch {}
+          }
+          setCourierSettings(loaded);
           syncCourierIdentity(profile);
         }
         showToast(`Bienvenue sur votre Espace Livreur, ${profile?.fullName || user.displayName || 'Coursier'} !`, 'success');
@@ -107,14 +112,23 @@ export const LoginLivreurPage: React.FC = () => {
       setCurrentRole('livreur');
       if (profile) {
         setUserProfile(profile);
-        setCourierSettings((prev) => ({
-          ...prev,
-          fullName: profile.fullName || prev.fullName,
-          phone: profile.phone || prev.phone,
-          email: profile.email || prev.email,
-          parkingBaseAddress: location?.commune || profile.locationCommune || prev.parkingBaseAddress,
-          gpsCoordinates: location?.gpsCoordinates || profile.gpsCoordinates || prev.gpsCoordinates,
-        }));
+        let loaded = null;
+        try {
+          const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
+          if (saved) loaded = JSON.parse(saved);
+        } catch {}
+        if (!loaded) {
+          loaded = createFreshCourierSettings({
+            ...profile,
+            locationCommune: location?.commune || profile.locationCommune,
+            locationAddress: location?.address || profile.locationAddress,
+            gpsCoordinates: location?.gpsCoordinates || profile.gpsCoordinates,
+          });
+          try {
+            localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loaded));
+          } catch {}
+        }
+        setCourierSettings(loaded);
         syncCourierIdentity(profile);
       }
       setCurrentView('livreur_dashboard');

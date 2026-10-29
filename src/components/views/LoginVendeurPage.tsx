@@ -4,6 +4,7 @@ import { loginWithEmailPassword, loginWithGoogle, getFirebaseAuthErrorMessage } 
 import { ForgotPasswordModal } from '../modals/ForgotPasswordModal';
 import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
+import { createFreshMerchantSettings } from '../../utils/userIsolation';
 
 export const LoginVendeurPage: React.FC = () => {
   const { setCurrentView, setCurrentRole, setMerchantSettings, setUserProfile, showToast, openTestModal, detectAndSaveLocation } = useApp();
@@ -42,13 +43,18 @@ export const LoginVendeurPage: React.FC = () => {
         setCurrentView('vendeur_dashboard');
         if (profile) {
           setUserProfile(profile);
-          setMerchantSettings((prev) => ({
-            ...prev,
-            managerName: profile.fullName || prev.managerName,
-            storeName: profile.storeName || profile.fullName || prev.storeName,
-            email: profile.email || prev.email,
-            phone: profile.phone || prev.phone,
-          }));
+          let loaded = null;
+          try {
+            const saved = localStorage.getItem(`livralink_merchant_settings_${user.uid}`);
+            if (saved) loaded = JSON.parse(saved);
+          } catch {}
+          if (!loaded) {
+            loaded = createFreshMerchantSettings(profile);
+            try {
+              localStorage.setItem(`livralink_merchant_settings_${user.uid}`, JSON.stringify(loaded));
+            } catch {}
+          }
+          setMerchantSettings(loaded);
         }
         showToast(`Bienvenue sur votre Espace Vendeur, ${profile?.fullName || user.displayName || 'Marchand'} !`, 'success');
       }
@@ -69,15 +75,25 @@ export const LoginVendeurPage: React.FC = () => {
       setCurrentRole('vendeur');
       if (profile) {
         setUserProfile(profile);
-        setMerchantSettings((prev) => ({
-          ...prev,
-          managerName: profile.fullName || prev.managerName,
-          storeName: profile.storeName || `Boutique ${profile.fullName}` || prev.storeName,
-          email: profile.email || prev.email,
-          storeCommune: location?.commune || profile.locationCommune || prev.storeCommune,
-          defaultPickupAddress: location?.address || profile.locationAddress || prev.defaultPickupAddress,
-          storeCoordinates: location ? [location.lat, location.lng] : prev.storeCoordinates,
-        }));
+        let loaded = null;
+        try {
+          const saved = localStorage.getItem(`livralink_merchant_settings_${user.uid}`);
+          if (saved) loaded = JSON.parse(saved);
+        } catch {}
+        if (!loaded) {
+          loaded = createFreshMerchantSettings({
+            ...profile,
+            locationCommune: location?.commune || profile.locationCommune,
+            locationAddress: location?.address || profile.locationAddress,
+            locationLat: location?.lat,
+            locationLng: location?.lng,
+            gpsCoordinates: location?.gpsCoordinates,
+          });
+          try {
+            localStorage.setItem(`livralink_merchant_settings_${user.uid}`, JSON.stringify(loaded));
+          } catch {}
+        }
+        setMerchantSettings(loaded);
       }
       setCurrentView('vendeur_dashboard');
       showToast(`Connexion Google réussie ! Bienvenue ${profile?.fullName || user.displayName || 'Vendeur'}. Position enregistrée : ${location?.commune || 'Cotonou'} (${location?.gpsCoordinates || '6.3571, 2.4175'}).`, 'success');

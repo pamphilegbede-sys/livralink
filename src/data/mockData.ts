@@ -1,4 +1,4 @@
-import { Courier, Merchant, DeliveryOrder, KYCUserRequest, MerchantSettings, CourierSettings, SystemAuditLog, PricingRule } from '../types';
+import { Courier, Merchant, DeliveryOrder, KYCUserRequest, MerchantSettings, CourierSettings, SystemAuditLog, PricingRule, AppNotification } from '../types';
 
 export const INITIAL_MERCHANTS: Merchant[] = [
   {
@@ -791,3 +791,45 @@ export const PRICING_RULES: PricingRule = {
   fragileSurchargeFCFA: 0,
   commissionRatePercent: 0 // 0% MVP Launch Offer
 };
+
+export const INITIAL_NOTIFICATIONS: AppNotification[] = [
+  {
+    id: 'notif-1',
+    type: 'order_status',
+    title: '🚚 Colis en transit vers Akpakpa',
+    message: 'La commande #LL-4192 a été récupérée par Awa Véloce et est en route.',
+    timestamp: '14:35',
+    isRead: false,
+    orderId: '#LL-4192',
+    actionView: 'vendeur_tracking'
+  },
+  {
+    id: 'notif-2',
+    type: 'order_assigned',
+    title: '🛵 Nouveau coursier assigné',
+    message: 'Koffi Sègbo a accepté la prise en charge de la livraison #LL-3810.',
+    timestamp: '13:50',
+    isRead: false,
+    orderId: '#LL-3810',
+    actionView: 'vendeur_tracking'
+  },
+  {
+    id: 'notif-3',
+    type: 'pod_validated',
+    title: '✅ Livraison certifiée (POD Tri-Facteur)',
+    message: 'La livraison #LL-2091 a été remise avec succès. OTP et signature validés.',
+    timestamp: '12:15',
+    isRead: true,
+    orderId: '#LL-2091',
+    actionView: 'vendeur_tracking'
+  },
+  {
+    id: 'notif-4',
+    type: 'priority_mission',
+    title: '⚡ Nouvelle mission prioritaire disponible',
+    message: 'Course express Cotonou Haie Vive ➔ Godomey (2 400 FCFA net).',
+    timestamp: '11:05',
+    isRead: true,
+    actionView: 'livreur_missions'
+  }
+];

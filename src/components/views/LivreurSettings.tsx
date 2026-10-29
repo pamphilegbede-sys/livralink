@@ -26,9 +26,20 @@ export const LivreurSettings: React.FC = () => {
   const [notifyPODValidated, setNotifyPODValidated] = useState(true);
   const [notifyPayoutReceived, setNotifyPayoutReceived] = useState(true);
 
+  React.useEffect(() => {
+    setFullName(courierSettings.fullName);
+    setPhone(courierSettings.phone);
+    setEmail(courierSettings.email);
+    setParkingBaseAddress(courierSettings.parkingBaseAddress);
+    setVehicleType(courierSettings.vehicleType);
+    setVehiclePlate(courierSettings.vehiclePlate || '');
+    setActiveZones(courierSettings.activeZones || []);
+    setWorkingHours(courierSettings.workingHours);
+  }, [courierSettings]);
+
   const handleSave = () => {
-    setCourierSettings((prev) => ({
-      ...prev,
+    const updated: typeof courierSettings = {
+      ...courierSettings,
       fullName,
       phone,
       email,
@@ -37,7 +48,13 @@ export const LivreurSettings: React.FC = () => {
       vehiclePlate,
       activeZones,
       workingHours,
-    }));
+    };
+    setCourierSettings(updated);
+    if (userProfile?.uid) {
+      try {
+        localStorage.setItem(`livralink_courier_settings_${userProfile.uid}`, JSON.stringify(updated));
+      } catch {}
+    }
     showToast('Paramètres Livreur enregistrés avec succès !', 'success');
   };
 

@@ -9,8 +9,25 @@ export const Header: React.FC<{
   breadcrumbs?: { label: string; view?: any }[];
   onReturn?: () => void;
 }> = ({ title, subtitle, breadcrumbs }) => {
-  const { currentRole, setCurrentRole, currentView, setCurrentView, merchantSettings, courierSettings, toggleCourierAvailability, showToast, logout, isDarkMode, toggleDarkMode } = useApp();
+  const {
+    currentRole,
+    setCurrentRole,
+    currentView,
+    setCurrentView,
+    merchantSettings,
+    courierSettings,
+    toggleCourierAvailability,
+    showToast,
+    logout,
+    isDarkMode,
+    toggleDarkMode,
+    openEmailCenter,
+    notifications,
+    openNotificationCenter,
+  } = useApp();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  const unreadCount = notifications.filter((n) => !n.isRead).length;
 
   return (
     <>
@@ -60,23 +77,8 @@ export const Header: React.FC<{
           )}
         </div>
 
-        {/* Right Cluster: Store / Driver Status, Icons, New Delivery CTA, Admin Quick Access */}
+        {/* Right Cluster: Store / Driver Status, Icons, New Delivery CTA */}
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-          {/* Quick Admin Portal Button */}
-          {currentRole !== 'admin' && (
-            <button
-              onClick={() => {
-                setCurrentRole('admin');
-                setCurrentView('admin_console');
-              }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-slate-900 to-indigo-950 hover:from-slate-800 hover:to-indigo-900 text-amber-300 border border-amber-400/40 text-[11px] font-bold shadow-xs transition-all active:scale-95"
-              title="Accès Superviseur Administrateur"
-            >
-              <span>👑</span>
-              <span className="hidden sm:inline">Admin</span>
-            </button>
-          )}
-
           {/* Status Badge */}
           {currentRole === 'vendeur' && (
             <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-600">
@@ -123,12 +125,26 @@ export const Header: React.FC<{
               </span>
             </button>
             <button
-              onClick={() => showToast('Aucune nouvelle alerte non lue.', 'info')}
-              className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-200 transition-colors relative"
-              title="Notifications"
+              onClick={openEmailCenter}
+              className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 transition-colors relative"
+              title="Centre des e-mails envoyés (Bienvenue, Codes, Sécurité)"
+              aria-label="Centre d'e-mails"
+            >
+              <span className="material-symbols-outlined text-lg sm:text-xl">mail</span>
+              <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+            </button>
+            <button
+              onClick={openNotificationCenter}
+              className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 transition-colors relative cursor-pointer active:scale-95"
+              title={`Centre de Notifications (${unreadCount} non lue${unreadCount > 1 ? 's' : ''})`}
+              aria-label="Notifications"
             >
               <span className="material-symbols-outlined text-lg sm:text-xl">notifications</span>
-              <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500"></span>
+              {unreadCount > 0 ? (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white font-extrabold text-[10px] flex items-center justify-center animate-pulse shadow-xs border-2 border-white dark:border-slate-900">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              ) : null}
             </button>
             <button
               onClick={() => setCurrentView(currentRole === 'vendeur' ? 'vendeur_settings' : 'livreur_settings')}
@@ -165,22 +181,6 @@ export const Header: React.FC<{
               </div>
 
               <div className="space-y-1">
-                {/* Direct Admin Access inside mobile drawer */}
-                <button
-                  onClick={() => {
-                    setCurrentRole('admin');
-                    setCurrentView('admin_console');
-                    setIsMobileMenuOpen(false);
-                  }}
-                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-slate-900 to-indigo-950 text-amber-300 border border-amber-400/40 shadow-xs mb-2"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm">👑</span>
-                    <span>Console Superviseur Admin</span>
-                  </div>
-                  <span className="material-symbols-outlined text-sm">arrow_forward</span>
-                </button>
-
                 {currentRole === 'vendeur' && (
                   <>
                     <button

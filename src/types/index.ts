@@ -103,6 +103,9 @@ export interface DeliveryOrder {
     code?: string;
   };
   timeline: DeliveryTimelineStep[];
+  merchantId?: string;
+  merchantEmail?: string;
+  merchantStoreName?: string;
 }
 
 export interface KYCUserRequest {
@@ -178,6 +181,18 @@ export interface SystemAuditLog {
   type: 'kyc' | 'weather' | 'dispute' | 'pricing' | 'system' | 'security';
   title: string;
   details: string;
+}
+
+export interface AppNotification {
+  id: string;
+  type: 'order_created' | 'order_assigned' | 'order_accepted' | 'order_status' | 'pod_validated' | 'priority_mission' | 'system' | 'dispute' | 'kyc';
+  title: string;
+  message: string;
+  timestamp: string;
+  isRead: boolean;
+  orderId?: string;
+  roleTarget?: 'all' | 'vendeur' | 'livreur' | 'admin';
+  actionView?: string;
 }
 
 export interface PlatformFeatureFlags {

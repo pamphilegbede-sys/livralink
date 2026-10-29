@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import compression from 'compression';
 import { createServer as createViteServer } from 'vite';
 import nodemailer from 'nodemailer';
 import path from 'path';
@@ -33,6 +34,9 @@ if (portArg) {
   }
 }
 const PORT = cliPort || parseInt(process.env.APP_PORT || process.env.DEFAULT_APP_PORT || '3000', 10);
+
+// Enable high-speed gzip / deflate compression on all HTTP responses
+app.use(compression());
 
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -251,6 +255,34 @@ const secureOtpStore = new Map<string, SecureOTPEntry>();
 // In-memory one-time reset tokens store: tokenHash -> { email, expiresAt } (hashed token only)
 const resetTokensStore = new Map<string, { email: string; expiresAt: number }>();
 
+export interface SentEmailRecord {
+  id: string;
+  type: 'welcome' | 'password_reset_request' | 'password_changed_confirmation' | 'priority_mission' | 'custom';
+  to: string;
+  recipientName: string;
+  recipientRole?: string;
+  subject: string;
+  previewText: string;
+  htmlContent: string;
+  sentAt: string;
+  deliveredViaSmtp: boolean;
+}
+
+const sentEmailsHistory: SentEmailRecord[] = [];
+
+const recordSentEmail = (record: Omit<SentEmailRecord, 'id' | 'sentAt'>): SentEmailRecord => {
+  const item: SentEmailRecord = {
+    ...record,
+    id: `mail_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    sentAt: new Date().toISOString(),
+  };
+  sentEmailsHistory.unshift(item);
+  if (sentEmailsHistory.length > 100) {
+    sentEmailsHistory.pop();
+  }
+  return item;
+};
+
 /**
  * Configure Brevo SMTP Transporter
  * Brevo Relay: smtp-relay.brevo.com:587
@@ -290,6 +322,16 @@ const hashResetToken = (token: string): string => {
     .createHmac('sha256', OTP_SECRET_SALT)
     .update(token.trim())
     .digest('hex');
+};
+
+const escapeHtml = (unsafe: any): string => {
+  if (typeof unsafe !== 'string') return String(unsafe ?? '');
+  return unsafe
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 };
 
 /**
@@ -433,6 +475,16 @@ app.post('/api/auth/send-reset-code', async (req: Request, res: Response): Promi
       console.warn('[BREVO SMTP] Identifiants SMTP non configurés dans l\'environnement. Mode sécurisé actif.');
     }
 
+    recordSentEmail({
+      type: 'password_reset_request',
+      to: cleanEmail,
+      recipientName: cleanEmail.split('@')[0],
+      subject: `Votre code de réinitialisation LivraLink : ••••••`,
+      previewText: `Code de sécurité à 6 chiffres transmis avec succès (masqué par politique de sécurité).`,
+      htmlContent: `<div style="font-family: 'Plus Jakarta Sans', sans-serif; padding: 20px; color: #0f172a;"><h2>Code de réinitialisation</h2><p>Le code temporaire a été expédié à l'utilisateur par e-mail. <em>(Contenu masqué dans l'historique par politique de sécurité)</em>.</p></div>`,
+      deliveredViaSmtp: emailDelivered,
+    });
+
     // Protection against account enumeration: return consistent response
     res.json({
       success: true,
@@ -509,10 +561,13 @@ app.post('/api/auth/verify-reset-code', (req: Request, res: Response): void => {
       return;
     }
 
-    // Hash provided code and compare with stored hash
+    // Hash provided code and compare with stored hash using timingSafeEqual to prevent side-channel timing attacks
     const inputHash = hashOTPCode(cleanEmail, cleanCode);
+    const inputBuf = Buffer.from(inputHash, 'utf8');
+    const storedBuf = Buffer.from(stored.hashedCode, 'utf8');
+    const isCodeMatch = inputBuf.length === storedBuf.length && crypto.timingSafeEqual(inputBuf, storedBuf);
 
-    if (inputHash !== stored.hashedCode) {
+    if (!isCodeMatch) {
       stored.attemptsLeft -= 1;
       if (stored.attemptsLeft <= 0) {
         secureOtpStore.delete(cleanEmail);
@@ -629,15 +684,429 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response): Promis
       }
     }
 
+    // Send confirmation email
+    const transporter = getBrevoTransporter();
+    let confirmationDelivered = false;
+    const confirmHtml = `
+      <div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); color: #0f172a;">
+        <div style="background-color: #0f172a; padding: 24px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 800;">Livra<span style="color: #3b82f6;">Link</span></h1>
+          <p style="color: #94a3b8; font-size: 11px; margin: 6px 0 0 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;">Sécurité du compte</p>
+        </div>
+        <div style="padding: 32px 24px;">
+          <div style="display: inline-block; background-color: #dcfce7; color: #15803d; font-weight: 700; font-size: 12px; padding: 6px 12px; border-radius: 9999px; margin-bottom: 16px;">
+            ✅ MOT DE PASSE MIS À JOUR
+          </div>
+          <h2 style="font-size: 18px; font-weight: 700; color: #0f172a; margin: 0 0 12px 0;">Modification confirmée</h2>
+          <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 20px 0;">
+            Le mot de passe de votre compte LivraLink (<strong>${cleanEmail}</strong>) vient d'être mis à jour avec succès le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}.
+          </p>
+          <div style="background-color: #f8fafc; border-left: 4px solid #3b82f6; padding: 16px; border-radius: 8px; margin-bottom: 24px;">
+            <p style="font-size: 13px; color: #334155; margin: 0; line-height: 1.5;">
+              Vous pouvez dès à présent vous connecter à votre espace avec vos nouveaux identifiants.
+            </p>
+          </div>
+          <p style="font-size: 12px; color: #dc2626; line-height: 1.5; margin: 0; border-top: 1px solid #f1f5f9; padding-top: 16px;">
+            ⚠️ Si vous n'êtes pas à l'origine de cette modification, contactez immédiatement l'administrateur ou réinitialisez vos accès d'urgence.
+          </p>
+        </div>
+        <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0;">
+          <p style="font-size: 11px; color: #94a3b8; margin: 0;">© ${new Date().getFullYear()} LivraLink CI — Plateforme logistique et livraison sécurisée.</p>
+        </div>
+      </div>
+    `;
+
+    if (transporter) {
+      try {
+        const rawFrom = process.env.BREVO_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink Sécurité <Pamphile.gbede@gmail.com>';
+        await transporter.sendMail({
+          from: rawFrom.replace(/\\"/g, '').trim(),
+          to: cleanEmail,
+          subject: '🔐 LivraLink : Confirmation de modification de votre mot de passe',
+          text: `Bonjour,\n\nLe mot de passe de votre compte LivraLink a été modifié avec succès.\n\nSi vous n'êtes pas l'auteur de ce changement, contactez le support.`,
+          html: confirmHtml,
+        });
+        confirmationDelivered = true;
+        console.log(`[BREVO SMTP] E-mail de confirmation mot de passe envoyé à ${cleanEmail}`);
+      } catch (mailErr: any) {
+        console.error('[BREVO SMTP ERROR] Échec de l\'envoi confirmation:', mailErr.message);
+      }
+    }
+
+    recordSentEmail({
+      type: 'password_changed_confirmation',
+      to: cleanEmail,
+      recipientName: cleanEmail.split('@')[0],
+      subject: '🔐 LivraLink : Confirmation de modification de votre mot de passe',
+      previewText: 'Votre mot de passe a été mis à jour avec succès.',
+      htmlContent: confirmHtml,
+      deliveredViaSmtp: confirmationDelivered,
+    });
+
     res.json({
       success: true,
       firebaseAuthUpdated,
-      message: 'Votre mot de passe a été mis à jour avec succès dans Firebase Authentication.',
+      emailDelivered: confirmationDelivered,
+      message: 'Votre mot de passe a été mis à jour avec succès. Un e-mail de confirmation vous a été envoyé.',
     });
   } catch (error: any) {
     console.error('[AUTH ERROR] reset-password:', error);
     res.status(500).json({ success: false, error: 'Erreur lors de la mise à jour du mot de passe.' });
   }
+});
+
+// =========================================================================
+// EMAIL SERVICES: BIENVENUE, CHANGEMENT MOT DE PASSE & MISSIONS PRIORITAIRES
+// =========================================================================
+
+/**
+ * POST /api/email/welcome
+ * Dispatches a welcome email to a newly registered merchant or courier.
+ */
+app.post('/api/email/welcome', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, fullName, role, storeName, vehicleType, phone } = req.body || {};
+
+    const EMAIL_REGEX = /^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$/;
+    if (!email || typeof email !== 'string' || !EMAIL_REGEX.test(email.trim())) {
+      res.status(400).json({ success: false, error: 'Adresse e-mail valide requise.' });
+      return;
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = (fullName || cleanEmail.split('@')[0]).trim().slice(0, 100);
+    const safeName = escapeHtml(cleanName);
+    const safeStore = storeName ? escapeHtml(storeName.trim().slice(0, 100)) : '';
+    const safeVehicle = vehicleType ? escapeHtml(vehicleType.trim().slice(0, 50)) : '';
+    const safePhone = phone ? escapeHtml(phone.trim().slice(0, 30)) : '';
+
+    const isVendeur = role === 'vendeur';
+    const roleLabel = isVendeur ? 'Vendeur / Marchand' : 'Livreur Partenaire';
+    const roleBadgeColor = isVendeur ? '#3b82f6' : '#10b981';
+
+    const subject = `Bienvenue sur LivraLink, ${safeName} ! 🚀 Votre compte ${roleLabel} est activé`;
+    const previewText = `Félicitations ! Votre compte LivraLink ${roleLabel} a été créé avec succès. Accédez dès maintenant à votre espace.`;
+
+    const htmlContent = `
+      <div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 580px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); color: #0f172a;">
+        <div style="background-color: #0f172a; padding: 28px 24px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.5px;">
+            Livra<span style="color: #3b82f6;">Link</span>
+          </h1>
+          <p style="color: #94a3b8; font-size: 11px; margin: 6px 0 0 0; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700;">
+            Logistique Urbaine &amp; Livraison Sécurisée
+          </p>
+        </div>
+
+        <div style="padding: 32px 24px;">
+          <div style="display: inline-block; background-color: ${isVendeur ? '#eff6ff' : '#ecfdf5'}; color: ${roleBadgeColor}; font-weight: 800; font-size: 12px; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.5px;">
+            🎉 COMPTE ${roleLabel.toUpperCase()} ACTIVÉ
+          </div>
+
+          <h2 style="font-size: 20px; font-weight: 800; color: #0f172a; margin: 0 0 14px 0;">
+            Bienvenue dans la communauté LivraLink, ${safeName} !
+          </h2>
+
+          <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 24px 0;">
+            Nous sommes ravis de vous compter parmi nos utilisateurs. Votre profil a été configuré avec succès et vous pouvez dès à présent utiliser toutes les fonctionnalités de la plateforme.
+          </p>
+
+          <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 20px; margin-bottom: 24px;">
+            <h3 style="font-size: 13px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 12px 0;">
+              Récapitulatif de votre compte
+            </h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+              <tr>
+                <td style="padding: 6px 0; color: #64748b; width: 40%;">👤 Responsable :</td>
+                <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${safeName}</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #64748b;">📧 Identifiant :</td>
+                <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${escapeHtml(cleanEmail)}</td>
+              </tr>
+              ${safePhone ? `
+              <tr>
+                <td style="padding: 6px 0; color: #64748b;">📱 Contact :</td>
+                <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${safePhone}</td>
+              </tr>` : ''}
+              ${isVendeur && safeStore ? `
+              <tr>
+                <td style="padding: 6px 0; color: #64748b;">🏪 Boutique :</td>
+                <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${safeStore}</td>
+              </tr>` : ''}
+              ${!isVendeur && safeVehicle ? `
+              <tr>
+                <td style="padding: 6px 0; color: #64748b;">🛵 Véhicule :</td>
+                <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${safeVehicle}</td>
+              </tr>` : ''}
+            </table>
+          </div>
+
+          <div style="text-align: center; margin: 28px 0;">
+            <a href="https://ais-dev-ra34vpbmrgqe3eimwdz2y2-319073276082.europe-west3.run.app" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: 700; font-size: 14px; padding: 14px 28px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(37,99,235,0.2);">
+              Accéder à mon espace ${isVendeur ? 'Vendeur' : 'Livreur'} →
+            </a>
+          </div>
+
+          <div style="background-color: #f1f5f9; border-radius: 12px; padding: 14px 16px; margin-bottom: 20px;">
+            <p style="font-size: 12px; color: #64748b; margin: 0; line-height: 1.5;">
+              💡 <strong>Prochaine étape :</strong> ${
+                isVendeur
+                  ? 'Créez votre première livraison en quelques secondes et diffusez-la auprès des coursiers disponibles.'
+                  : 'Activez votre statut "En ligne" pour recevoir en temps réel les notifications de missions prioritaires.'
+              }
+            </p>
+          </div>
+
+          <p style="font-size: 12px; color: #94a3b8; line-height: 1.5; margin: 0; border-top: 1px solid #f1f5f9; padding-top: 16px;">
+            Ce message est envoyé automatiquement. En cas de besoin, contactez l'équipe support LivraLink via l'application.
+          </p>
+        </div>
+
+        <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0;">
+          <p style="font-size: 11px; color: #94a3b8; margin: 0;">
+            © ${new Date().getFullYear()} LivraLink — Tous droits réservés. Cotonou, Bénin.
+          </p>
+        </div>
+      </div>
+    `;
+
+    const transporter = getBrevoTransporter();
+    let emailDelivered = false;
+
+    if (transporter) {
+      try {
+        const rawFrom = process.env.BREVO_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink <Pamphile.gbede@gmail.com>';
+        await transporter.sendMail({
+          from: rawFrom.replace(/\\"/g, '').trim(),
+          to: cleanEmail,
+          subject,
+          text: `Bienvenue sur LivraLink, ${cleanName} !\n\nVotre compte ${roleLabel} a été créé avec succès.\nIdentifiant: ${cleanEmail}`,
+          html: htmlContent,
+        });
+        emailDelivered = true;
+        console.log(`[BREVO SMTP] E-mail de bienvenue envoyé avec succès à ${cleanEmail}`);
+      } catch (mailErr: any) {
+        console.error('[BREVO SMTP ERROR] Échec de l\'envoi de bienvenue:', mailErr.message);
+      }
+    }
+
+    const emailRecord = recordSentEmail({
+      type: 'welcome',
+      to: cleanEmail,
+      recipientName: cleanName,
+      recipientRole: role || 'vendeur',
+      subject,
+      previewText,
+      htmlContent,
+      deliveredViaSmtp: emailDelivered,
+    });
+
+    res.json({
+      success: true,
+      emailDelivered,
+      emailId: emailRecord.id,
+      message: `E-mail de bienvenue envoyé avec succès à ${cleanEmail}`,
+    });
+  } catch (error: any) {
+    console.error('[EMAIL ERROR] welcome:', error);
+    res.status(500).json({ success: false, error: 'Erreur lors de l\'envoi de l\'e-mail de bienvenue.' });
+  }
+});
+
+/**
+ * POST /api/email/password-changed
+ * Dispatches a security notification email when a user modifies their password.
+ */
+app.post('/api/email/password-changed', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, fullName } = req.body || {};
+
+    if (!email || typeof email !== 'string') {
+      res.status(400).json({ success: false, error: 'Email requis.' });
+      return;
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = (fullName || cleanEmail.split('@')[0]).trim().slice(0, 100);
+    const safeName = escapeHtml(cleanName);
+    const subject = '🔐 LivraLink : Votre mot de passe a été modifié';
+    const previewText = 'Notification de sécurité : mise à jour récente de vos identifiants d\'accès.';
+
+    const htmlContent = `
+      <div style="font-family: 'Plus Jakarta Sans', sans-serif; max-width: 560px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; color: #0f172a;">
+        <div style="background-color: #0f172a; padding: 24px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 22px; font-weight: 800;">Livra<span style="color: #3b82f6;">Link</span></h1>
+          <p style="color: #94a3b8; font-size: 11px; margin: 4px 0 0 0; text-transform: uppercase;">Alerte de Sécurité</p>
+        </div>
+        <div style="padding: 28px 24px;">
+          <h2 style="font-size: 18px; font-weight: 700; margin: 0 0 12px 0;">Bonjour ${safeName},</h2>
+          <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 16px 0;">
+            Nous vous confirmons que le mot de passe de votre compte LivraLink (<strong>${escapeHtml(cleanEmail)}</strong>) a été modifié avec succès le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}.
+          </p>
+          <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 14px; border-radius: 8px; margin: 20px 0;">
+            <p style="font-size: 12px; color: #b91c1c; margin: 0; line-height: 1.5;">
+              ⚠️ Si vous n'êtes pas à l'origine de cette opération, votre compte a peut-être été compromis. Contactez immédiatement l'administrateur LivraLink pour sécuriser vos accès.
+            </p>
+          </div>
+        </div>
+        <div style="background-color: #f8fafc; padding: 14px; text-align: center; border-top: 1px solid #e2e8f0;">
+          <p style="font-size: 11px; color: #94a3b8; margin: 0;">© ${new Date().getFullYear()} LivraLink Bénin</p>
+        </div>
+      </div>
+    `;
+
+    const transporter = getBrevoTransporter();
+    let emailDelivered = false;
+
+    if (transporter) {
+      try {
+        const rawFrom = process.env.BREVO_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink Sécurité <Pamphile.gbede@gmail.com>';
+        await transporter.sendMail({
+          from: rawFrom.replace(/\\"/g, '').trim(),
+          to: cleanEmail,
+          subject,
+          text: `Bonjour ${cleanName},\n\nVotre mot de passe LivraLink a été modifié le ${new Date().toLocaleDateString('fr-FR')}.\n\nSi vous n'êtes pas à l'origine de cette action, prévenez immédiatement le support.`,
+          html: htmlContent,
+        });
+        emailDelivered = true;
+      } catch (err: any) {
+        console.error('[EMAIL ERROR] Confirmation mot de passe:', err.message);
+      }
+    }
+
+    const emailRecord = recordSentEmail({
+      type: 'password_changed_confirmation',
+      to: cleanEmail,
+      recipientName: cleanName,
+      subject,
+      previewText,
+      htmlContent,
+      deliveredViaSmtp: emailDelivered,
+    });
+
+    res.json({
+      success: true,
+      emailDelivered,
+      emailId: emailRecord.id,
+      message: `Notification de changement de mot de passe envoyée à ${cleanEmail}`,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: 'Erreur lors de l\'envoi de la notification.' });
+  }
+});
+
+/**
+ * POST /api/email/priority-mission
+ * Dispatches an email notification to couriers about a newly created priority mission.
+ */
+app.post('/api/email/priority-mission', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, courierName, orderId, pickupName, dropoffCommune, feeFCFA, codFCFA } = req.body || {};
+
+    if (!email) {
+      res.status(400).json({ success: false, error: 'Email du livreur requis.' });
+      return;
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = (courierName || 'Coursier Partenaire').trim().slice(0, 100);
+    const safeCourierName = escapeHtml(cleanName);
+    const safeOrderId = escapeHtml(String(orderId || '#LL-4200').trim().slice(0, 32));
+    const safePickup = escapeHtml(String(pickupName || 'Boutique').trim().slice(0, 100));
+    const safeDropoff = escapeHtml(String(dropoffCommune || 'Cotonou').trim().slice(0, 100));
+    const safeFee = Math.min(100000, Math.max(0, parseInt(String(feeFCFA), 10) || 2000));
+    const safeCod = codFCFA ? Math.min(5000000, Math.max(0, parseInt(String(codFCFA), 10) || 0)) : 0;
+
+    const subject = `⚡ Mission Prioritaire Disponible : ${safeOrderId} (${safeFee} FCFA)`;
+    const previewText = `Nouvelle livraison express disponible à ${safePickup}. Tarif : ${safeFee} FCFA.`;
+
+    const htmlContent = `
+      <div style="font-family: 'Plus Jakarta Sans', sans-serif; max-width: 560px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; color: #0f172a;">
+        <div style="background-color: #0f172a; padding: 24px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 22px; font-weight: 800;">Livra<span style="color: #3b82f6;">Link</span></h1>
+          <p style="color: #f59e0b; font-size: 11px; margin: 4px 0 0 0; text-transform: uppercase; font-weight: 700;">⚡ Mission Prioritaire</p>
+        </div>
+        <div style="padding: 24px;">
+          <h2 style="font-size: 18px; font-weight: 700; margin: 0 0 12px 0;">Bonjour ${safeCourierName},</h2>
+          <p style="font-size: 14px; color: #475569; margin: 0 0 16px 0;">
+            Une nouvelle mission prioritaire vient d'être publiée par un commerçant dans votre zone.
+          </p>
+          <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin-bottom: 20px;">
+            <p style="margin: 4px 0; font-size: 13px;"><strong>📦 Commande :</strong> ${safeOrderId}</p>
+            <p style="margin: 4px 0; font-size: 13px;"><strong>🏪 Collecte :</strong> ${safePickup}</p>
+            <p style="margin: 4px 0; font-size: 13px;"><strong>📍 Destination :</strong> ${safeDropoff}</p>
+            <p style="margin: 4px 0; font-size: 13px; color: #16a34a;"><strong>💰 Gain Coursier :</strong> ${safeFee.toLocaleString('fr-FR')} FCFA</p>
+            ${safeCod ? `<p style="margin: 4px 0; font-size: 13px; color: #2563eb;"><strong>💵 Montant COD :</strong> ${safeCod.toLocaleString('fr-FR')} FCFA</p>` : ''}
+          </div>
+          <div style="text-align: center; margin: 20px 0;">
+            <a href="https://ais-dev-ra34vpbmrgqe3eimwdz2y2-319073276082.europe-west3.run.app" style="display: inline-block; background-color: #f59e0b; color: #000; text-decoration: none; font-weight: 700; font-size: 13px; padding: 12px 24px; border-radius: 10px;">
+              Ouvrir l'application &amp; Accepter la course →
+            </a>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const transporter = getBrevoTransporter();
+    let emailDelivered = false;
+
+    if (transporter) {
+      try {
+        const rawFrom = process.env.BREVO_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink Dispatch <Pamphile.gbede@gmail.com>';
+        await transporter.sendMail({
+          from: rawFrom.replace(/\\"/g, '').trim(),
+          to: cleanEmail,
+          subject,
+          text: `Mission prioritaire ${orderId} disponible pour ${cleanName}. Gain: ${feeFCFA} FCFA.`,
+          html: htmlContent,
+        });
+        emailDelivered = true;
+      } catch (err: any) {
+        console.error('[EMAIL ERROR] Mission email:', err.message);
+      }
+    }
+
+    const emailRecord = recordSentEmail({
+      type: 'priority_mission',
+      to: cleanEmail,
+      recipientName: cleanName,
+      subject,
+      previewText,
+      htmlContent,
+      deliveredViaSmtp: emailDelivered,
+    });
+
+    res.json({
+      success: true,
+      emailDelivered,
+      emailId: emailRecord.id,
+      message: `Notification de mission envoyée à ${cleanEmail}`,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: 'Erreur lors de l\'envoi de la mission.' });
+  }
+});
+
+/**
+ * GET /api/email/outbox
+ * Returns the history of sent emails for audit and in-app viewing.
+ */
+app.get('/api/email/outbox', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    total: sentEmailsHistory.length,
+    emails: sentEmailsHistory.slice(0, 50),
+  });
+});
+
+/**
+ * POST /api/email/clear-outbox
+ * Resets the in-memory outbox history.
+ */
+app.post('/api/email/clear-outbox', (_req: Request, res: Response) => {
+  sentEmailsHistory.length = 0;
+  res.json({ success: true, message: 'Boîte d\'envoi réinitialisée.' });
 });
 
 // Health check endpoints for Render / cloud monitoring

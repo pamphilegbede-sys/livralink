@@ -188,7 +188,16 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // 4. Test Connection Probe (Skill requirement)
+    // 4. Priority Missions (Alertes contextuelles livreurs en temps réel)
+    // -------------------------------------------------------------------------
+    match /priority_missions/{missionId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(missionId);
+      allow delete: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. Test Connection Probe (Skill requirement)
     // -------------------------------------------------------------------------
     match /test/{testId} {
       allow read: if true;

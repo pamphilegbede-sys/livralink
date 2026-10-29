@@ -14,7 +14,8 @@ import {
   DeliveryStatus,
   PricingRule,
   PlatformFeatureFlags,
-  DEFAULT_PLATFORM_FEATURE_FLAGS
+  DEFAULT_PLATFORM_FEATURE_FLAGS,
+  AppNotification
 } from '../types';
 import {
   INITIAL_DELIVERIES,
@@ -24,9 +25,24 @@ import {
   INITIAL_MERCHANT_SETTINGS,
   INITIAL_COURIER_SETTINGS,
   INITIAL_AUDIT_LOGS,
-  PRICING_RULES
+  PRICING_RULES,
+  INITIAL_NOTIFICATIONS
 } from '../data/mockData';
 import { calculateDeliveryPrice, calculateDistanceKm, DetectedUserLocation } from '../config/maps';
+import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { playPriorityMissionChime } from '../utils/audioChime';
+import { 
+  triggerRealDeviceAlert, 
+  requestNotificationPermission, 
+  getNotificationPermissionStatus, 
+  NotificationPermissionStatus 
+} from '../utils/deviceNotification';
+import { PriorityMissionAlert } from '../components/common/PriorityMissionNotificationBanner';
+import { 
+  createFreshMerchantSettings, 
+  createFreshCourierSettings, 
+  createFreshCourierEntity 
+} from '../utils/userIsolation';
 
 export type AppView =
   | 'landing'
@@ -209,6 +225,32 @@ interface AppContextType {
   impersonateMerchant: (merchantId: string) => void;
   impersonateCourier: (courierId: string) => void;
   exitDirectorMode: () => void;
+
+  // Real-Time Priority Missions Alerts (Firestore listeners)
+  priorityMissionAlert: PriorityMissionAlert | null;
+  dismissPriorityMissionAlert: () => void;
+  simulateNewPriorityMission: () => Promise<void>;
+
+  // Email Notification Center
+  isEmailCenterOpen: boolean;
+  setIsEmailCenterOpen: (open: boolean) => void;
+  openEmailCenter: () => void;
+  closeEmailCenter: () => void;
+
+  // Real-Time Notifications Center
+  notifications: AppNotification[];
+  addNotification: (notif: Omit<AppNotification, 'id' | 'timestamp' | 'isRead'>) => void;
+  markNotificationAsRead: (id: string) => void;
+  markAllNotificationsAsRead: () => void;
+  deleteNotification: (id: string) => void;
+  clearAllNotifications: () => void;
+  isNotificationCenterOpen: boolean;
+  setIsNotificationCenterOpen: (open: boolean) => void;
+  openNotificationCenter: () => void;
+  closeNotificationCenter: () => void;
+  sendTestNotification: (title?: string, message?: string) => void;
+  notificationPermission: NotificationPermissionStatus;
+  requestBrowserNotificationPermission: () => Promise<NotificationPermissionStatus>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -303,6 +345,92 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [pricingRules, setPricingRules] = useState<PricingRule>(PRICING_RULES);
   
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
+
+  // Real-time notifications state
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
+    try {
+      const saved = localStorage.getItem('livralink_notifications');
+      return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
+    } catch {
+      return INITIAL_NOTIFICATIONS;
+    }
+  });
+
+  const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('livralink_notifications', JSON.stringify(notifications));
+    } catch (err) {
+      console.warn('Erreur sauvegarde notifications:', err);
+    }
+  }, [notifications]);
+
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermissionStatus>(() => getNotificationPermissionStatus());
+
+  const requestBrowserNotificationPermission = async () => {
+    const status = await requestNotificationPermission();
+    setNotificationPermission(status);
+    if (status === 'granted') {
+      showToast('🔔 Notifications système activées ! Sons & Vibreur opérationnels.', 'success');
+    } else if (status === 'denied') {
+      showToast('⚠️ Notifications bloquées par le navigateur.', 'error');
+    }
+    return status;
+  };
+
+  const addNotification = (notif: Omit<AppNotification, 'id' | 'timestamp' | 'isRead'>) => {
+    const newNotif: AppNotification = {
+      ...notif,
+      id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      isRead: false,
+    };
+    setNotifications((prev) => [newNotif, ...prev].slice(0, 50));
+
+    // Trigger audio chime, vibration haptic & real OS/browser notification
+    triggerRealDeviceAlert(notif.title, notif.message, notif.type, notif.orderId);
+  };
+
+  const markNotificationAsRead = (id: string) => {
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
+    );
+  };
+
+  const markAllNotificationsAsRead = () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+    showToast('Toutes les notifications ont été marquées comme lues.', 'info');
+  };
+
+  const deleteNotification = (id: string) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  };
+
+  const clearAllNotifications = () => {
+    setNotifications([]);
+    showToast('Toutes les notifications ont été effacées.', 'info');
+  };
+
+  const openNotificationCenter = () => {
+    setIsNotificationCenterOpen(true);
+  };
+
+  const closeNotificationCenter = () => {
+    setIsNotificationCenterOpen(false);
+  };
+
+  const sendTestNotification = (title?: string, message?: string) => {
+    const testTitle = title || '🔔 Nouvelle notification de test LivraLink';
+    const testMsg = message || `Alerte reçue à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}. Le centre de notification est 100% opérationnel !`;
+    addNotification({
+      type: 'order_status',
+      title: testTitle,
+      message: testMsg,
+      actionView: currentRole === 'vendeur' ? 'vendeur_tracking' : 'livreur_missions',
+    });
+    showToast('Notification de test générée ! Cliquez sur la cloche pour la consulter.', 'success');
+  };
   const [isPODModalOpen, setIsPODModalOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [whatsAppData, setWhatsAppData] = useState<{ phone: string; name: string; message: string } | null>(null);
@@ -313,7 +441,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isGoogleModalOpen, setIsGoogleModalOpen] = useState(false);
   const [googleModalRole, setGoogleModalRole] = useState<'vendeur' | 'livreur' | 'admin'>('vendeur');
 
-  // Dark Mode State
+  // Contextual Priority Missions Alert (Firestore real-time listener)
+  const [priorityMissionAlert, setPriorityMissionAlert] = useState<PriorityMissionAlert | null>(null);
+  const notifiedMissionsRef = React.useRef<Set<string>>(new Set());
+  const dismissPriorityMissionAlert = () => setPriorityMissionAlert(null);
+
+  // Email Notification Center Modal state
+  const [isEmailCenterOpen, setIsEmailCenterOpen] = useState(false);
+  const openEmailCenter = () => setIsEmailCenterOpen(true);
+  const closeEmailCenter = () => setIsEmailCenterOpen(false);
+
+  // Dark Mode State with Automatic System Preference Synchronization
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem('livralink_dark_mode');
@@ -325,6 +463,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return false;
     }
   });
+
+  // Listen to OS / System color scheme preference changes in real-time
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+    const handleSystemThemeChange = (e: MediaQueryListEvent | MediaQueryList) => {
+      const isSystemDark = e.matches;
+      setIsDarkMode(isSystemDark);
+      showToast(
+        isSystemDark ? '🌙 Thème système appliqué : Mode Sombre' : '☀️ Thème système appliqué : Mode Clair',
+        'info'
+      );
+    };
+
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', handleSystemThemeChange);
+    } else if ('addListener' in mediaQuery) {
+      (mediaQuery as any).addListener(handleSystemThemeChange);
+    }
+
+    return () => {
+      if (mediaQuery.removeEventListener) {
+        mediaQuery.removeEventListener('change', handleSystemThemeChange);
+      } else if ('removeListener' in mediaQuery) {
+        (mediaQuery as any).removeListener(handleSystemThemeChange);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -635,7 +803,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const verifyAdminPassword = (password: string): boolean => {
     const trimmed = (password || '').trim();
-    return trimmed === adminPassword || trimmed === 'livralink2026' || trimmed === 'Admin2026!';
+    // Only accept fallback defaults if the password has never been customized
+    if (adminPassword === 'livralink2026') {
+      return trimmed === 'livralink2026' || trimmed === 'Admin2026!';
+    }
+    return trimmed === adminPassword;
   };
 
   const changeAdminPassword = (oldPassword: string, newPassword: string): { success: boolean; message: string } => {
@@ -694,20 +866,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setUserProfile(profile);
             setCurrentRole(profile.role);
             if (profile.role === 'vendeur') {
-              setMerchantSettings((prev) => ({
-                ...prev,
-                managerName: profile.fullName || prev.managerName,
-                storeName: profile.storeName || profile.fullName || prev.storeName,
-                email: profile.email || prev.email,
-                phone: profile.phone || prev.phone,
-              }));
+              let loadedMerchant: MerchantSettings | null = null;
+              try {
+                const saved = localStorage.getItem(`livralink_merchant_settings_${user.uid}`);
+                if (saved) loadedMerchant = JSON.parse(saved);
+              } catch {}
+              if (!loadedMerchant) {
+                loadedMerchant = createFreshMerchantSettings(profile);
+                try {
+                  localStorage.setItem(`livralink_merchant_settings_${user.uid}`, JSON.stringify(loadedMerchant));
+                } catch {}
+              }
+              setMerchantSettings(loadedMerchant);
             } else if (profile.role === 'livreur') {
-              setCourierSettings((prev) => ({
-                ...prev,
-                fullName: profile.fullName || prev.fullName,
-                phone: profile.phone || prev.phone,
-                email: profile.email || prev.email,
-              }));
+              let loadedCourier: CourierSettings | null = null;
+              try {
+                const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
+                if (saved) loadedCourier = JSON.parse(saved);
+              } catch {}
+              if (!loadedCourier) {
+                loadedCourier = createFreshCourierSettings(profile);
+                try {
+                  localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loadedCourier));
+                } catch {}
+              }
+              setCourierSettings(loadedCourier);
+
+              // Match or create the courier entity
+              setCouriers((prev) => {
+                const matched = prev.find(
+                  (c) => c.id === user.uid || (c.email && c.email.toLowerCase() === (profile.email || '').toLowerCase())
+                );
+                if (matched) {
+                  setSelectedCourier(matched);
+                  return prev;
+                }
+                const freshEntity = createFreshCourierEntity(profile);
+                setSelectedCourier(freshEntity);
+                return [freshEntity, ...prev];
+              });
             } else if (profile.role === 'admin' || isEmailAuthorizedAdmin(user.email || '')) {
               setIsAdminSessionUnlocked(true);
             }
@@ -720,14 +917,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               uid: user.uid,
               email: userEmail,
               fullName: user.displayName || userEmail.split('@')[0],
-              phone: user.phoneNumber || '+229 97 00 00 00',
+              phone: user.phoneNumber || '',
               role: fallbackRole,
-              storeName: fallbackRole === 'vendeur' ? (user.displayName || 'Boutique Marchand') : undefined,
+              storeName: fallbackRole === 'vendeur' ? (user.displayName || 'Ma Boutique') : undefined,
               vehicleType: fallbackRole === 'livreur' ? 'Moto 125cc' : undefined,
               createdAt: new Date().toISOString()
             };
             setUserProfile(fallbackProfile);
             setCurrentRole(fallbackRole);
+            if (fallbackRole === 'vendeur') {
+              setMerchantSettings(createFreshMerchantSettings(fallbackProfile));
+            } else if (fallbackRole === 'livreur') {
+              setCourierSettings(createFreshCourierSettings(fallbackProfile));
+            }
             if (isAdmin) {
               setIsAdminSessionUnlocked(true);
             }
@@ -761,6 +963,111 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [isUrgentOfferOpen, urgentOfferTimer]);
 
+  // Contextual real-time Firestore listener for priority missions
+  useEffect(() => {
+    try {
+      const unsubscribe = onSnapshot(collection(db, 'priority_missions'), (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === 'added' || change.type === 'modified') {
+            const data = change.doc.data();
+            const missionId = data.id || data.orderId || change.doc.id;
+            
+            // Trigger contextual alert only if the mission is waiting for a courier ('en_attente')
+            // and hasn't already been notified to this client instance
+            if (data.status === 'en_attente' && !notifiedMissionsRef.current.has(missionId)) {
+              notifiedMissionsRef.current.add(missionId);
+              
+              setPriorityMissionAlert({
+                id: missionId,
+                orderId: data.orderId || missionId,
+                pickupName: data.storeName || data.pickupName || 'Boutique Express Bénin',
+                pickupCommune: data.pickupCommune || 'Haie Vive',
+                dropoffCommune: data.dropoffCommune || 'Akpakpa',
+                deliveryFee: typeof data.fee === 'number' ? data.fee : (typeof data.deliveryFee === 'number' ? data.deliveryFee : 2500),
+                itemValueCOD: typeof data.cod === 'number' ? data.cod : (typeof data.itemValueCOD === 'number' ? data.itemValueCOD : 0),
+                itemDescription: data.itemDescription || 'Colis Express Prioritaire',
+                createdAt: typeof data.createdAt === 'string' ? data.createdAt : new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+                source: 'firestore'
+              });
+
+              // Play synthesized dual-tone priority chime with tactile haptics
+              playPriorityMissionChime();
+
+              // Add entry to notifications center
+              addNotification({
+                type: 'priority_mission',
+                title: '⚡ Mission prioritaire disponible',
+                message: `Course express ${data.storeName || data.pickupName || 'Boutique'} ➔ ${data.dropoffCommune || 'Cotonou'} (${typeof data.fee === 'number' ? data.fee : 2500} FCFA net).`,
+                orderId: missionId,
+                actionView: 'livreur_missions',
+                roleTarget: 'livreur'
+              });
+            }
+          }
+        });
+      }, (error) => {
+        console.warn('Erreur écouteur Firestore priority_missions:', error);
+      });
+
+      return () => unsubscribe();
+    } catch (err) {
+      console.warn('Impossible d\'initialiser l\'écouteur priority_missions:', err);
+    }
+  }, []);
+
+  const simulateNewPriorityMission = async () => {
+    const simNum = Math.floor(1000 + Math.random() * 9000);
+    const simOrderId = `#LL-${simNum}`;
+    const cleanDocId = simOrderId.replace(/[^a-zA-Z0-9_-]/g, '');
+    const communes = ['Haie Vive', 'Ganhi', 'Cadjehoun', 'Akpakpa', 'Fidjrossè', 'Godomey', 'Calavi'];
+    const pickup = communes[Math.floor(Math.random() * 3)];
+    const dropoff = communes[3 + Math.floor(Math.random() * 4)];
+    const fee = 1800 + Math.floor(Math.random() * 6) * 200; // 1800 - 2800 FCFA
+    const cod = Math.random() > 0.4 ? 12000 + Math.floor(Math.random() * 15) * 1000 : 0;
+    const storeNames = ['Mode & Élégance Cotonou', 'TechZone Bénin', 'Parfumerie Divine', 'Pharmacie Haie Vive'];
+    const store = storeNames[Math.floor(Math.random() * storeNames.length)];
+
+    // Create in local deliveries state
+    createDelivery({
+      clientName: 'Client Express ' + simNum,
+      clientPhone: '+229 97 ' + Math.floor(100000 + Math.random() * 900000),
+      itemDescription: 'Commande Prioritaire VIP',
+      deliveryFee: fee,
+      itemValueCOD: cod,
+      pickupLocation: {
+        name: store,
+        address: `${pickup}, Cotonou`,
+        commune: pickup
+      },
+      dropoffLocation: {
+        name: 'Client Express ' + simNum,
+        address: `${dropoff}, Bénin`,
+        commune: dropoff
+      },
+      status: 'en_attente'
+    });
+
+    try {
+      await setDoc(doc(db, 'priority_missions', cleanDocId), {
+        id: simOrderId,
+        orderId: simOrderId,
+        storeName: store,
+        pickupCommune: pickup,
+        dropoffCommune: dropoff,
+        fee,
+        cod,
+        itemDescription: 'Commande Prioritaire VIP',
+        status: 'en_attente',
+        createdAt: Date.now(),
+        urgency: 'high'
+      });
+    } catch (err) {
+      console.warn('Erreur écriture simulation priority_missions:', err);
+    }
+
+    showToast(`⚡ Simulation : Mission prioritaire ${simOrderId} publiée sur Firestore !`, 'success');
+  };
+
   const showToast = (text: string, type: 'success' | 'info' | 'error' = 'success') => {
     setToastMessage({ text, type });
     setTimeout(() => setToastMessage(null), 3500);
@@ -782,6 +1089,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await logoutUser();
       setFirebaseUser(null);
       setUserProfile(null);
+      setMerchantSettings(INITIAL_MERCHANT_SETTINGS);
+      setCourierSettings(INITIAL_COURIER_SETTINGS);
       setViewHistory([]);
       const targetView: AppView = currentRole === 'livreur' ? 'login_livreur' : 'login_vendeur';
       setCurrentViewState(targetView);
@@ -790,6 +1099,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.error('Erreur déconnexion:', err);
       setFirebaseUser(null);
       setUserProfile(null);
+      setMerchantSettings(INITIAL_MERCHANT_SETTINGS);
+      setCourierSettings(INITIAL_COURIER_SETTINGS);
       setViewHistory([]);
       const targetView: AppView = currentRole === 'livreur' ? 'login_livreur' : 'login_vendeur';
       setCurrentViewState(targetView);
@@ -851,6 +1162,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       estimatedArrival: 'Dans ~20 min',
       otpCode: newOrderData.otpCode || Math.floor(1000 + Math.random() * 9000).toString(),
       otpGeneratedAt: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      merchantId: userProfile?.uid,
+      merchantEmail: userProfile?.email || merchantSettings.email,
+      merchantStoreName: merchantSettings.storeName,
       timeline: [
         { id: 't1', stepNumber: 1, title: 'Commande créée', description: 'Enregistrée avec succès', timestamp: 'Maintenant', status: 'completed' },
         { 
@@ -877,10 +1191,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setDeliveries(prev => [newOrder, ...prev]);
     setSelectedDelivery(newOrder);
     addAuditLog('system', 'Nouvelle course créée', `Commande ${newId} pour ${clientName} (${newOrder.dropoffLocation.commune})`);
+
+    // Add notification to Notification Center
+    addNotification({
+      type: 'order_created',
+      title: `📦 Nouvelle livraison ${newId} créée`,
+      message: `Destination : ${newOrder.dropoffLocation.commune} (${clientName}). Colis : ${itemDesc}.`,
+      orderId: newId,
+      actionView: 'vendeur_tracking',
+      roleTarget: 'vendeur'
+    });
+
+    // Sync to Firestore priority_missions collection so couriers receive real-time notifications
+    if (!courierObj || initialStatus === 'en_attente') {
+      const cleanDocId = newId.replace(/[^a-zA-Z0-9_-]/g, '');
+      try {
+        setDoc(doc(db, 'priority_missions', cleanDocId), {
+          id: newId,
+          orderId: newId,
+          storeName: newOrder.merchantStoreName || newOrder.pickupLocation.name || 'Boutique Vendeur',
+          pickupCommune: newOrder.pickupLocation.commune || 'Cotonou',
+          dropoffCommune: newOrder.dropoffLocation.commune || 'Cotonou',
+          fee: calculatedFee,
+          cod: codVal,
+          itemDescription: itemDesc,
+          status: 'en_attente',
+          createdAt: Date.now(),
+          urgency: 'high'
+        }).catch(err => console.warn('Erreur Firestore priority_missions:', err));
+      } catch (err) {
+        console.warn('Erreur synchro priority_missions:', err);
+      }
+    }
+
     if (courierObj) {
       showToast(`Commande ${newId} créée et assignée à ${courierObj.name}.`, 'success');
     } else {
-      showToast(`Commande ${newId} publiée avec succès ! Disponible pour tous les livreurs de la zone.`, 'success');
+      showToast(`Commande ${newId} publiée avec succès ! Diffusée en temps réel aux livreurs.`, 'success');
     }
     return newOrder;
   };
@@ -923,22 +1270,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (userProfile && userProfile.role === 'livreur' && userProfile.fullName) {
         activeName = userProfile.fullName;
-        activePhone = userProfile.phone || courierSettings.phone || '+229 95 87 65 43';
-        activeEmail = userProfile.email || courierSettings.email || 'awa.veloce@gmail.com';
-        activeVehicle = userProfile.vehicleType || courierSettings.vehicleType || 'Scooter Électrique / Moto';
-        activePlate = courierSettings.vehiclePlate || 'BJ-6621-RB';
+        activePhone = userProfile.phone || courierSettings.phone || '';
+        activeEmail = userProfile.email || courierSettings.email || '';
+        activeVehicle = userProfile.vehicleType || courierSettings.vehicleType || 'Moto 125cc';
+        activePlate = courierSettings.vehiclePlate || '';
       } else if (selectedCourier && selectedCourier.name) {
         activeName = selectedCourier.name;
-        activePhone = selectedCourier.phone || courierSettings.phone || '+229 95 87 65 43';
-        activeEmail = selectedCourier.email || courierSettings.email || 'awa.veloce@gmail.com';
-        activeVehicle = selectedCourier.vehicle || courierSettings.vehicleType || 'Scooter Électrique / Moto';
-        activePlate = selectedCourier.vehiclePlate || courierSettings.vehiclePlate || 'BJ-6621-RB';
+        activePhone = selectedCourier.phone || courierSettings.phone || '';
+        activeEmail = selectedCourier.email || courierSettings.email || '';
+        activeVehicle = selectedCourier.vehicle || courierSettings.vehicleType || 'Moto 125cc';
+        activePlate = selectedCourier.vehiclePlate || courierSettings.vehiclePlate || '';
       } else {
-        activeName = courierSettings.fullName || 'Awa Véloce Livraisons';
-        activePhone = courierSettings.phone || '+229 95 87 65 43';
-        activeEmail = courierSettings.email || 'awa.veloce@gmail.com';
-        activeVehicle = courierSettings.vehicleType || 'Scooter Électrique';
-        activePlate = courierSettings.vehiclePlate || 'BJ-6621-RB';
+        activeName = courierSettings.fullName || 'Coursier LivraLink';
+        activePhone = courierSettings.phone || '';
+        activeEmail = courierSettings.email || '';
+        activeVehicle = courierSettings.vehicleType || 'Moto 125cc';
+        activePlate = courierSettings.vehiclePlate || '';
       }
 
       const initials = activeName
@@ -1061,11 +1408,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     // Mettre à jour immédiatement la livraison sélectionnée pour que le compte vendeur et le compte livreur voient instantanément le même coursier
-    if (updatedDeliveryOrder) {
-      setSelectedDelivery(updatedDeliveryOrder);
+    // Dismiss active priority mission banner if accepting this mission
+    if (priorityMissionAlert && (priorityMissionAlert.orderId === orderId || priorityMissionAlert.id === orderId)) {
+      setPriorityMissionAlert(null);
     }
 
+    // Update Firestore priority_missions doc
+    try {
+      const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
+      setDoc(doc(db, 'priority_missions', cleanDocId), { 
+        status: 'assignee', 
+        courierName: courier.name,
+        assignedAt: Date.now()
+      }, { merge: true }).catch(() => {});
+    } catch {}
+
     addAuditLog('system', `Course ${orderId} acceptée`, `Mission prise en charge par le coursier ${courier.name}`);
+    addNotification({
+      type: 'order_accepted',
+      title: '🎉 Mission acceptée par le coursier',
+      message: `La course ${orderId} a été prise en charge par ${courier.name} (${courier.vehicle}).`,
+      orderId,
+      actionView: 'vendeur_tracking'
+    });
     showToast(`🎉 Course ${orderId} acceptée avec succès par ${courier.name} ! Vous êtes assigné à cette livraison.`, 'success');
   };
 
@@ -1083,6 +1448,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
     addAuditLog('system', `Course ${orderId} refusée`, `Déclinée par le coursier`);
+    addNotification({
+      type: 'order_status',
+      title: '⚠️ Course déclinée',
+      message: `La course ${orderId} a été déclinée par le livreur. Elle reste ouverte à la communauté.`,
+      orderId,
+      actionView: 'vendeur_tracking'
+    });
     showToast(`Course ${orderId} refusée. Elle reste dans la file des livraisons disponibles.`, 'info');
   };
 
@@ -1108,6 +1480,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
     addAuditLog('system', `Statut course ${orderId}`, note || `Nouveau statut: ${newStatus}`);
+    
+    const statusLabels: Record<string, string> = {
+      'colis_recupere': '📦 Colis récupéré par le livreur',
+      'en_cours': '🚚 Colis en cours de livraison',
+      'livree': '✅ Colis livré au destinataire',
+      'echec': '🔴 Incident / Échec de livraison',
+      'en_attente': '🟡 Course en attente de coursier'
+    };
+
+    addNotification({
+      type: 'order_status',
+      title: statusLabels[newStatus] || `Mise à jour statut ${orderId}`,
+      message: note || `La livraison ${orderId} est passée au statut : ${newStatus}`,
+      orderId,
+      actionView: 'vendeur_tracking'
+    });
     showToast(`Statut de la course ${orderId} mis à jour : ${newStatus}`, 'info');
   };
 
@@ -1234,6 +1622,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ? `Validation Tri-Facteur obligatoire (OTP #${methodOrData.otpCode}, Photo directe sans visage, Signature de ${methodOrData.signedByName})`
         : `Validation par ${methodOrData}`
     );
+    addNotification({
+      type: 'pod_validated',
+      title: '✅ Certificat de livraison POD validé',
+      message: `La livraison ${orderId} a été certifiée et remise avec succès.`,
+      orderId,
+      actionView: 'vendeur_tracking'
+    });
     showToast(`🎉 Livraison ${orderId} certifiée et validée avec succès !`, 'success');
   };
 
@@ -1896,7 +2291,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         directorTargetName,
         impersonateMerchant,
         impersonateCourier,
-        exitDirectorMode
+        exitDirectorMode,
+        priorityMissionAlert,
+        dismissPriorityMissionAlert,
+        simulateNewPriorityMission,
+        isEmailCenterOpen,
+        setIsEmailCenterOpen,
+        openEmailCenter,
+        closeEmailCenter,
+        notifications,
+        addNotification,
+        markNotificationAsRead,
+        markAllNotificationsAsRead,
+        deleteNotification,
+        clearAllNotifications,
+        isNotificationCenterOpen,
+        setIsNotificationCenterOpen,
+        openNotificationCenter,
+        closeNotificationCenter,
+        sendTestNotification,
+        notificationPermission,
+        requestBrowserNotificationPermission
       }}
     >
       {children}

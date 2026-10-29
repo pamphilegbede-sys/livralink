@@ -82,24 +82,6 @@ export const Sidebar: React.FC = () => {
 
         {/* Navigation Tabs - Role-specific */}
         <nav className="space-y-1">
-          {/* Quick Admin switch button for non-admin roles */}
-          {currentRole !== 'admin' && (
-            <button
-              onClick={() => {
-                setCurrentRole('admin');
-                setCurrentView('admin_console');
-              }}
-              className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-slate-900 to-indigo-950 hover:from-slate-800 hover:to-indigo-900 text-amber-300 border border-amber-400/40 shadow-xs mb-3 transition-all active:scale-95"
-              title="Basculer vers la console administrateur"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-sm">👑</span>
-                <span>Console Admin</span>
-              </div>
-              <span className="material-symbols-outlined text-sm text-amber-300">arrow_forward</span>
-            </button>
-          )}
-
           {/* VENDEUR TABS */}
           {currentRole === 'vendeur' && (
             <>

@@ -5,8 +5,28 @@ import { BENIN_DEPARTMENTS, getLocationForCommune } from '../../config/maps';
 import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
 
+import { 
+  createFreshMerchantSettings, 
+  createFreshCourierSettings, 
+  createFreshMerchantEntity, 
+  createFreshCourierEntity 
+} from '../../utils/userIsolation';
+import { sendWelcomeEmail } from '../../services/emailService';
+
 export const RegisterPage: React.FC = () => {
-  const { setCurrentView, currentRole, setCurrentRole, setUserProfile, setMerchantSettings, setCourierSettings, showToast, openTestModal } = useApp();
+  const { 
+    setCurrentView, 
+    currentRole, 
+    setCurrentRole, 
+    setUserProfile, 
+    setMerchantSettings, 
+    setCourierSettings, 
+    setCouriers,
+    setSelectedCourier,
+    setMerchants,
+    showToast, 
+    openTestModal 
+  } = useApp();
   const [selectedRole, setSelectedRole] = useState<'vendeur' | 'livreur'>(currentRole === 'livreur' ? 'livreur' : 'vendeur');
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
@@ -89,30 +109,66 @@ export const RegisterPage: React.FC = () => {
 
       if (selectedRole === 'vendeur') {
         setUserProfile(profile);
-        setMerchantSettings((prev) => ({
-          ...prev,
+        const freshMerchant = createFreshMerchantSettings({
+          ...profile,
           storeName: storeName.trim() || fullName.trim(),
-          managerName: fullName.trim(),
-          phone: phone.trim(),
-          email: email.trim(),
-          storeCommune: storeCommune.trim(),
-          defaultPickupAddress: storeAddress.trim() || (storeCommune ? `Boutique, ${storeCommune}` : prev.defaultPickupAddress),
-          gpsCoordinates: coords ? `${coords.lat.toFixed(4)}° N, ${coords.lng.toFixed(4)}° E` : prev.gpsCoordinates,
-          storeCoordinates: coords ? [coords.lat, coords.lng] : undefined,
-        }));
+          locationCommune: storeCommune.trim(),
+          locationAddress: storeAddress.trim(),
+          locationLat: coords?.lat,
+          locationLng: coords?.lng,
+          gpsCoordinates: coords ? `${coords.lat.toFixed(4)}° N, ${coords.lng.toFixed(4)}° E` : '',
+        });
+        setMerchantSettings(freshMerchant);
+        try {
+          localStorage.setItem(`livralink_merchant_settings_${profile.uid}`, JSON.stringify(freshMerchant));
+        } catch {}
+
+        // Add merchant entity to admin directory
+        const merchantEntity = createFreshMerchantEntity({
+          ...profile,
+          storeName: storeName.trim() || fullName.trim(),
+          locationCommune: storeCommune.trim(),
+          locationAddress: storeAddress.trim(),
+        });
+        setMerchants((prev) => [merchantEntity, ...prev.filter((m) => m.id !== profile.uid)]);
+
         setCurrentView('vendeur_dashboard');
         showToast(`Compte Vendeur créé avec succès ! Bienvenue ${profile.fullName}.`, 'success');
       } else {
         setUserProfile(profile);
-        setCourierSettings((prev) => ({
-          ...prev,
-          fullName: profile.fullName || prev.fullName,
-          phone: phone.trim() || prev.phone,
-          email: email.trim() || prev.email,
-        }));
+        const freshCourierSettings = createFreshCourierSettings({
+          ...profile,
+          fullName: fullName.trim(),
+          phone: phone.trim(),
+          email: email.trim(),
+        });
+        setCourierSettings(freshCourierSettings);
+        try {
+          localStorage.setItem(`livralink_courier_settings_${profile.uid}`, JSON.stringify(freshCourierSettings));
+        } catch {}
+
+        // Add pristine courier entity to couriers directory
+        const courierEntity = createFreshCourierEntity({
+          ...profile,
+          fullName: fullName.trim(),
+          phone: phone.trim(),
+          email: email.trim(),
+        });
+        setCouriers((prev) => [courierEntity, ...prev.filter((c) => c.id !== profile.uid)]);
+        setSelectedCourier(courierEntity);
+
         setCurrentView('livreur_dashboard');
         showToast(`Compte Livreur créé avec succès ! Bienvenue ${profile.fullName}.`, 'success');
       }
+
+      // Automatically send official Welcome Email (brevo SMTP / logged to Outbox)
+      sendWelcomeEmail({
+        email: email.trim(),
+        fullName: fullName.trim(),
+        role: selectedRole,
+        storeName: selectedRole === 'vendeur' ? (storeName.trim() || fullName.trim()) : undefined,
+        phone: phone.trim()
+      }).catch(err => console.warn('Erreur envoi email bienvenue:', err));
     } catch (err: any) {
       const friendlyMsg = getFirebaseAuthErrorMessage(err);
       setErrorMessage(friendlyMsg);
@@ -131,23 +187,39 @@ export const RegisterPage: React.FC = () => {
       if (profile) {
         setUserProfile(profile);
         if (selectedRole === 'vendeur') {
-          setMerchantSettings((prev) => ({
-            ...prev,
-            managerName: profile.fullName || prev.managerName,
-            storeName: profile.storeName || `Boutique ${profile.fullName}` || prev.storeName,
-            email: profile.email || prev.email,
-          }));
+          const freshMerchant = createFreshMerchantSettings(profile);
+          setMerchantSettings(freshMerchant);
+          try {
+            localStorage.setItem(`livralink_merchant_settings_${profile.uid}`, JSON.stringify(freshMerchant));
+          } catch {}
+
+          const merchantEntity = createFreshMerchantEntity(profile);
+          setMerchants((prev) => [merchantEntity, ...prev.filter((m) => m.id !== profile.uid)]);
         } else {
-          setCourierSettings((prev) => ({
-            ...prev,
-            fullName: profile.fullName || prev.fullName,
-            phone: profile.phone || prev.phone,
-            email: profile.email || prev.email,
-          }));
+          const freshCourierSettings = createFreshCourierSettings(profile);
+          setCourierSettings(freshCourierSettings);
+          try {
+            localStorage.setItem(`livralink_courier_settings_${profile.uid}`, JSON.stringify(freshCourierSettings));
+          } catch {}
+
+          const courierEntity = createFreshCourierEntity(profile);
+          setCouriers((prev) => [courierEntity, ...prev.filter((c) => c.id !== profile.uid)]);
+          setSelectedCourier(courierEntity);
         }
       }
       setCurrentView(selectedRole === 'vendeur' ? 'vendeur_dashboard' : 'livreur_dashboard');
       showToast(`Inscription Google réussie ! Bienvenue ${profile?.fullName || user.displayName || 'Utilisateur'}.`, 'success');
+
+      // Send welcome email if Google email is present
+      if (user.email) {
+        sendWelcomeEmail({
+          email: user.email,
+          fullName: profile?.fullName || user.displayName || 'Utilisateur',
+          role: selectedRole,
+          storeName: selectedRole === 'vendeur' ? (profile?.storeName || user.displayName || 'Ma Boutique') : undefined,
+          phone: profile?.phone || ''
+        }).catch(err => console.warn('Erreur email bienvenue Google:', err));
+      }
     } catch (err: any) {
       if (err?.code === 'auth/popup-closed-by-user') {
         showToast('Inscription Google annulée.', 'info');

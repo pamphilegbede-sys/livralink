@@ -57,14 +57,14 @@ export const TableSkeleton: React.FC<{ rows?: number; columns?: number }> = ({
 export const FullViewSkeleton: React.FC<{ label?: string }> = ({ label = 'Chargement en cours...' }) => {
   return (
     <div className="flex-1 flex flex-col items-center justify-center min-h-[350px] p-6 text-center space-y-4">
-      <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shadow-xs animate-bounce">
+      <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shadow-xs animate-bounce">
         <span className="material-symbols-outlined text-2xl">local_shipping</span>
       </div>
-      <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
-        <span className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></span>
+      <div className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
+        <span className="w-4 h-4 border-2 border-blue-600 dark:border-blue-400 border-t-transparent rounded-full animate-spin"></span>
         <span>{label}</span>
       </div>
-      <p className="text-xs text-slate-400">Préparation des données sécurisées...</p>
+      <p className="text-xs text-slate-400 dark:text-slate-400">Optimisation ultra-rapide du chargement...</p>
     </div>
   );
 };

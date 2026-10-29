@@ -33,18 +33,38 @@ export const VendeurSettings: React.FC = () => {
   const [channelSMS, setChannelSMS] = useState(merchantSettings.channelSMS);
   const [channelEmail, setChannelEmail] = useState(merchantSettings.channelEmail);
 
+  React.useEffect(() => {
+    setStoreName(merchantSettings.storeName);
+    setManagerName(merchantSettings.managerName);
+    setPhone(merchantSettings.phone);
+    setEmail(merchantSettings.email);
+    setStoreCommune(merchantSettings.storeCommune || 'Cotonou - Haie Vive');
+    setDefaultPickupAddress(merchantSettings.defaultPickupAddress);
+    setDefaultExpress(merchantSettings.defaultExpress);
+    setFrequentZones(merchantSettings.frequentZones || []);
+    setPermanentInstructions(merchantSettings.permanentInstructions || '');
+    setNotifyOnCreated(merchantSettings.notifyOnCreated);
+    setNotifyOnStatusChange(merchantSettings.notifyOnStatusChange);
+    setNotifyOnCourierAssigned(merchantSettings.notifyOnCourierAssigned);
+    setNotifyOnDelivered(merchantSettings.notifyOnDelivered);
+    setNotifyOnIncident(merchantSettings.notifyOnIncident);
+    setChannelWhatsApp(merchantSettings.channelWhatsApp);
+    setChannelSMS(merchantSettings.channelSMS);
+    setChannelEmail(merchantSettings.channelEmail);
+  }, [merchantSettings]);
+
   const handleSave = () => {
     const coords = storeCommune ? getLocationForCommune(storeCommune) : undefined;
-    setMerchantSettings((prev) => ({
-      ...prev,
+    const updated: typeof merchantSettings = {
+      ...merchantSettings,
       storeName,
       managerName,
       phone,
       email,
       storeCommune,
       defaultPickupAddress,
-      gpsCoordinates: coords ? `${coords.lat.toFixed(4)}° N, ${coords.lng.toFixed(4)}° E` : prev.gpsCoordinates,
-      storeCoordinates: coords ? [coords.lat, coords.lng] : prev.storeCoordinates,
+      gpsCoordinates: coords ? `${coords.lat.toFixed(4)}° N, ${coords.lng.toFixed(4)}° E` : merchantSettings.gpsCoordinates,
+      storeCoordinates: coords ? [coords.lat, coords.lng] : merchantSettings.storeCoordinates,
       defaultExpress,
       frequentZones,
       permanentInstructions,
@@ -56,7 +76,13 @@ export const VendeurSettings: React.FC = () => {
       channelWhatsApp,
       channelSMS,
       channelEmail,
-    }));
+    };
+    setMerchantSettings(updated);
+    if (userProfile?.uid) {
+      try {
+        localStorage.setItem(`livralink_merchant_settings_${userProfile.uid}`, JSON.stringify(updated));
+      } catch {}
+    }
     showToast('Paramètres Vendeur enregistrés avec succès !', 'success');
   };
 

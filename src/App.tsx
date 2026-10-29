@@ -1,33 +1,53 @@
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Toast } from './components/common/Toast';
-import { PODValidationModal } from './components/modals/PODValidationModal';
-import { WhatsAppPreviewModal } from './components/modals/WhatsAppPreviewModal';
-import { UrgentMissionModal } from './components/modals/UrgentMissionModal';
-import { FirebaseTestModal } from './components/modals/FirebaseTestModal';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { FullViewSkeleton } from './components/common/LoadingSkeleton';
-import { AdminDirectorFloatingBanner } from './components/common/AdminDirectorFloatingBanner';
 import { PlatformBroadcastBanner } from './components/common/PlatformBroadcastBanner';
-
-// Views
+import { PriorityMissionNotificationBanner } from './components/common/PriorityMissionNotificationBanner';
 import { LandingPage } from './components/views/LandingPage';
-import { LoginVendeurPage } from './components/views/LoginVendeurPage';
-import { LoginLivreurPage } from './components/views/LoginLivreurPage';
-import { RegisterPage } from './components/views/RegisterPage';
-import { VendeurDashboard } from './components/views/VendeurDashboard';
-import { VendeurNewDelivery } from './components/views/VendeurNewDelivery';
-import { VendeurTracking } from './components/views/VendeurTracking';
-import { VendeurReports } from './components/views/VendeurReports';
-import { VendeurSettings } from './components/views/VendeurSettings';
-import { LivreurDashboard } from './components/views/LivreurDashboard';
-import { LivreurMissions } from './components/views/LivreurMissions';
-import { LivreurWallet } from './components/views/LivreurWallet';
-import { LivreurSettings } from './components/views/LivreurSettings';
-import { AdminConsole } from './components/views/AdminConsole';
+
+// Lazy-loaded Views for ultra-fast initial load & reduced bundle size
+const LoginVendeurPage = React.lazy(() => import('./components/views/LoginVendeurPage').then(m => ({ default: m.LoginVendeurPage })));
+const LoginLivreurPage = React.lazy(() => import('./components/views/LoginLivreurPage').then(m => ({ default: m.LoginLivreurPage })));
+const RegisterPage = React.lazy(() => import('./components/views/RegisterPage').then(m => ({ default: m.RegisterPage })));
+const VendeurDashboard = React.lazy(() => import('./components/views/VendeurDashboard').then(m => ({ default: m.VendeurDashboard })));
+const VendeurNewDelivery = React.lazy(() => import('./components/views/VendeurNewDelivery').then(m => ({ default: m.VendeurNewDelivery })));
+const VendeurTracking = React.lazy(() => import('./components/views/VendeurTracking').then(m => ({ default: m.VendeurTracking })));
+const VendeurReports = React.lazy(() => import('./components/views/VendeurReports').then(m => ({ default: m.VendeurReports })));
+const VendeurSettings = React.lazy(() => import('./components/views/VendeurSettings').then(m => ({ default: m.VendeurSettings })));
+const LivreurDashboard = React.lazy(() => import('./components/views/LivreurDashboard').then(m => ({ default: m.LivreurDashboard })));
+const LivreurMissions = React.lazy(() => import('./components/views/LivreurMissions').then(m => ({ default: m.LivreurMissions })));
+const LivreurWallet = React.lazy(() => import('./components/views/LivreurWallet').then(m => ({ default: m.LivreurWallet })));
+const LivreurSettings = React.lazy(() => import('./components/views/LivreurSettings').then(m => ({ default: m.LivreurSettings })));
+const AdminConsole = React.lazy(() => import('./components/views/AdminConsole').then(m => ({ default: m.AdminConsole })));
+
+// Lazy-loaded Modals
+const PODValidationModal = React.lazy(() => import('./components/modals/PODValidationModal').then(m => ({ default: m.PODValidationModal })));
+const WhatsAppPreviewModal = React.lazy(() => import('./components/modals/WhatsAppPreviewModal').then(m => ({ default: m.WhatsAppPreviewModal })));
+const UrgentMissionModal = React.lazy(() => import('./components/modals/UrgentMissionModal').then(m => ({ default: m.UrgentMissionModal })));
+const FirebaseTestModal = React.lazy(() => import('./components/modals/FirebaseTestModal').then(m => ({ default: m.FirebaseTestModal })));
+const EmailNotificationCenterModal = React.lazy(() => import('./components/modals/EmailNotificationCenterModal').then(m => ({ default: m.EmailNotificationCenterModal })));
+const NotificationCenterModal = React.lazy(() => import('./components/modals/NotificationCenterModal').then(m => ({ default: m.NotificationCenterModal })));
 
 const MainAppRouter: React.FC = () => {
-  const { currentView, isAuthLoading, isTestModalOpen, closeTestModal, isDarkMode } = useApp();
+  const { 
+    currentView, 
+    setCurrentView,
+    deliveries,
+    setSelectedDelivery,
+    acceptDelivery,
+    isAuthLoading, 
+    isTestModalOpen, 
+    closeTestModal, 
+    isDarkMode,
+    priorityMissionAlert,
+    dismissPriorityMissionAlert,
+    isEmailCenterOpen,
+    closeEmailCenter,
+    isNotificationCenterOpen,
+    closeNotificationCenter
+  } = useApp();
   const [deviceMode, setDeviceMode] = useState<'responsive' | 'mobile-mock'>('responsive');
 
   const renderActiveView = () => {
@@ -35,47 +55,50 @@ const MainAppRouter: React.FC = () => {
       return <FullViewSkeleton label="Vérification de session sécurisée..." />;
     }
 
-    switch (currentView) {
-      case 'landing':
-        return <LandingPage />;
-      case 'login_vendeur':
-        return <LoginVendeurPage />;
-      case 'login_livreur':
-        return <LoginLivreurPage />;
-      case 'register':
-        return <RegisterPage />;
-      case 'vendeur_dashboard':
-        return <VendeurDashboard />;
-      case 'vendeur_new_delivery':
-        return <VendeurNewDelivery />;
-      case 'vendeur_tracking':
-        return <VendeurTracking />;
-      case 'vendeur_reports':
-        return <VendeurReports />;
-      case 'vendeur_settings':
-        return <VendeurSettings />;
-      case 'livreur_dashboard':
-        return <LivreurDashboard />;
-      case 'livreur_missions':
-        return <LivreurMissions />;
-      case 'livreur_wallet':
-        return <LivreurWallet />;
-      case 'livreur_settings':
-        return <LivreurSettings />;
-      case 'admin_console':
-        return <AdminConsole />;
-      default:
-        return <LandingPage />;
-    }
+    return (
+      <React.Suspense fallback={<FullViewSkeleton label="Chargement instantané..." />}>
+        {(() => {
+          switch (currentView) {
+            case 'landing':
+              return <LandingPage />;
+            case 'login_vendeur':
+              return <LoginVendeurPage />;
+            case 'login_livreur':
+              return <LoginLivreurPage />;
+            case 'register':
+              return <RegisterPage />;
+            case 'vendeur_dashboard':
+              return <VendeurDashboard />;
+            case 'vendeur_new_delivery':
+              return <VendeurNewDelivery />;
+            case 'vendeur_tracking':
+              return <VendeurTracking />;
+            case 'vendeur_reports':
+              return <VendeurReports />;
+            case 'vendeur_settings':
+              return <VendeurSettings />;
+            case 'livreur_dashboard':
+              return <LivreurDashboard />;
+            case 'livreur_missions':
+              return <LivreurMissions />;
+            case 'livreur_wallet':
+              return <LivreurWallet />;
+            case 'livreur_settings':
+              return <LivreurSettings />;
+            case 'admin_console':
+              return <AdminConsole />;
+            default:
+              return <LandingPage />;
+          }
+        })()}
+      </React.Suspense>
+    );
   };
 
   return (
     <div className={`flex flex-col min-h-screen w-full bg-[#f8fafc] dark:bg-slate-950 text-[#131b2e] dark:text-slate-100 antialiased transition-colors duration-200 ${isDarkMode ? 'dark' : ''}`}>
       {/* Global Toast */}
       <Toast />
-
-      {/* Admin Director Mode Sticky Banner */}
-      <AdminDirectorFloatingBanner />
 
       {/* Platform Emergency / Official Broadcast Banner */}
       <PlatformBroadcastBanner />
@@ -116,11 +139,33 @@ const MainAppRouter: React.FC = () => {
         </div>
       )}
 
-      {/* Global Modals */}
-      <PODValidationModal />
-      <WhatsAppPreviewModal />
-      <UrgentMissionModal />
-      <FirebaseTestModal isOpen={isTestModalOpen} onClose={closeTestModal} />
+      {/* Priority Mission Contextual Real-Time Alert Banner */}
+      <PriorityMissionNotificationBanner
+        alert={priorityMissionAlert}
+        onDismiss={dismissPriorityMissionAlert}
+        onAccept={(orderId) => {
+          acceptDelivery(orderId);
+          dismissPriorityMissionAlert();
+        }}
+        onViewDetails={(orderId) => {
+          const ord = deliveries.find(d => d.id === orderId);
+          if (ord) {
+            setSelectedDelivery(ord);
+          }
+          setCurrentView('livreur_missions');
+          dismissPriorityMissionAlert();
+        }}
+      />
+
+      {/* Global Modals (Lazy-loaded with Suspense) */}
+      <React.Suspense fallback={null}>
+        <PODValidationModal />
+        <WhatsAppPreviewModal />
+        <UrgentMissionModal />
+        {isTestModalOpen && <FirebaseTestModal isOpen={isTestModalOpen} onClose={closeTestModal} />}
+        {isEmailCenterOpen && <EmailNotificationCenterModal isOpen={isEmailCenterOpen} onClose={closeEmailCenter} />}
+        {isNotificationCenterOpen && <NotificationCenterModal isOpen={isNotificationCenterOpen} onClose={closeNotificationCenter} />}
+      </React.Suspense>
     </div>
   );
 };

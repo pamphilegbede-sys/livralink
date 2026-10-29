@@ -29,6 +29,8 @@ export const LivreurDashboard: React.FC = () => {
     createDelivery,
     setCurrentView,
     featureFlags,
+    simulateNewPriorityMission,
+    openEmailCenter,
   } = useApp();
 
   const [expandedMapOrderId, setExpandedMapOrderId] = useState<string | null>(null);
@@ -48,23 +50,31 @@ export const LivreurDashboard: React.FC = () => {
     (d) => d.status === 'en_attente' || !d.courier
   );
 
-  // Mission active en cours pour ce livreur (acceptée, colis récupéré ou en cours)
-  const activeOrder = deliveries.find(
-    (d) =>
-      d.status === 'acceptee' ||
-      d.status === 'colis_recupere' ||
-      d.status === 'en_cours'
-  );
-
   const activeCourierName =
     (userProfile?.role === 'livreur' && userProfile?.fullName) ||
-    selectedCourier?.name ||
     courierSettings.fullName ||
-    'Awa Véloce Livraisons';
+    selectedCourier?.name ||
+    'Coursier LivraLink';
 
   const displayName = activeCourierName.split(' ')[0] || 'Livreur';
-  const activeCourierVehicle = selectedCourier?.vehicle || courierSettings.vehicleType || 'Scooter Électrique';
-  const activeCourierPhone = selectedCourier?.phone || courierSettings.phone || '+229 95 87 65 43';
+  const activeCourierVehicle = (userProfile?.role === 'livreur' && userProfile.vehicleType) || courierSettings.vehicleType || selectedCourier?.vehicle || 'Moto 125cc';
+  const activeCourierPhone = (userProfile?.role === 'livreur' && userProfile.phone) || courierSettings.phone || selectedCourier?.phone || '';
+
+  // Mission active en cours spécifiquement attribuée à ce livreur
+  const activeOrder = deliveries.find((d) => {
+    const isOngoing = d.status === 'acceptee' || d.status === 'colis_recupere' || d.status === 'en_cours';
+    if (!isOngoing) return false;
+    if (userProfile?.role === 'livreur') {
+      const isDemo = userProfile.fullName === 'Awa Véloce Livraisons';
+      if (isDemo) return true;
+      return (
+        d.courier?.id === userProfile.uid ||
+        (d.courier?.email && userProfile.email && d.courier.email.toLowerCase() === userProfile.email.toLowerCase()) ||
+        (d.courier?.name && d.courier.name.toLowerCase() === userProfile.fullName.toLowerCase())
+      );
+    }
+    return d.courier?.id === selectedCourier?.id || (selectedCourier && d.courier?.name === selectedCourier.name);
+  });
 
   // Coordonnées GPS pour la carte Google Maps de la mission active
   const activeOriginCoords = activeOrder?.pickupLocation?.coordinates
@@ -231,6 +241,24 @@ export const LivreurDashboard: React.FC = () => {
             <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
               <button
                 type="button"
+                onClick={() => simulateNewPriorityMission()}
+                className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all active:scale-95 shadow-sm cursor-pointer"
+                title="Déclencher une mission prioritaire temps réel avec écouteurs Firestore et carillon sonore"
+              >
+                <span className="material-symbols-outlined text-base">bolt</span>
+                <span>⚡ Alerte Prioritaire Firestore</span>
+              </button>
+              <button
+                type="button"
+                onClick={openEmailCenter}
+                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Consulter les e-mails envoyés (Bienvenue, Codes, Sécurité)"
+              >
+                <span className="material-symbols-outlined text-base text-blue-600 dark:text-blue-400">mail</span>
+                <span>Boîte E-mails</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setIsOnboardingOpen(true)}
                 className="px-3.5 py-2 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 rounded-xl text-xs font-bold border border-indigo-200/80 dark:border-indigo-800 flex items-center gap-1.5 transition-all active:scale-95 shadow-2xs cursor-pointer"
                 title="Consulter le guide de prise en main coursier"
@@ -245,7 +273,7 @@ export const LivreurDashboard: React.FC = () => {
                 title="Simuler une course créée par un vendeur"
               >
                 <span className="material-symbols-outlined text-base">add_circle</span>
-                <span>+ Simuler course vendeur</span>
+                <span>+ Course vendeur</span>
               </button>
             </div>
           </div>

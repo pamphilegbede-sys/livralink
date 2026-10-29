@@ -64,6 +64,8 @@ export const AdminConsole: React.FC = () => {
     impersonateCourier,
     isDirectorModeActive,
     directorTargetName,
+    openEmailCenter,
+    simulateNewPriorityMission,
   } = useApp();
 
   // Whitelist management state
@@ -856,6 +858,24 @@ export const AdminConsole: React.FC = () => {
                 </p>
               </div>
             </div>
+
+            <button
+              onClick={openEmailCenter}
+              className="px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs bg-blue-50 text-blue-800 hover:bg-blue-100 border border-blue-200 cursor-pointer"
+              title="Consulter et tester l'historique des emails Brevo / SMTP (Bienvenue, Réinitialisation, Alertes)"
+            >
+              <span className="material-symbols-outlined text-sm text-blue-600">mail</span>
+              <span className="hidden sm:inline">Boîte E-mails</span>
+            </button>
+
+            <button
+              onClick={() => simulateNewPriorityMission()}
+              className="px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white cursor-pointer"
+              title="Diffuser une mission prioritaire en direct sur Firestore pour tester la notification des livreurs"
+            >
+              <span className="material-symbols-outlined text-sm">bolt</span>
+              <span className="hidden sm:inline">⚡ Diffuser Mission</span>
+            </button>
 
             <button
               onClick={() => setActiveViewTab('security')}

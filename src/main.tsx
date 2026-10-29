@@ -1,9 +1,12 @@
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { registerServiceWorkerWithWorkbox } from './utils/serviceWorkerRegistration';
 
-// Global safety handler for Firebase Auth popup cleanup assertion quirks
+// Register Service Worker with workbox-window for background push notifications
 if (typeof window !== 'undefined') {
+  registerServiceWorkerWithWorkbox();
+
   window.addEventListener('error', (event) => {
     const msg = event?.message || event?.error?.message || '';
     if (msg.includes('Pending promise was never set') || msg.includes('popup-closed-by-user')) {
@@ -29,3 +32,4 @@ if (typeof window !== 'undefined') {
 }
 
 createRoot(document.getElementById('root')!).render(<App />);
+
