@@ -33,7 +33,7 @@ if (portArg) {
     }
   }
 }
-const PORT = cliPort || parseInt(process.env.APP_PORT || process.env.DEFAULT_APP_PORT || '3000', 10);
+const PORT = cliPort || (process.env.DEFAULT_APP_PORT ? parseInt(process.env.DEFAULT_APP_PORT, 10) : parseInt(process.env.PORT || process.env.APP_PORT || '3000', 10));
 
 // Enable high-speed gzip / deflate compression on all HTTP responses
 app.use(compression());
