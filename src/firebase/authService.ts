@@ -55,82 +55,7 @@ export interface TestProfile {
   description: string;
 }
 
-export const ALL_TEST_PROFILES: TestProfile[] = [
-  {
-    id: 1,
-    name: 'Sarah Chic Boutique',
-    email: 'sarah.boutique@gmail.com',
-    password: 'SarahPassword2025!',
-    role: 'vendeur',
-    phone: '+229 97 12 34 56',
-    storeName: 'Sarah Chic Boutique Cotonou',
-    description: 'Vendeuse Prêt-à-porter & Accessoires de Mode',
-  },
-  {
-    id: 2,
-    name: 'Karim Tech Store',
-    email: 'karim.tech@gmail.com',
-    password: 'KarimPassword2025#',
-    role: 'vendeur',
-    phone: '+229 95 88 77 66',
-    storeName: 'Karim High-Tech & Smartphones',
-    description: 'Boutique E-commerce Électronique & Accessoires',
-  },
-  {
-    id: 3,
-    name: 'Amadou Bio Marché',
-    email: 'amadou.bio@gmail.com',
-    password: 'AmadouBio2025!',
-    role: 'vendeur',
-    phone: '+229 61 23 45 67',
-    storeName: 'Amadou Produits Frais & Bio',
-    description: 'Commerce Alimentation & Paniers Frais',
-  },
-  {
-    id: 4,
-    name: 'Moussa Express Moto',
-    email: 'moussa.livreur@gmail.com',
-    password: 'MoussaRider2025!',
-    role: 'livreur',
-    phone: '+229 96 44 33 22',
-    vehicleType: 'Moto Yamaha 125cc',
-    zone: 'Zone Cotonou & Cadjehoun',
-    description: 'Coursier Express Deux-Roues Urbain',
-  },
-  {
-    id: 5,
-    name: 'Fatou Cargo Vélo',
-    email: 'fatou.cargo@gmail.com',
-    password: 'FatouCargo2025!',
-    role: 'livreur',
-    phone: '+229 90 11 22 33',
-    vehicleType: 'Vélo Cargo Électrique',
-    zone: 'Zone Haie Vive & Akpakpa',
-    description: 'Coursière Vélo Cargo Éco-Responsable',
-  },
-  {
-    id: 6,
-    name: 'Bakary Express Cotonou',
-    email: 'bakary.express@gmail.com',
-    password: 'BakaryFast2025!',
-    role: 'livreur',
-    phone: '+229 97 48 12 34',
-    vehicleType: 'Moto Honda 150cc Pro',
-    zone: 'Zone Cotonou, Haie Vive & Cadjehoun',
-    description: 'Livreur Rapide Spécialiste Courses Urgentes (420 livraisons)',
-  },
-  {
-    id: 7,
-    name: 'Awa Véloce Livraisons',
-    email: 'awa.veloce@gmail.com',
-    password: 'AwaVeloce2025!',
-    role: 'livreur',
-    phone: '+229 95 87 65 43',
-    vehicleType: 'Scooter Électrique / Van Léger',
-    zone: 'Zone Akpakpa, Porto-Novo & Sèmè',
-    description: 'Livreuse Premium Flotte & Colis Fragiles (385 livraisons)',
-  },
-];
+export const ALL_TEST_PROFILES: TestProfile[] = [];
 
 // Compatibility alias
 export const FIVE_TEST_PROFILES = ALL_TEST_PROFILES;
@@ -397,9 +322,75 @@ export const registerWithEmailPassword = async (
   return { user: authUser!, profile: profileData };
 };
 
+// -------------------------------------------------------------------------
+// Anti-Brute-Force Login Attempt Tracker
+// -------------------------------------------------------------------------
+interface LoginAttemptRecord {
+  attempts: number;
+  lockedUntil: number;
+}
+const loginAttemptTracker = new Map<string, LoginAttemptRecord>();
+
+export const checkLoginBruteForce = (email: string): { allowed: boolean; remaining: number; waitMinutes: number } => {
+  const clean = email.trim().toLowerCase();
+  const record = loginAttemptTracker.get(clean);
+  const now = Date.now();
+  if (!record) return { allowed: true, remaining: 5, waitMinutes: 0 };
+  if (now < record.lockedUntil) {
+    const waitMinutes = Math.ceil((record.lockedUntil - now) / 60000);
+    return { allowed: false, remaining: 0, waitMinutes };
+  }
+  if (record.lockedUntil > 0 && now >= record.lockedUntil) {
+    loginAttemptTracker.delete(clean);
+    return { allowed: true, remaining: 5, waitMinutes: 0 };
+  }
+  return { allowed: true, remaining: Math.max(0, 5 - record.attempts), waitMinutes: 0 };
+};
+
+export const recordFailedLoginAttempt = (email: string): { locked: boolean; waitMinutes: number } => {
+  const clean = email.trim().toLowerCase();
+  const record = loginAttemptTracker.get(clean) || { attempts: 0, lockedUntil: 0 };
+  record.attempts += 1;
+  if (record.attempts >= 5) {
+    record.lockedUntil = Date.now() + 15 * 60 * 1000; // 15-minute temporary security lockout
+    loginAttemptTracker.set(clean, record);
+    return { locked: true, waitMinutes: 15 };
+  }
+  loginAttemptTracker.set(clean, record);
+  return { locked: false, waitMinutes: 0 };
+};
+
+export const recordSuccessfulLogin = (email: string) => {
+  loginAttemptTracker.delete(email.trim().toLowerCase());
+};
+
+export const toggleUserMFA = async (
+  uid: string,
+  enable: boolean,
+  method: 'email_otp' | 'authenticator_app' = 'email_otp'
+): Promise<{ success: boolean; mfaEnabled: boolean; message: string }> => {
+  try {
+    const userDocRef = doc(db, 'users', uid);
+    await setDoc(userDocRef, { mfaEnabled: enable, mfaMethod: method }, { merge: true });
+    return {
+      success: true,
+      mfaEnabled: enable,
+      message: enable ? '🔒 Double authentification (MFA) activée avec succès.' : 'Double authentification désactivée.',
+    };
+  } catch (err) {
+    console.warn('Erreur mise à jour MFA:', err);
+    return {
+      success: false,
+      mfaEnabled: !enable,
+      message: 'Erreur lors de la mise à jour de la configuration MFA.',
+    };
+  }
+};
+
 /**
  * Login an existing user with Firebase Authentication and retrieve their Firestore profile.
  * Strictly verifies that the email and password are valid and that the account exists.
+ * Implements anti-brute force attempt counter.
  */
 export const loginWithEmailPassword = async (
   email: string,
@@ -412,6 +403,15 @@ export const loginWithEmailPassword = async (
   }
 
   const cleanEmail = email.trim().toLowerCase();
+
+  // Enforce anti-brute force lock
+  const bruteCheck = checkLoginBruteForce(cleanEmail);
+  if (!bruteCheck.allowed) {
+    const err: any = new Error(`Compte temporairement verrouillé suite à trop de tentatives infructueuses. Veuillez patienter ${bruteCheck.waitMinutes} minute(s).`);
+    err.code = 'auth/too-many-requests';
+    throw err;
+  }
+
   let authUser: Partial<FirebaseUser> | null = null;
   let profile: UserProfile | null = null;
 
@@ -595,11 +595,13 @@ export const loginWithEmailPassword = async (
   }
 
   if (!authUser || !profile) {
+    recordFailedLoginAttempt(cleanEmail);
     const err: any = new Error('Échec de la connexion. Veuillez vérifier votre adresse e-mail et votre mot de passe.');
     err.code = 'auth/invalid-credential';
     throw err;
   }
 
+  recordSuccessfulLogin(cleanEmail);
   return { user: authUser, profile };
 };
 

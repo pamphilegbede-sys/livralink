@@ -2,7 +2,9 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // -------------------------------------------------------------------------
     // 0. Global Safety Net: Default-deny catch-all
+    // -------------------------------------------------------------------------
     match /{document=**} {
       allow read, write: if false;
     }
@@ -27,10 +29,10 @@ service cloud.firestore {
     }
 
     function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-#]+$');
     }
 
-    // Strict Admin check: Verified Super-Admin email or trusted Admin document
+    // Strict Super-Admin & Authorized Admin Check
     function isAdmin() {
       return isSignedIn() && (
         (request.auth.token.email == "pamphile.gbede@gmail.com" && request.auth.token.email_verified == true) ||
@@ -39,22 +41,24 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // User Validation Blueprint
+    // User Blueprint Validation (Anti-Privilege Escalation & Schema Hardening)
     // -------------------------------------------------------------------------
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'email', 'fullName', 'phone', 'role']) &&
              data.keys().hasOnly([
                'uid', 'email', 'fullName', 'phone', 'role', 'avatarUrl',
-               'storeName', 'storeCommune', 'storeAddress', 'vehicleType',
-               'gpsCoordinates', 'locationCommune', 'locationAddress',
+               'storeName', 'storeCommune', 'storeAddress', 'storeCoordinates',
+               'vehicleType', 'gpsCoordinates', 'locationCommune', 'locationAddress',
                'locationLat', 'locationLng', 'locationUpdatedAt',
+               'isKycVerified', 'kycStatus', 'kycRejectionReason', 'kycSubmittedAt',
+               'mfaEnabled', 'mfaMethod',
                'createdAt', 'updatedAt'
              ]) &&
              data.uid == request.auth.uid &&
-             data.email is string && data.email.size() <= 128 &&
-             data.fullName is string && data.fullName.size() <= 128 &&
+             data.email is string && data.email.size() >= 5 && data.email.size() <= 128 &&
+             data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 128 &&
              data.phone is string && data.phone.size() <= 32 &&
-             // Anti-Privilege Escalation: Only super-admin can create an admin profile; standard users can only be vendeur or livreur
+             // Anti-Privilege Escalation: Standard users can only register as 'vendeur' or 'livreur'
              (data.role in ['vendeur', 'livreur'] || (data.role == 'admin' && isAdmin())) &&
              (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 1000)) &&
              (!('storeName' in data) || (data.storeName is string && data.storeName.size() <= 128)) &&
@@ -66,15 +70,18 @@ service cloud.firestore {
              (!('locationAddress' in data) || (data.locationAddress is string && data.locationAddress.size() <= 256)) &&
              (!('locationLat' in data) || (data.locationLat is number)) &&
              (!('locationLng' in data) || (data.locationLng is number)) &&
-             (!('locationUpdatedAt' in data) || (data.locationUpdatedAt is string && data.locationUpdatedAt.size() <= 64));
+             (!('locationUpdatedAt' in data) || (data.locationUpdatedAt is string && data.locationUpdatedAt.size() <= 64)) &&
+             (!('isKycVerified' in data) || (data.isKycVerified is bool)) &&
+             (!('kycStatus' in data) || (data.kycStatus in ['non_soumis', 'en_attente', 'valide', 'refuse'])) &&
+             (!('mfaEnabled' in data) || (data.mfaEnabled is bool));
     }
 
     // -------------------------------------------------------------------------
-    // Delivery Validation Blueprint
+    // Delivery Blueprint Validation
     // -------------------------------------------------------------------------
     function isValidDelivery(data) {
       return data.keys().hasAll(['id', 'clientName', 'clientPhone', 'status', 'deliveryFee', 'merchantId']) &&
-             data.id is string && data.id.size() <= 64 &&
+             data.id is string && data.id.size() >= 1 && data.id.size() <= 64 &&
              data.clientName is string && data.clientName.size() <= 128 &&
              data.clientPhone is string && data.clientPhone.size() <= 32 &&
              data.merchantId is string && data.merchantId.size() <= 128 &&
@@ -85,18 +92,32 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // 1. Users Collection
+    // Priority Mission Blueprint Validation
+    // -------------------------------------------------------------------------
+    function isValidPriorityMission(data) {
+      return data.keys().hasAll(['id', 'orderId', 'storeName', 'pickupCommune', 'dropoffCommune', 'fee', 'status']) &&
+             data.id is string && data.id.size() <= 64 &&
+             data.orderId is string && data.orderId.size() <= 64 &&
+             data.storeName is string && data.storeName.size() <= 128 &&
+             data.pickupCommune is string && data.pickupCommune.size() <= 128 &&
+             data.dropoffCommune is string && data.dropoffCommune.size() <= 128 &&
+             data.fee is number && data.fee >= 0 &&
+             data.status in ['en_attente', 'assignee', 'terminee'];
+    }
+
+    // -------------------------------------------------------------------------
+    // 1. Users Collection (/users)
     // -------------------------------------------------------------------------
     match /users/{userId} {
-      // PII Protection: Non-owners and unauthenticated users CANNOT read user documents
+      // PII Protection: Non-owners & unauthenticated users CANNOT read user documents
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
-      // Anti-Scraping: Public listing of entire user directory is strictly forbidden
+      // Anti-Scraping: Public listing of user directory is strictly forbidden to standard users
       allow list: if isAdmin();
 
-      // Create: user must own document, match uid, and satisfy validation blueprint without self-assigning admin
+      // Create: User must match uid and satisfy validation blueprint without self-assigning admin
       allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming());
 
-      // Update: Immutable identity fields (uid, email, role cannot be modified by user)
+      // Update: Role immutability (role, uid, email cannot be altered by standard user)
       allow update: if isValidId(userId) && (
         isAdmin() ||
         (
@@ -108,14 +129,15 @@ service cloud.firestore {
         )
       );
 
+      // Delete: Users cannot be deleted by client SDK except by Admin
       allow delete: if isAdmin();
     }
 
     // -------------------------------------------------------------------------
-    // 2. Deliveries Collection
+    // 2. Deliveries Collection (/deliveries)
     // -------------------------------------------------------------------------
     match /deliveries/{deliveryId} {
-      // Single Document Read (Get): Allowed only for associated merchant, assigned courier, courier viewing pending, or admin
+      // Get: Allowed for associated merchant, assigned courier, open deliveries ('en_attente'), or admin
       allow get: if isValidId(deliveryId) && (
         isAdmin() ||
         (isSignedIn() && resource.data.merchantId == request.auth.uid) ||
@@ -123,7 +145,7 @@ service cloud.firestore {
         (isSignedIn() && resource.data.status == 'en_attente')
       );
 
-      // Secure List Queries (Query Enforcer): Client queries MUST evaluate against auth.uid or open deliveries
+      // List (Secure Query Enforcer): Client queries MUST evaluate against auth.uid or open status
       allow list: if isSignedIn() && (
         isAdmin() ||
         resource.data.merchantId == request.auth.uid ||
@@ -131,7 +153,7 @@ service cloud.firestore {
         resource.data.status == 'en_attente'
       );
 
-      // Create: Only verified merchant or admin; initial status must be 'en_attente'
+      // Create: Verified merchant or admin; initial status must be 'en_attente'
       allow create: if isValidId(deliveryId) &&
                     isSignedIn() &&
                     isValidDelivery(incoming()) &&
@@ -142,45 +164,44 @@ service cloud.firestore {
       allow update: if isValidId(deliveryId) &&
                     isSignedIn() &&
                     isValidDelivery(incoming()) &&
-                    // Immutability: delivery ID and merchant owner cannot be altered
                     incoming().id == existing().id &&
                     incoming().merchantId == existing().merchantId &&
                     (
-                      // Escape Hatch: Super-Admin can correct any state or resolve disputes
+                      // Escape Hatch: Super-Admin override
                       isAdmin() ||
                       (
-                        // Terminal State Lock: Regular users cannot modify finalized orders
+                        // Terminal State Lock: Regular users cannot modify finalized orders ('livree', 'echec')
                         !(existing().status in ['livree', 'echec']) &&
                         (
-                          // Tier 1: Merchant owner can edit details or cancel while still pending
+                          // Tier 1: Merchant owner can edit while pending
                           (
                             existing().merchantId == request.auth.uid &&
                             existing().status == 'en_attente' &&
                             incoming().diff(existing()).affectedKeys().hasOnly(['clientName', 'clientPhone', 'itemValueCOD', 'deliveryFee', 'status', 'updatedAt'])
                           ) ||
-                          // Tier 2: Courier claims an open delivery
+                          // Tier 2: Courier claims open delivery
                           (
                             existing().status == 'en_attente' &&
                             incoming().courierId == request.auth.uid &&
                             incoming().status in ['assignee', 'acceptee'] &&
                             incoming().diff(existing()).affectedKeys().hasOnly(['courierId', 'status', 'updatedAt'])
                           ) ||
-                          // Tier 3: Assigned courier progresses the delivery steps
+                          // Tier 3: Assigned courier progresses status
                           (
                             existing().courierId == request.auth.uid &&
                             incoming().courierId == existing().courierId &&
-                            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+                            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'podData'])
                           )
                         )
                       )
                     );
 
-      // Delete: Deliveries must never be permanently purged by standard users for financial audit trail
+      // Delete: Permanent purge forbidden for non-admins
       allow delete: if isAdmin();
     }
 
     // -------------------------------------------------------------------------
-    // 3. Admins Collection
+    // 3. Admins Collection (/admins)
     // -------------------------------------------------------------------------
     match /admins/{adminId} {
       allow read: if isAdmin();
@@ -188,16 +209,17 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // 4. Priority Missions (Alertes contextuelles livreurs en temps réel)
+    // 4. Priority Missions Collection (/priority_missions)
     // -------------------------------------------------------------------------
     match /priority_missions/{missionId} {
       allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidId(missionId);
+      allow create: if isSignedIn() && isValidId(missionId) && isValidPriorityMission(incoming());
+      allow update: if isSignedIn() && isValidId(missionId) && isValidPriorityMission(incoming());
       allow delete: if isAdmin();
     }
 
     // -------------------------------------------------------------------------
-    // 5. Test Connection Probe (Skill requirement)
+    // 5. Connection Test Probe
     // -------------------------------------------------------------------------
     match /test/{testId} {
       allow read: if true;

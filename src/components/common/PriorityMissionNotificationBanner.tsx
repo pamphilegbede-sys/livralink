@@ -32,19 +32,22 @@ export const PriorityMissionNotificationBanner: React.FC<PriorityMissionNotifica
   useEffect(() => {
     if (!alert) return;
     setSecondsLeft(30);
-    const interval = setInterval(() => {
-      setSecondsLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          onDismiss();
-          return 0;
-        }
-        return prev - 1;
-      });
+  }, [alert]);
+
+  useEffect(() => {
+    if (!alert) return;
+
+    if (secondsLeft <= 0) {
+      onDismiss();
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setSecondsLeft((prev) => Math.max(0, prev - 1));
     }, 1000);
 
-    return () => clearInterval(interval);
-  }, [alert, onDismiss]);
+    return () => clearTimeout(timer);
+  }, [alert, secondsLeft, onDismiss]);
 
   if (!alert) return null;
 

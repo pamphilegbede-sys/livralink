@@ -188,12 +188,12 @@ export const LivreurDashboard: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans']">
       {/* Sidebar Desktop */}
       <Sidebar />
 
       {/* Main Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff]">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff] dark:bg-slate-950">
         {/* Top Header */}
         <Header
           title="Tableau de bord Livreur"
@@ -203,15 +203,15 @@ export const LivreurDashboard: React.FC = () => {
         {/* Scrollable Container */}
         <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-28 md:pb-8">
           {/* 1. Courier Greeting & Availability Toggle */}
-          <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-start gap-3 sm:gap-4">
               <BackButton />
-              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
                 <span className="material-symbols-outlined text-2xl">two_wheeler</span>
               </div>
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900">
+                  <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white">
                     Bonjour, {displayName} !
                   </h1>
                   <button
@@ -219,8 +219,8 @@ export const LivreurDashboard: React.FC = () => {
                     onClick={toggleCourierAvailability}
                     className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all shadow-2xs ${
                       courierSettings.isAvailable
-                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                        : 'bg-slate-200 text-slate-700 border border-slate-300'
+                        ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
+                        : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700'
                     }`}
                   >
                     <span
@@ -238,27 +238,27 @@ export const LivreurDashboard: React.FC = () => {
                   </button>
                 </div>
                 <div className="flex items-center gap-2 mt-2 flex-wrap">
-                  <div className="flex items-center gap-1.5 bg-blue-50/80 border border-blue-200/80 px-2.5 py-1 rounded-xl text-xs">
-                    <span className="material-symbols-outlined text-sm text-blue-600">badge</span>
-                    <span className="text-[11px] font-bold text-blue-800">Compte coursier :</span>
+                  <div className="flex items-center gap-1.5 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-800/60 px-2.5 py-1 rounded-xl text-xs">
+                    <span className="material-symbols-outlined text-sm text-blue-600 dark:text-blue-400">badge</span>
+                    <span className="text-[11px] font-bold text-blue-800 dark:text-blue-300">Compte coursier :</span>
                     <select
                       value={selectedCourier?.name || activeCourierName}
                       onChange={(e) => selectActiveCourier(e.target.value)}
-                      className="bg-transparent font-extrabold text-slate-900 focus:outline-none cursor-pointer text-xs"
+                      className="bg-transparent font-extrabold text-slate-900 dark:text-white focus:outline-none cursor-pointer text-xs"
                       title="Changer de coursier pour tester les attributions et acceptations"
                     >
                       {couriers.map((c) => (
-                        <option key={c.id} value={c.name}>
+                        <option key={c.id} value={c.name} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
                           {c.name} ({c.vehicle})
                         </option>
                       ))}
                     </select>
                   </div>
-                  <span className="text-[11px] text-slate-500 font-medium">
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
                     {activeCourierVehicle} • {activeCourierPhone}
                   </span>
                 </div>
-                <p className="text-xs text-slate-500 mt-1">
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                   Courses instantanées avec tarification Google Maps à 100 FCFA/km • Vous avez le choix d'accepter ou de refuser chaque livraison.
                 </p>
               </div>

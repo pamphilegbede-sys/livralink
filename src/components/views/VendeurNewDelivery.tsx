@@ -324,12 +324,12 @@ export const VendeurNewDelivery: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans']">
       {/* Sidebar Desktop */}
       <Sidebar />
 
       {/* Main View Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff] relative">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff] dark:bg-slate-950 relative">
         {/* Desktop Header */}
         <div className="hidden md:block">
           <Header
@@ -343,26 +343,26 @@ export const VendeurNewDelivery: React.FC = () => {
         </div>
 
         {/* Mobile Header */}
-        <header className="md:hidden sticky top-0 z-30 w-full bg-white/95 backdrop-blur-md shadow-xs border-b border-slate-200">
+        <header className="md:hidden sticky top-0 z-30 w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md shadow-xs border-b border-slate-200 dark:border-slate-800">
           <div className="px-4 py-2.5 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <button
                 type="button"
                 onClick={navigateBack}
                 aria-label="Retour à la page précédente"
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 hover:text-blue-600 transition-all text-xs font-bold shadow-2xs active:scale-95 cursor-pointer"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 transition-all text-xs font-bold shadow-2xs active:scale-95 cursor-pointer"
               >
                 <span className="material-symbols-outlined text-[18px]">arrow_back</span>
                 <span>Retour</span>
               </button>
               <div>
                 <div className="flex items-center gap-1.5">
-                  <span className="font-extrabold text-blue-700 text-sm tracking-tight">LivraLink</span>
-                  <span className="inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] bg-blue-100 text-blue-800 font-bold">
+                  <span className="font-extrabold text-blue-700 dark:text-blue-400 text-sm tracking-tight">LivraLink</span>
+                  <span className="inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300 font-bold">
                     Nouvelle Course
                   </span>
                 </div>
-                <div className="text-[11px] text-slate-500">
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">
                   Étape {currentStep} sur 3
                 </div>
               </div>
@@ -380,7 +380,7 @@ export const VendeurNewDelivery: React.FC = () => {
                   setCodAmount('');
                   showToast('Formulaire réinitialisé à vide.', 'info');
                 }}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold flex items-center gap-1"
+                className="px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-semibold flex items-center gap-1"
                 title="Vider tous les champs"
               >
                 <span className="material-symbols-outlined text-sm">restart_alt</span>
@@ -393,18 +393,18 @@ export const VendeurNewDelivery: React.FC = () => {
         {/* Scrollable Container */}
         <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-28 md:pb-8">
           {/* Top Title & Step Indicator Banner */}
-          <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
-              <div className="flex items-center gap-2 text-xs font-bold text-blue-600 mb-1 uppercase tracking-wide">
+              <div className="flex items-center gap-2 text-xs font-bold text-blue-600 dark:text-blue-400 mb-1 uppercase tracking-wide">
                 <span className="material-symbols-outlined text-base">add_circle</span>
                 <span>Création de course Vendeur</span>
               </div>
-              <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+              <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
                 {currentStep === 1 && '1. Coordonnées du Destinataire'}
                 {currentStep === 2 && '2. Détails du Colis & Adresse de Livraison'}
                 {currentStep === 3 && '3. Publication & Diffusion aux Livreurs'}
               </h1>
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                 {currentStep === 1 && 'Renseignez le nom, téléphone WhatsApp et consignes pour votre client.'}
                 {currentStep === 2 && 'Indiquez la commune de destination, la description du colis et le montant COD.'}
                 {currentStep === 3 && 'Publiez la course : elle sera disponible pour tous les livreurs de la zone pour acceptation immédiate.'}
@@ -412,7 +412,7 @@ export const VendeurNewDelivery: React.FC = () => {
             </div>
 
             {/* Interactive Step Navigation Pills */}
-            <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200 text-xs font-bold self-start md:self-auto overflow-x-auto">
+            <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs font-bold self-start md:self-auto overflow-x-auto">
               <button
                 type="button"
                 onClick={() => setCurrentStep(1)}
@@ -420,8 +420,8 @@ export const VendeurNewDelivery: React.FC = () => {
                   currentStep === 1
                     ? 'bg-blue-600 text-white shadow-xs'
                     : clientName && clientPhone
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 <span>1. Client</span>
@@ -439,8 +439,8 @@ export const VendeurNewDelivery: React.FC = () => {
                   currentStep === 2
                     ? 'bg-blue-600 text-white shadow-xs'
                     : dropoffAddress && itemDescription
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 <span>2. Colis</span>
@@ -457,7 +457,7 @@ export const VendeurNewDelivery: React.FC = () => {
                 className={`px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer ${
                   currentStep === 3
                     ? 'bg-blue-600 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 <span>3. Diffusion</span>

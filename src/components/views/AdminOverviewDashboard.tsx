@@ -308,24 +308,24 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
         {/* HUB 1: LIVRAISONS ACTIVES */}
         <div
           onClick={() => navigateToTab('deliveries')}
-          className="bg-white rounded-3xl p-6 border-2 border-slate-200/90 shadow-sm hover:border-blue-500 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between group active:scale-[0.99]"
+          className="bg-white dark:bg-slate-900 rounded-3xl p-6 border-2 border-slate-200/90 dark:border-slate-800 shadow-sm hover:border-blue-500 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between group active:scale-[0.99]"
         >
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+                <div className="w-10 h-10 rounded-2xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
                   <span className="material-symbols-outlined text-xl">local_shipping</span>
                 </div>
                 <div>
-                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
+                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                     Indicateur 1 • Flux Opérationnel
                   </h3>
-                  <div className="text-sm font-black text-slate-900 group-hover:text-blue-600 transition-colors">
+                  <div className="text-sm font-black text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                     Livraisons Actives
                   </div>
                 </div>
               </div>
-              <span className="material-symbols-outlined text-slate-300 group-hover:text-blue-600 group-hover:translate-x-1 transition-all">
+              <span className="material-symbols-outlined text-slate-300 dark:text-slate-600 group-hover:text-blue-600 dark:group-hover:text-blue-400 group-hover:translate-x-1 transition-all">
                 arrow_forward
               </span>
             </div>
@@ -333,55 +333,55 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
             {/* Main Primary Value */}
             <div>
               <div className="flex items-baseline gap-2">
-                <span className="text-4xl sm:text-5xl font-black text-slate-900 tracking-tight">
+                <span className="text-4xl sm:text-5xl font-black text-slate-900 dark:text-white tracking-tight">
                   {activeDeliveries.length}
                 </span>
-                <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
+                <span className="text-xs font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded-full">
                   en mouvement
                 </span>
               </div>
-              <p className="text-xs text-slate-500 mt-1">
-                Sur un total de <span className="font-bold text-slate-800">{deliveries.length} courses</span> enregistrées.
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Sur un total de <span className="font-bold text-slate-800 dark:text-slate-200">{deliveries.length} courses</span> enregistrées.
               </p>
             </div>
 
             {/* Visual Operational Breakdown */}
-            <div className="space-y-2 pt-2 border-t border-slate-100 text-xs">
-              <div className="flex items-center justify-between text-slate-600">
+            <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
                 <span className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-amber-500"></span>
                   <span>En attente de coursier :</span>
                 </span>
-                <span className="font-mono font-bold text-slate-900">{pendingDeliveries.length}</span>
+                <span className="font-mono font-bold text-slate-900 dark:text-white">{pendingDeliveries.length}</span>
               </div>
-              <div className="flex items-center justify-between text-slate-600">
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
                 <span className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-blue-600"></span>
                   <span>En transit vers client :</span>
                 </span>
-                <span className="font-mono font-bold text-slate-900">{inTransitDeliveries.length}</span>
+                <span className="font-mono font-bold text-slate-900 dark:text-white">{inTransitDeliveries.length}</span>
               </div>
-              <div className="flex items-center justify-between text-slate-600">
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
                 <span className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                   <span>Livrées &amp; certifiées POD :</span>
                 </span>
-                <span className="font-mono font-bold text-emerald-700">{deliveredOrders.length}</span>
+                <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400">{deliveredOrders.length}</span>
               </div>
-              <div className="flex items-center justify-between text-slate-600">
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
                 <span className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-red-500"></span>
                   <span>Échecs / Litiges :</span>
                 </span>
-                <span className="font-mono font-bold text-red-600">{disputeOrders.length}</span>
+                <span className="font-mono font-bold text-red-600 dark:text-red-400">{disputeOrders.length}</span>
               </div>
             </div>
           </div>
 
           {/* Footer Badge */}
-          <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+          <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
             <span>Taux de succès POD :</span>
-            <span className="font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">
+            <span className="font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md">
               {podSuccessRate}% (OTP + Photo + Signature)
             </span>
           </div>
@@ -390,24 +390,24 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
         {/* HUB 2: VOLUME TOTAL & FINANCE */}
         <div
           onClick={() => navigateToTab('pricing')}
-          className="bg-white rounded-3xl p-6 border-2 border-slate-200/90 shadow-sm hover:border-emerald-500 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between group active:scale-[0.99]"
+          className="bg-white dark:bg-slate-900 rounded-3xl p-6 border-2 border-slate-200/90 dark:border-slate-800 shadow-sm hover:border-emerald-500 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between group active:scale-[0.99]"
         >
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold">
                   <span className="material-symbols-outlined text-xl">payments</span>
                 </div>
                 <div>
-                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
+                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                     Indicateur 2 • Économie Plateforme
                   </h3>
-                  <div className="text-sm font-black text-slate-900 group-hover:text-emerald-600 transition-colors">
+                  <div className="text-sm font-black text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
                     Volume Total Traité
                   </div>
                 </div>
               </div>
-              <span className="material-symbols-outlined text-slate-300 group-hover:text-emerald-600 group-hover:translate-x-1 transition-all">
+              <span className="material-symbols-outlined text-slate-300 dark:text-slate-600 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 group-hover:translate-x-1 transition-all">
                 arrow_forward
               </span>
             </div>
@@ -415,39 +415,39 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
             {/* Main Primary Value */}
             <div>
               <div className="flex items-baseline gap-1.5 flex-wrap">
-                <span className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight">
+                <span className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-white tracking-tight">
                   {totalVolumeCOD.toLocaleString('fr-FR')}
                 </span>
-                <span className="text-sm font-bold text-emerald-700">FCFA</span>
+                <span className="text-sm font-bold text-emerald-700 dark:text-emerald-400">FCFA</span>
               </div>
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                 Volume brut des marchandises encaissées à la livraison (COD).
               </p>
             </div>
 
             {/* Financial Breakdown */}
-            <div className="space-y-2 pt-2 border-t border-slate-100 text-xs">
-              <div className="flex items-center justify-between text-slate-600">
+            <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
                 <span>Frais de livraison générés :</span>
-                <span className="font-mono font-bold text-slate-900">
+                <span className="font-mono font-bold text-slate-900 dark:text-white">
                   {totalDeliveryFees.toLocaleString('fr-FR')} FCFA
                 </span>
               </div>
-              <div className="flex items-center justify-between text-slate-600">
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
                 <span>Commissions plateforme ({pricingRules?.commissionRatePercent ?? 10}%) :</span>
-                <span className="font-mono font-bold text-emerald-700">
+                <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400">
                   +{totalPlatformCommissions.toLocaleString('fr-FR')} FCFA
                 </span>
               </div>
-              <div className="flex items-center justify-between text-slate-600">
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
                 <span>Cautions coursiers en dépôt :</span>
-                <span className="font-mono font-bold text-blue-700">
+                <span className="font-mono font-bold text-blue-700 dark:text-blue-400">
                   {totalCouriersWalletDeposit.toLocaleString('fr-FR')} FCFA
                 </span>
               </div>
-              <div className="flex items-center justify-between text-slate-600">
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
                 <span>Panier moyen par commande :</span>
-                <span className="font-mono font-bold text-slate-800">
+                <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
                   {averageBasketCOD.toLocaleString('fr-FR')} FCFA
                 </span>
               </div>
@@ -455,9 +455,9 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
           </div>
 
           {/* Footer Badge */}
-          <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+          <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
             <span>Règlement :</span>
-            <span className="font-bold text-slate-700">
+            <span className="font-bold text-slate-700 dark:text-slate-300">
               100% Cash-on-Delivery &amp; Mobile Money
             </span>
           </div>
@@ -466,24 +466,24 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
         {/* HUB 3: NOMBRE TOTAL D'UTILISATEURS */}
         <div
           onClick={() => navigateToTab('users')}
-          className="bg-white rounded-3xl p-6 border-2 border-slate-200/90 shadow-sm hover:border-purple-500 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between group active:scale-[0.99]"
+          className="bg-white dark:bg-slate-900 rounded-3xl p-6 border-2 border-slate-200/90 dark:border-slate-800 shadow-sm hover:border-purple-500 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between group active:scale-[0.99]"
         >
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
+                <div className="w-10 h-10 rounded-2xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center font-bold">
                   <span className="material-symbols-outlined text-xl">group</span>
                 </div>
                 <div>
-                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
+                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                     Indicateur 3 • Écosystème
                   </h3>
-                  <div className="text-sm font-black text-slate-900 group-hover:text-purple-600 transition-colors">
+                  <div className="text-sm font-black text-slate-900 dark:text-white group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">
                     Nombre d'Utilisateurs
                   </div>
                 </div>
               </div>
-              <span className="material-symbols-outlined text-slate-300 group-hover:text-purple-600 group-hover:translate-x-1 transition-all">
+              <span className="material-symbols-outlined text-slate-300 dark:text-slate-600 group-hover:text-purple-600 dark:group-hover:text-purple-400 group-hover:translate-x-1 transition-all">
                 arrow_forward
               </span>
             </div>
@@ -491,10 +491,10 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
             {/* Main Primary Value */}
             <div>
               <div className="flex items-baseline gap-2">
-                <span className="text-4xl sm:text-5xl font-black text-slate-900 tracking-tight">
+                <span className="text-4xl sm:text-5xl font-black text-slate-900 dark:text-white tracking-tight">
                   {totalUsersCount}
                 </span>
-                <span className="text-xs font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full">
+                <span className="text-xs font-bold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/60 px-2 py-0.5 rounded-full">
                   partenaires actifs
                 </span>
               </div>

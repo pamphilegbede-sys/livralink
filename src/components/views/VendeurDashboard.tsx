@@ -155,12 +155,12 @@ export const VendeurDashboard: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans'] transition-colors duration-200">
       {/* Sidebar Desktop */}
       <Sidebar />
 
       {/* Main Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff] dark:bg-slate-950 transition-colors duration-200">
         {/* Header */}
         <Header
           title={`Bonjour, ${greetingName} 👋`}
@@ -284,16 +284,16 @@ export const VendeurDashboard: React.FC = () => {
           <section aria-label="Compteurs d'activité">
             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3.5">
               {/* Total Livraisons */}
-              <div className="col-span-2 sm:col-span-1 p-4 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div className="col-span-2 sm:col-span-1 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between transition-colors">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-500">Livraisons aujourd'hui</span>
-                  <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
+                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Livraisons aujourd'hui</span>
+                  <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400">
                     <span className="material-symbols-outlined text-lg">local_shipping</span>
                   </div>
                 </div>
                 <div className="mt-3">
-                  <div className="text-2xl sm:text-3xl font-extrabold text-slate-900">{totalCount}</div>
-                  <div className="mt-1 flex items-center gap-1 text-xs text-emerald-600 font-bold">
+                  <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">{totalCount}</div>
+                  <div className="mt-1 flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-bold">
                     <span className="material-symbols-outlined text-sm">trending_up</span>
                     <span>+12% vs hier</span>
                   </div>
@@ -301,16 +301,16 @@ export const VendeurDashboard: React.FC = () => {
               </div>
 
               {/* En attente */}
-              <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between transition-colors">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-500">En attente</span>
-                  <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
+                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">En attente</span>
+                  <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400">
                     <span className="material-symbols-outlined text-lg">hourglass_top</span>
                   </div>
                 </div>
                 <div className="mt-3">
-                  <div className="text-2xl sm:text-3xl font-extrabold text-amber-700">{pendingCount}</div>
-                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800">
+                  <div className="text-2xl sm:text-3xl font-extrabold text-amber-700 dark:text-amber-400">{pendingCount}</div>
+                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 dark:text-amber-300">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
                     Recherche de coursier
                   </span>
@@ -318,16 +318,16 @@ export const VendeurDashboard: React.FC = () => {
               </div>
 
               {/* En cours */}
-              <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between transition-colors">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-500">En cours</span>
-                  <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
+                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">En cours</span>
+                  <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400">
                     <span className="material-symbols-outlined text-lg">two_wheeler</span>
                   </div>
                 </div>
                 <div className="mt-3">
-                  <div className="text-2xl sm:text-3xl font-extrabold text-blue-700">{inProgressCount}</div>
-                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700">
+                  <div className="text-2xl sm:text-3xl font-extrabold text-blue-700 dark:text-blue-400">{inProgressCount}</div>
+                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 dark:text-blue-300">
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
                     En transit / prise en charge
                   </span>
@@ -335,16 +335,16 @@ export const VendeurDashboard: React.FC = () => {
               </div>
 
               {/* Livrées */}
-              <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between transition-colors">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-500">Livrées</span>
-                  <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
+                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Livrées</span>
+                  <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400">
                     <span className="material-symbols-outlined text-lg">check_circle</span>
                   </div>
                 </div>
                 <div className="mt-3">
-                  <div className="text-2xl sm:text-3xl font-extrabold text-emerald-700">{deliveredCount}</div>
-                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                  <div className="text-2xl sm:text-3xl font-extrabold text-emerald-700 dark:text-emerald-400">{deliveredCount}</div>
+                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
                     <span className="material-symbols-outlined text-xs">done_all</span>
                     Validées avec POD
                   </span>
@@ -352,16 +352,16 @@ export const VendeurDashboard: React.FC = () => {
               </div>
 
               {/* Échecs */}
-              <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between transition-colors">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-500">Échecs</span>
-                  <div className="p-2 rounded-xl bg-red-50 text-red-600">
+                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Échecs</span>
+                  <div className="p-2 rounded-xl bg-red-50 dark:bg-red-950/80 text-red-600 dark:text-red-400">
                     <span className="material-symbols-outlined text-lg">warning</span>
                   </div>
                 </div>
                 <div className="mt-3">
-                  <div className="text-2xl sm:text-3xl font-extrabold text-red-700">{failedCount}</div>
-                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-red-700">
+                  <div className="text-2xl sm:text-3xl font-extrabold text-red-700 dark:text-red-400">{failedCount}</div>
+                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-red-700 dark:text-red-300">
                     <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
                     À reprogrammer
                   </span>
@@ -372,21 +372,21 @@ export const VendeurDashboard: React.FC = () => {
 
           {/* 2. Live Operational Alert Banner */}
           {liveOrder ? (
-            <section className="rounded-2xl border border-blue-200/80 bg-gradient-to-r from-blue-50/90 via-white to-white p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <section className="rounded-2xl border border-blue-200/80 dark:border-blue-800 bg-gradient-to-r from-blue-50/90 via-white to-white dark:from-blue-950/60 dark:via-slate-900 dark:to-slate-900 p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3.5">
                 <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs shrink-0">
                   <span className="material-symbols-outlined text-xl">radar</span>
                 </div>
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-bold text-slate-900">
+                    <span className="text-xs font-bold text-slate-900 dark:text-white">
                       Activité directe : Course {liveOrder.id} ({liveOrder.status === 'acceptee' ? 'Course acceptée' : liveOrder.status === 'colis_recupere' ? 'Colis récupéré' : 'En acheminement'})
                     </span>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
                       {liveOrder.courier ? `Livreur : ${liveOrder.courier.name}` : 'En attente de coursier'}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500 mt-0.5">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                     {liveOrder.courier
                       ? `Livreur ${liveOrder.courier.name} (${liveOrder.courier.vehicle}) • Destination : ${liveOrder.dropoffLocation.commune} • ${liveOrder.statusNote}`
                       : `En attente d'acceptation par les livreurs de la zone (${liveOrder.dropoffLocation.commune})`}
@@ -400,7 +400,7 @@ export const VendeurDashboard: React.FC = () => {
                     setSelectedDelivery(liveOrder);
                     setCurrentView('vendeur_tracking');
                   }}
-                  className="px-3.5 py-1.5 text-xs font-semibold text-blue-700 bg-white border border-blue-200 rounded-lg hover:bg-slate-50 transition-colors"
+                  className="px-3.5 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 bg-white dark:bg-slate-800 border border-blue-200 dark:border-blue-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
                 >
                   Voir sur la carte
                 </button>
@@ -413,21 +413,21 @@ export const VendeurDashboard: React.FC = () => {
               </div>
             </section>
           ) : (
-            <section className="rounded-2xl border border-emerald-200/80 bg-gradient-to-r from-emerald-50/70 via-white to-white p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <section className="rounded-2xl border border-emerald-200/80 dark:border-emerald-800 bg-gradient-to-r from-emerald-50/70 via-white to-white dark:from-emerald-950/60 dark:via-slate-900 dark:to-slate-900 p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3.5">
                 <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs shrink-0">
                   <span className="material-symbols-outlined text-xl">electric_moped</span>
                 </div>
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-bold text-slate-900">
+                    <span className="text-xs font-bold text-slate-900 dark:text-white">
                       Flotte LivraLink Bénin prête &amp; connectée
                     </span>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
                       Tarif 100 F/km
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500 mt-0.5">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                     Toutes vos expéditions sont diffusées instantanément aux coursiers dès validation.
                   </p>
                 </div>
@@ -445,15 +445,15 @@ export const VendeurDashboard: React.FC = () => {
           )}
 
           {/* 3. Deliveries Table and Filter Tabs */}
-          <section className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+          <section className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col transition-colors">
             {/* Toolbar */}
-            <div className="p-4 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
               {/* Filter Tabs */}
-              <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 overflow-x-auto no-scrollbar">
+              <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 overflow-x-auto no-scrollbar">
                 <button
                   onClick={() => handleFilterChange('all')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
-                    activeFilter === 'all' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    activeFilter === 'all' ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
                   Toutes ({totalCount})
@@ -461,7 +461,7 @@ export const VendeurDashboard: React.FC = () => {
                 <button
                   onClick={() => handleFilterChange('en_attente')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
-                    activeFilter === 'en_attente' ? 'bg-white text-amber-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                    activeFilter === 'en_attente' ? 'bg-white dark:bg-slate-900 text-amber-700 dark:text-amber-400 shadow-xs font-bold' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
                   En attente ({pendingCount})
@@ -469,7 +469,7 @@ export const VendeurDashboard: React.FC = () => {
                 <button
                   onClick={() => handleFilterChange('en_cours')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
-                    activeFilter === 'en_cours' ? 'bg-white text-blue-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                    activeFilter === 'en_cours' ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-xs font-bold' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
                   En cours ({inProgressCount})
@@ -477,7 +477,7 @@ export const VendeurDashboard: React.FC = () => {
                 <button
                   onClick={() => handleFilterChange('livree')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
-                    activeFilter === 'livree' ? 'bg-white text-emerald-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                    activeFilter === 'livree' ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-xs font-bold' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
                   Livrées ({deliveredCount})
@@ -485,7 +485,7 @@ export const VendeurDashboard: React.FC = () => {
                 <button
                   onClick={() => handleFilterChange('echec')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
-                    activeFilter === 'echec' ? 'bg-white text-red-700 shadow-xs font-bold' : 'text-slate-600 hover:text-red-700'
+                    activeFilter === 'echec' ? 'bg-white dark:bg-slate-900 text-red-700 dark:text-red-400 shadow-xs font-bold' : 'text-slate-600 dark:text-slate-400 hover:text-red-700 dark:hover:text-red-300'
                   }`}
                 >
                   Échecs ({failedCount})
@@ -503,12 +503,12 @@ export const VendeurDashboard: React.FC = () => {
                     value={searchTerm}
                     onChange={(e) => handleSearchChange(e.target.value)}
                     placeholder="Filtrer client, ID..."
-                    className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-600"
+                    className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-lg outline-none focus:ring-2 focus:ring-blue-600"
                   />
                 </div>
                 <button
                   onClick={() => showToast('Export CSV généré avec succès !', 'success')}
-                  className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-1 shrink-0"
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1 shrink-0 cursor-pointer"
                 >
                   <span className="material-symbols-outlined text-sm">file_download</span>
                   <span>Export CSV</span>
@@ -547,7 +547,7 @@ export const VendeurDashboard: React.FC = () => {
                 <div className="hidden md:block overflow-x-auto">
                   <table className="w-full text-left border-collapse min-w-[700px]">
                     <thead>
-                      <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">
+                      <tr className="bg-slate-50 dark:bg-slate-800/80 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
                     <th className="py-3 px-4">ID</th>
                     <th className="py-3 px-4">Client</th>
                     <th className="py-3 px-4">Destination</th>
@@ -556,32 +556,32 @@ export const VendeurDashboard: React.FC = () => {
                     <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 text-xs">
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
                   {paginatedDeliveries.map((order) => (
-                    <tr key={order.id} className="hover:bg-slate-50/70 transition-colors">
-                      <td className="py-3.5 px-4 font-mono font-bold text-blue-700">
+                    <tr key={order.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition-colors">
+                      <td className="py-3.5 px-4 font-mono font-bold text-blue-700 dark:text-blue-400">
                         {order.id}
                       </td>
                       <td className="py-3.5 px-4">
-                        <div className="font-bold text-slate-900">{order.clientName}</div>
-                        <div className="text-[11px] text-slate-500 font-mono flex items-center gap-1 mt-0.5">
-                          <span className="material-symbols-outlined text-xs text-emerald-600">chat</span>
+                        <div className="font-bold text-slate-900 dark:text-white">{order.clientName}</div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1 mt-0.5">
+                          <span className="material-symbols-outlined text-xs text-emerald-600 dark:text-emerald-400">chat</span>
                           <span>{order.clientPhone}</span>
                         </div>
                       </td>
                       <td className="py-3.5 px-4">
-                        <div className="font-medium text-slate-800">{order.dropoffLocation.commune}</div>
-                        <div className="text-[11px] text-slate-400 truncate max-w-xs">{order.dropoffLocation.address}</div>
+                        <div className="font-medium text-slate-800 dark:text-slate-200">{order.dropoffLocation.commune}</div>
+                        <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate max-w-xs">{order.dropoffLocation.address}</div>
                       </td>
                       <td className="py-3.5 px-4">
                         {order.courier ? (
                           <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 font-bold text-xs flex items-center justify-center">
+                            <div className="w-7 h-7 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold text-xs flex items-center justify-center">
                               {order.courier.avatarInitials}
                             </div>
                             <div>
-                              <div className="font-bold text-slate-900">{order.courier.name}</div>
-                              <div className="text-[10px] text-amber-600 font-bold flex items-center gap-0.5">
+                              <div className="font-bold text-slate-900 dark:text-white">{order.courier.name}</div>
+                              <div className="text-[10px] text-amber-600 dark:text-amber-400 font-bold flex items-center gap-0.5">
                                 <span className="material-symbols-outlined text-xs">star</span>
                                 <span>{order.courier.rating}</span>
                               </div>
@@ -596,37 +596,37 @@ export const VendeurDashboard: React.FC = () => {
                       </td>
                       <td className="py-3.5 px-4">
                         {order.status === 'en_cours' && (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
                             <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse"></span>
-                            🚚 En cours de livraison
+                            🚚 En cours
                           </span>
                         )}
                         {order.status === 'acceptee' && (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-purple-50 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
                             <span className="w-1.5 h-1.5 rounded-full bg-purple-600"></span>
                             🟣 Course acceptée
                           </span>
                         )}
                         {order.status === 'assignee' && (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
                             <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
                             🔵 Assignée
                           </span>
                         )}
                         {order.status === 'en_attente' && (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
                             <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
                             🟡 En attente
                           </span>
                         )}
                         {order.status === 'livree' && (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-300">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
                             <span className="material-symbols-outlined text-xs">check_circle</span>
                             🟢 Livrée (POD)
                           </span>
                         )}
                         {order.status === 'echec' && (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-300">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-red-50 dark:bg-red-950/80 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800">
                             <span className="material-symbols-outlined text-xs">error</span>
                             🔴 Échec (Client injoignable)
                           </span>
@@ -636,7 +636,7 @@ export const VendeurDashboard: React.FC = () => {
                         <div className="inline-flex items-center gap-1.5 justify-end">
                           <button
                             onClick={() => handleWhatsAppAction(order)}
-                            className="p-1.5 rounded-lg border border-slate-200 text-emerald-600 hover:bg-emerald-50 transition-colors"
+                            className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
                             title="Contacter sur WhatsApp"
                           >
                             <span className="material-symbols-outlined text-base">chat</span>
@@ -645,7 +645,7 @@ export const VendeurDashboard: React.FC = () => {
                           {order.status === 'en_cours' && (
                             <button
                               onClick={() => handleInspectDelivery(order)}
-                              className="px-2.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold transition-colors"
+                              className="px-2.5 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/80 hover:bg-blue-100 text-blue-700 dark:text-blue-300 font-bold transition-colors"
                             >
                               Suivi direct
                             </button>
@@ -654,7 +654,7 @@ export const VendeurDashboard: React.FC = () => {
                           {order.status === 'acceptee' && (
                             <button
                               onClick={() => handleInspectDelivery(order)}
-                              className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold transition-colors"
+                              className="px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold transition-colors"
                             >
                               Voir détails
                             </button>
@@ -683,7 +683,7 @@ export const VendeurDashboard: React.FC = () => {
                             <>
                               <button
                                 onClick={() => handleOpenPOD(order)}
-                                className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-700 font-semibold transition-colors flex items-center gap-1"
+                                className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold transition-colors flex items-center gap-1"
                               >
                                 <span className="material-symbols-outlined text-xs">receipt_long</span>
                                 <span>Preuve POD</span>
@@ -693,7 +693,7 @@ export const VendeurDashboard: React.FC = () => {
                                   onClick={() => openRateLivreurModal(order)}
                                   className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
                                     order.courierRating
-                                      ? 'bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100'
+                                      ? 'bg-amber-50 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 hover:bg-amber-100'
                                       : 'bg-amber-500 hover:bg-amber-600 text-white shadow-2xs'
                                   }`}
                                   title={order.courierRating ? `Avis : ${order.courierRating.rating}/5` : 'Noter la prestation du livreur'}
@@ -708,7 +708,7 @@ export const VendeurDashboard: React.FC = () => {
                           {order.status === 'echec' && (
                             <button
                               onClick={() => handleReschedule(order.id)}
-                              className="px-2.5 py-1.5 rounded-lg bg-red-100 hover:bg-red-200 text-red-800 font-bold transition-colors"
+                              className="px-2.5 py-1.5 rounded-lg bg-red-100 dark:bg-red-950/80 hover:bg-red-200 text-red-800 dark:text-red-300 font-bold transition-colors"
                             >
                               Reprogrammer
                             </button>
@@ -721,23 +721,22 @@ export const VendeurDashboard: React.FC = () => {
               </table>
             </div>
 
-            {/* Mobile Card Architecture (from Stitch mobile mockup) */}
-            {/* Mobile Card Architecture (Full-featured touch cards) */}
-            <div className="md:hidden divide-y divide-slate-100 p-3 space-y-3.5">
+            {/* Mobile Card Architecture */}
+            <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800 p-3 space-y-3.5">
               {paginatedDeliveries.map((order) => (
-                <article key={order.id} className="p-4 bg-white rounded-2xl border border-slate-200/90 shadow-2xs space-y-3 hover:border-slate-300 transition-all">
+                <article key={order.id} className="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-2xs space-y-3 hover:border-slate-300 dark:hover:border-slate-700 transition-all">
                   {/* Header: ID + Status Badge */}
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono font-black text-sm text-blue-700 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-100">
+                    <span className="font-mono font-black text-sm text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/80 px-2 py-0.5 rounded-lg border border-blue-100 dark:border-blue-900">
                       {order.id}
                     </span>
                     <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
-                      order.status === 'livree' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
-                      order.status === 'en_cours' ? 'bg-blue-50 text-blue-700 border border-blue-200 animate-pulse' :
-                      order.status === 'acceptee' ? 'bg-purple-50 text-purple-700 border border-purple-200' :
-                      order.status === 'assignee' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
-                      order.status === 'echec' ? 'bg-red-50 text-red-700 border border-red-200' :
-                      'bg-amber-50 text-amber-800 border border-amber-200'
+                      order.status === 'livree' ? 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800' :
+                      order.status === 'en_cours' ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 animate-pulse' :
+                      order.status === 'acceptee' ? 'bg-purple-50 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800' :
+                      order.status === 'assignee' ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800' :
+                      order.status === 'echec' ? 'bg-red-50 dark:bg-red-950/80 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800' :
+                      'bg-amber-50 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
                     }`}>
                       {order.status === 'en_cours' && '🚚 En cours'}
                       {order.status === 'acceptee' && '🟣 Course acceptée'}
@@ -752,46 +751,46 @@ export const VendeurDashboard: React.FC = () => {
                   <div className="space-y-1.5 text-xs">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="font-extrabold text-slate-900 truncate">{order.clientName}</p>
-                        <p className="text-slate-500 font-mono text-[11px] flex items-center gap-1 mt-0.5">
-                          <span className="material-symbols-outlined text-xs text-emerald-600">call</span>
+                        <p className="font-extrabold text-slate-900 dark:text-white truncate">{order.clientName}</p>
+                        <p className="text-slate-500 dark:text-slate-400 font-mono text-[11px] flex items-center gap-1 mt-0.5">
+                          <span className="material-symbols-outlined text-xs text-emerald-600 dark:text-emerald-400">call</span>
                           <span>{order.clientPhone}</span>
                         </p>
                       </div>
                       <div className="text-right shrink-0">
-                        <p className="font-black text-emerald-700 font-mono">{(order.itemValueCOD || 0).toLocaleString('fr-FR')} F</p>
+                        <p className="font-black text-emerald-700 dark:text-emerald-400 font-mono">{(order.itemValueCOD || 0).toLocaleString('fr-FR')} F</p>
                         <span className="text-[10px] text-slate-400 font-medium">COD à encaisser</span>
                       </div>
                     </div>
 
-                    <div className="flex items-start gap-1.5 text-slate-600 bg-slate-50 p-2 rounded-xl">
-                      <span className="material-symbols-outlined text-sm text-blue-600 shrink-0 mt-0.5">location_on</span>
+                    <div className="flex items-start gap-1.5 text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 p-2 rounded-xl">
+                      <span className="material-symbols-outlined text-sm text-blue-600 dark:text-blue-400 shrink-0 mt-0.5">location_on</span>
                       <div className="min-w-0">
-                        <p className="font-bold text-slate-800 text-[11px]">{order.dropoffLocation.commune}</p>
-                        <p className="text-[10px] text-slate-500 truncate">{order.dropoffLocation.address}</p>
+                        <p className="font-bold text-slate-800 dark:text-slate-200 text-[11px]">{order.dropoffLocation.commune}</p>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{order.dropoffLocation.address}</p>
                       </div>
                     </div>
                   </div>
 
                   {/* Courier & Fees Info */}
-                  <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100">
+                  <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100 dark:border-slate-800">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <span className="material-symbols-outlined text-sm text-slate-400">two_wheeler</span>
-                      <span className="text-[11px] font-semibold text-slate-700 truncate">
+                      <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 truncate">
                         {order.courier ? `${order.courier.name} (${order.courier.rating}★)` : 'En attente de coursier'}
                       </span>
                     </div>
-                    <span className="text-[11px] text-blue-700 font-bold shrink-0">
+                    <span className="text-[11px] text-blue-700 dark:text-blue-400 font-bold shrink-0">
                       Frais : {order.deliveryFee.toLocaleString('fr-FR')} F
                     </span>
                   </div>
 
-                  {/* Mobile Action Buttons (Full Feature Parity with Desktop, Min 44px Touch Heights) */}
-                  <div className="flex items-center gap-2 pt-1 border-t border-slate-100 flex-wrap">
+                  {/* Mobile Action Buttons */}
+                  <div className="flex items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 flex-wrap">
                     <button
                       type="button"
                       onClick={() => handleWhatsAppAction(order)}
-                      className="min-h-[44px] px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl border border-emerald-200/80 font-bold text-xs flex items-center gap-1.5 transition-colors active:scale-95"
+                      className="min-h-[44px] px-3 bg-emerald-50 dark:bg-emerald-950/80 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 rounded-xl border border-emerald-200/80 dark:border-emerald-800 font-bold text-xs flex items-center gap-1.5 transition-colors active:scale-95"
                       title="Contacter le client sur WhatsApp"
                     >
                       <span className="material-symbols-outlined text-base">chat</span>

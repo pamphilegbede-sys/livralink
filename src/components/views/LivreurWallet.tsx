@@ -89,12 +89,12 @@ export const LivreurWallet: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans']">
       {/* Sidebar Desktop */}
       <Sidebar />
 
       {/* Main Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff]">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff] dark:bg-slate-950">
         {/* Header */}
         <Header
           title="Portefeuille & Revenus"

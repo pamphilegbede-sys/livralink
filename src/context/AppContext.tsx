@@ -344,22 +344,64 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
 
   const [deliveries, setDeliveries] = useState<DeliveryOrder[]>(() => {
-    const saved = localStorage.getItem('livralink_deliveries');
-    return saved ? JSON.parse(saved) : INITIAL_DELIVERIES;
+    try {
+      const saved = localStorage.getItem('livralink_deliveries');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((d: any) => !d.id?.startsWith('#LL-41') && !d.id?.startsWith('#LL-10'));
+        }
+      }
+    } catch {}
+    return INITIAL_DELIVERIES;
   });
 
   const [couriers, setCouriers] = useState<Courier[]>(() => {
-    const saved = localStorage.getItem('livralink_couriers');
-    return saved ? JSON.parse(saved) : INITIAL_COURIERS;
+    try {
+      const saved = localStorage.getItem('livralink_couriers');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((c: any) => !c.id?.startsWith('c-'));
+        }
+      }
+    } catch {}
+    return INITIAL_COURIERS;
   });
 
   const [merchants, setMerchants] = useState<Merchant[]>(() => {
-    const saved = localStorage.getItem('livralink_merchants');
-    return saved ? JSON.parse(saved) : INITIAL_MERCHANTS;
+    try {
+      const saved = localStorage.getItem('livralink_merchants');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((m: any) => !m.id?.startsWith('m-'));
+        }
+      }
+    } catch {}
+    return INITIAL_MERCHANTS;
   });
 
-  const [selectedCourier, setSelectedCourier] = useState<Courier>(couriers[0] || INITIAL_COURIERS[0]);
-  const [selectedDelivery, setSelectedDelivery] = useState<DeliveryOrder | null>(deliveries[0] || INITIAL_DELIVERIES[0]);
+  const [selectedCourier, setSelectedCourier] = useState<Courier>(couriers[0] || {
+    id: 'c-default',
+    name: 'Coursier LivraLink',
+    phone: '',
+    rating: 5.0,
+    totalDeliveries: 0,
+    vehicle: 'Moto',
+    vehiclePlate: '',
+    zone: 'Cotonou',
+    distanceKm: 1.0,
+    etaMinutes: 10,
+    status: 'en_ligne',
+    walletBalanceFCFA: 0,
+    priceFCFA: 100,
+    commissionFCFA: 0,
+    netEarningFCFA: 100,
+    isKycVerified: false,
+  });
+
+  const [selectedDelivery, setSelectedDelivery] = useState<DeliveryOrder | null>(deliveries[0] || null);
   const [merchantSettings, setMerchantSettings] = useState<MerchantSettings>(INITIAL_MERCHANT_SETTINGS);
   const [courierSettings, setCourierSettings] = useState<CourierSettings>(INITIAL_COURIER_SETTINGS);
   const [kycRequests, setKycRequests] = useState<KYCUserRequest[]>(INITIAL_KYC_REQUESTS);
@@ -373,10 +415,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
     try {
       const saved = localStorage.getItem('livralink_notifications');
-      return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
-    } catch {
-      return INITIAL_NOTIFICATIONS;
-    }
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((n: any) => !n.id?.startsWith('notif-'));
+        }
+      }
+    } catch {}
+    return INITIAL_NOTIFICATIONS;
   });
 
   const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
@@ -467,7 +513,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Contextual Priority Missions Alert (Firestore real-time listener)
   const [priorityMissionAlert, setPriorityMissionAlert] = useState<PriorityMissionAlert | null>(null);
   const notifiedMissionsRef = React.useRef<Set<string>>(new Set());
-  const dismissPriorityMissionAlert = () => setPriorityMissionAlert(null);
+  const dismissPriorityMissionAlert = React.useCallback(() => setPriorityMissionAlert(null), []);
 
   // Email Notification Center Modal state
   const [isEmailCenterOpen, setIsEmailCenterOpen] = useState(false);

@@ -789,20 +789,20 @@ export const AdminConsole: React.FC = () => {
   }
 
   return (
-    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans']">
       {/* Global Sidebar */}
       <Sidebar />
 
       {/* Main Container */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff]">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff] dark:bg-slate-950">
         {/* Top Navbar */}
-        <header className="h-[72px] bg-white border-b border-slate-200 px-3 md:px-8 flex justify-between items-center shrink-0 z-20 shadow-xs">
+        <header className="h-[72px] bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 md:px-8 flex justify-between items-center shrink-0 z-20 shadow-xs">
           {/* Back button (PC & Mobile) + Search bar */}
           <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0 max-w-sm md:w-1/2">
             <button
               type="button"
               onClick={navigateBack}
-              className="inline-flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 hover:text-blue-600 transition-all text-xs font-bold shadow-2xs shrink-0 active:scale-95 cursor-pointer"
+              className="inline-flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 transition-all text-xs font-bold shadow-2xs shrink-0 active:scale-95 cursor-pointer"
               title="Retour à la page précédente"
               aria-label="Retour à la page précédente"
             >

@@ -357,20 +357,20 @@ export const PODValidationModal: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-md animate-fade-in overflow-y-auto">
-      <div className="bg-white rounded-3xl p-5 sm:p-6 max-w-lg w-full shadow-2xl border border-slate-200 space-y-5 my-auto max-h-[95vh] overflow-y-auto">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 max-w-lg w-full shadow-2xl border border-slate-200 dark:border-slate-800 space-y-5 my-auto max-h-[95vh] overflow-y-auto text-slate-900 dark:text-slate-100">
         
         {/* Header */}
-        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2.5">
-            <span className="w-9 h-9 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+            <span className="w-9 h-9 rounded-2xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
               <span className="material-symbols-outlined text-xl" data-icon="verified_user">verified_user</span>
             </span>
             <div>
-              <h3 className="font-extrabold text-slate-900 text-base leading-snug">
+              <h3 className="font-extrabold text-slate-900 dark:text-white text-base leading-snug">
                 Certification de Livraison (POD)
               </h3>
-              <p className="text-xs text-slate-500 font-medium">
-                Course <strong className="text-blue-700 font-mono">{selectedDelivery.id}</strong> • Destinataire : {selectedDelivery.clientName}
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                Course <strong className="text-blue-700 dark:text-blue-400 font-mono">{selectedDelivery.id}</strong> • Destinataire : {selectedDelivery.clientName}
               </p>
             </div>
           </div>
@@ -379,7 +379,7 @@ export const PODValidationModal: React.FC = () => {
               stopCameraStream();
               setIsPODModalOpen(false);
             }}
-            className="p-1.5 text-slate-400 hover:text-slate-700 rounded-xl transition-colors cursor-pointer"
+            className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-xl transition-colors cursor-pointer"
             title="Fermer la fenêtre"
           >
             <span className="material-symbols-outlined text-xl" data-icon="close">close</span>
@@ -388,9 +388,9 @@ export const PODValidationModal: React.FC = () => {
 
         {/* 3 Mandatory Steps Navigation Bar */}
         <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs font-bold text-slate-600">
+          <div className="flex items-center justify-between text-xs font-bold text-slate-600 dark:text-slate-300">
             <span>3 Preuves Obligatoires de Remise</span>
-            <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+            <span className="text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
               {Number(isOtpVerified) + Number(Boolean(photoDataUrl)) + Number(hasSignaturePoints && Boolean(signerName.trim()))}/3 validées
             </span>
           </div>
@@ -402,10 +402,10 @@ export const PODValidationModal: React.FC = () => {
               onClick={() => setCurrentStep(1)}
               className={`py-2 px-2.5 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all border ${
                 currentStep === 1
-                  ? 'bg-blue-600 text-white border-blue-600 shadow-md ring-2 ring-blue-200'
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-md ring-2 ring-blue-200 dark:ring-blue-900/50'
                   : isOtpVerified
-                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                  : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
               }`}
             >
               <div className="flex items-center gap-1">

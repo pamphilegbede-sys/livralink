@@ -97,12 +97,12 @@ export const LivreurMissions: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans']">
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans']">
       {/* Sidebar Desktop */}
       <Sidebar />
 
       {/* Main Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff]">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff] dark:bg-slate-950">
         {/* Header */}
         <Header
           title="Mes Courses & Missions"
@@ -112,16 +112,16 @@ export const LivreurMissions: React.FC = () => {
         {/* Scrollable Canvas */}
         <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-28 md:pb-8">
           {/* Header Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs">
             <div className="flex items-center gap-3">
               <BackButton />
               <div className="flex items-center gap-2">
-                <span className="p-2 rounded-xl bg-blue-50 text-blue-600">
+                <span className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400">
                   <span className="material-symbols-outlined text-xl">two_wheeler</span>
                 </span>
                 <div>
-                  <h1 className="text-lg font-bold text-slate-900">Mes Courses du Jour</h1>
-                  <p className="text-xs text-slate-500">Validation POD (Photo / Signature / Code OTP) sur chaque course</p>
+                  <h1 className="text-lg font-bold text-slate-900 dark:text-white">Mes Courses du Jour</h1>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Validation POD (Photo / Signature / Code OTP) sur chaque course</p>
                 </div>
               </div>
             </div>
@@ -132,8 +132,8 @@ export const LivreurMissions: React.FC = () => {
                 onClick={toggleCourierAvailability}
                 className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all shadow-2xs ${
                   courierSettings.isAvailable
-                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                    : 'bg-slate-200 text-slate-700 border border-slate-300'
+                    ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
+                    : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700'
                 }`}
               >
                 <span className={`w-2 h-2 rounded-full ${courierSettings.isAvailable ? 'bg-emerald-600 animate-ping' : 'bg-slate-500'}`}></span>

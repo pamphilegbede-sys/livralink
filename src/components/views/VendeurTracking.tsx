@@ -148,16 +148,16 @@ export const VendeurTracking: React.FC = () => {
       {/* Scrollable Canvas */}
       <main className="flex-1 p-3.5 sm:p-5 md:p-8 space-y-6 pb-28 md:pb-12 max-w-7xl mx-auto w-full">
           {/* Header Action Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs">
             <div className="flex items-center gap-3">
               <BackButton />
               <div className="flex items-center gap-2">
-                <span className="p-2 rounded-xl bg-blue-50 text-blue-600">
+                <span className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400">
                   <span className="material-symbols-outlined text-xl">local_shipping</span>
                 </span>
                 <div>
-                  <h1 className="text-lg font-bold text-slate-900">Suivi Opérationnel des Livraisons</h1>
-                  <p className="text-xs text-slate-500">Supervision de l'état d'acheminement et des preuves POD</p>
+                  <h1 className="text-lg font-bold text-slate-900 dark:text-white">Suivi Opérationnel des Livraisons</h1>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Supervision de l'état d'acheminement et des preuves POD</p>
                 </div>
               </div>
             </div>
@@ -176,19 +176,19 @@ export const VendeurTracking: React.FC = () => {
 
           {/* Active Order Focus Banner */}
           {currentOrder && (
-            <section className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-6">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+            <section className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
                 <div className="flex items-center gap-3.5">
-                  <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                  <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
                     <span className="material-symbols-outlined text-2xl">two_wheeler</span>
                   </div>
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="text-lg font-extrabold text-slate-900">Colis {currentOrder.id}</h3>
+                      <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">Colis {currentOrder.id}</h3>
                       <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                        currentOrder.status === 'livree' ? 'bg-emerald-100 text-emerald-800' :
-                        currentOrder.status === 'en_cours' ? 'bg-blue-100 text-blue-800 animate-pulse' :
-                        currentOrder.status === 'echec' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'
+                        currentOrder.status === 'livree' ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300' :
+                        currentOrder.status === 'en_cours' ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300 animate-pulse' :
+                        currentOrder.status === 'echec' ? 'bg-red-100 dark:bg-red-950/60 text-red-800 dark:text-red-300' : 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
                       }`}>
                         {currentOrder.status === 'livree' ? 'Livrée avec succès' :
                          currentOrder.status === 'en_cours' ? 'En cours d\'acheminement' :
@@ -197,9 +197,9 @@ export const VendeurTracking: React.FC = () => {
                          currentOrder.status === 'echec' ? 'Incident / Échec' : 'En attente coursier'}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Client : <strong className="text-slate-900">{currentOrder.clientName}</strong> • Tél : {currentOrder.clientPhone} • Montant COD :{' '}
-                      <strong className="text-emerald-700 font-bold">{currentOrder.itemValueCOD.toLocaleString('fr-FR')} FCFA</strong> ({currentOrder.itemDescription})
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      Client : <strong className="text-slate-900 dark:text-white">{currentOrder.clientName}</strong> • Tél : {currentOrder.clientPhone} • Montant COD :{' '}
+                      <strong className="text-emerald-700 dark:text-emerald-400 font-bold">{currentOrder.itemValueCOD.toLocaleString('fr-FR')} FCFA</strong> ({currentOrder.itemDescription})
                     </p>
                   </div>
                 </div>
@@ -209,7 +209,7 @@ export const VendeurTracking: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleShareTrackingLink}
-                    className="min-h-[44px] flex-1 sm:flex-initial px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors active:scale-95"
+                    className="min-h-[44px] flex-1 sm:flex-initial px-3.5 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors active:scale-95"
                   >
                     <span className="material-symbols-outlined text-base">share</span>
                     <span>Lien suivi</span>
@@ -237,23 +237,23 @@ export const VendeurTracking: React.FC = () => {
               </div>
 
               {/* Status Simulation & Testing Bar for Vendor */}
-              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 flex flex-wrap items-center justify-between gap-2.5 text-xs">
-                <div className="flex items-center gap-1.5 text-slate-700 font-bold">
-                  <span className="material-symbols-outlined text-sm text-blue-600">tune</span>
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+                <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200 font-bold">
+                  <span className="material-symbols-outlined text-sm text-blue-600 dark:text-blue-400">tune</span>
                   <span>Tests &amp; Progression de la course ({currentOrder.id}) :</span>
                 </div>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <button
                     type="button"
                     onClick={() => updateDeliveryStatus(currentOrder.id, 'colis_recupere', 'Colis récupéré en boutique par le livreur')}
-                    className="px-2.5 py-1.5 rounded-xl bg-white border border-slate-200 hover:border-blue-400 text-slate-700 font-bold active:scale-95 transition-all text-[11px]"
+                    className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-blue-400 text-slate-700 dark:text-slate-200 font-bold active:scale-95 transition-all text-[11px]"
                   >
                     📦 Colis récupéré
                   </button>
                   <button
                     type="button"
                     onClick={() => updateDeliveryStatus(currentOrder.id, 'en_cours', 'En transit vers le domicile du client')}
-                    className="px-2.5 py-1.5 rounded-xl bg-blue-50 border border-blue-200 hover:border-blue-400 text-blue-700 font-bold active:scale-95 transition-all text-[11px]"
+                    className="px-2.5 py-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 hover:border-blue-400 text-blue-700 dark:text-blue-300 font-bold active:scale-95 transition-all text-[11px]"
                   >
                     🛵 En cours (Transit)
                   </button>
@@ -263,14 +263,14 @@ export const VendeurTracking: React.FC = () => {
                       setSelectedDelivery(currentOrder);
                       setIsPODModalOpen(true);
                     }}
-                    className="px-2.5 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 hover:border-emerald-400 text-emerald-800 font-bold active:scale-95 transition-all text-[11px]"
+                    className="px-2.5 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 hover:border-emerald-400 text-emerald-800 dark:text-emerald-300 font-bold active:scale-95 transition-all text-[11px]"
                   >
                     ✅ Valider livraison (POD)
                   </button>
                   <button
                     type="button"
                     onClick={() => updateDeliveryStatus(currentOrder.id, 'echec', 'Client injoignable après multiples tentatives')}
-                    className="px-2.5 py-1.5 rounded-xl bg-red-50 border border-red-200 hover:border-red-400 text-red-700 font-bold active:scale-95 transition-all text-[11px]"
+                    className="px-2.5 py-1.5 rounded-xl bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 hover:border-red-400 text-red-700 dark:text-red-300 font-bold active:scale-95 transition-all text-[11px]"
                   >
                     ⚠️ Signaler incident
                   </button>
