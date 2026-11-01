@@ -24,6 +24,8 @@ export const VendeurTracking: React.FC = () => {
     merchantSettings,
     isDirectorModeActive,
     directorTargetName,
+    openLivreurSearchModal,
+    openRateLivreurModal,
   } = useApp();
 
   // Isolation stricte des livraisons pour le suivi vendeur
@@ -533,13 +535,59 @@ export const VendeurTracking: React.FC = () => {
                       <div className="pt-2 border-t border-slate-200/60 grid grid-cols-2 gap-2 text-center text-xs">
                         <div className="p-2 bg-white rounded-xl border border-slate-100">
                           <span className="text-[10px] text-slate-400 block">Note globale</span>
-                          <strong className="text-amber-600">★ {currentOrder.courier.rating}</strong>
+                          <strong className="text-amber-600">★ {currentOrder.courier.rating?.toFixed(1) || '5.0'}</strong>
                         </div>
                         <div className="p-2 bg-white rounded-xl border border-slate-100">
                           <span className="text-[10px] text-slate-400 block">Courses réussies</span>
                           <strong className="text-slate-900">{currentOrder.courier.totalDeliveries}+</strong>
                         </div>
                       </div>
+
+                      {/* Évaluation / Notation du livreur pour cette course */}
+                      {currentOrder.status === 'livree' && (
+                        <div className="pt-2 border-t border-slate-200/60 space-y-2">
+                          {currentOrder.courierRating ? (
+                            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs space-y-1">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-amber-900 flex items-center gap-1">
+                                  <span>⭐ Votre avis enregistré :</span>
+                                  <strong className="text-amber-700">{currentOrder.courierRating.rating}/5</strong>
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => openRateLivreurModal(currentOrder)}
+                                  className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer"
+                                >
+                                  Modifier
+                                </button>
+                              </div>
+                              {currentOrder.courierRating.comment && (
+                                <p className="text-[11px] text-slate-600 italic">
+                                  « {currentOrder.courierRating.comment} »
+                                </p>
+                              )}
+                              {currentOrder.courierRating.tags && currentOrder.courierRating.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-1 pt-1">
+                                  {currentOrder.courierRating.tags.map((tag) => (
+                                    <span key={tag} className="text-[9px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-medium">
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => openRateLivreurModal(currentOrder)}
+                              className="w-full py-2.5 px-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-sm">star</span>
+                              <span>Évaluer la prestation du livreur (Note 1-5★)</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="p-4 rounded-2xl bg-amber-50/90 border-2 border-amber-300 space-y-3 shadow-xs">
@@ -564,10 +612,18 @@ export const VendeurTracking: React.FC = () => {
                       </div>
 
                       <p className="text-[11px] text-slate-600 bg-white/80 p-2.5 rounded-xl border border-amber-200 leading-relaxed">
-                        Cette livraison est visible en temps réel par tous les livreurs connectés à proximité de <strong>{currentOrder.dropoffLocation.commune}</strong>. Dès qu'un livreur clique sur « Accepter », ses coordonnées apparaîtront ici.
+                        Cette livraison est visible en temps réel par tous les livreurs connectés à proximité de <strong>{currentOrder.dropoffLocation.commune}</strong>. Vous pouvez aussi rechercher activement un coursier spécifique et lui assigner la mission.
                       </p>
 
-                      <div className="pt-1 flex items-center gap-2">
+                      <div className="pt-1 flex flex-col gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openLivreurSearchModal(currentOrder.id)}
+                          className="w-full py-2.5 px-3 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <span className="material-symbols-outlined text-sm">person_search</span>
+                          <span>Rechercher &amp; Assigner un livreur</span>
+                        </button>
                         <button
                           type="button"
                           onClick={() => {
@@ -575,7 +631,7 @@ export const VendeurTracking: React.FC = () => {
                             setCurrentView('livreur_dashboard');
                             showToast('Bascule sur l\'espace livreur pour accepter la course', 'info');
                           }}
-                          className="w-full py-2 px-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                          className="w-full py-2 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 font-bold text-xs rounded-xl shadow-2xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                         >
                           <span className="material-symbols-outlined text-sm">two_wheeler</span>
                           <span>Voir &amp; Accepter côté livreur</span>

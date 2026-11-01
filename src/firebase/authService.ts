@@ -33,6 +33,10 @@ export interface UserProfile {
   locationLat?: number;
   locationLng?: number;
   locationUpdatedAt?: string;
+  isKycVerified?: boolean;
+  kycStatus?: 'non_soumis' | 'en_attente' | 'valide' | 'refuse';
+  kycRejectionReason?: string;
+  kycSubmittedAt?: string;
   createdAt?: any;
   updatedAt?: any;
 }
@@ -189,16 +193,22 @@ export const getFirebaseAuthErrorMessage = (error: any): string => {
   const rawMsg = error?.message || '';
 
   if (code === 'auth/unauthorized-domain') {
-    return 'Domaine d\'hébergement non autorisé dans Firebase Console (ex: Render). Pour activer le popup natif Google, ajoutez votre domaine Render dans Firebase Console > Authentification > Paramètres > Domaines autorisés. Basculement automatique sur le sélecteur Google certifié LivraLink.';
+    return 'Domaine non autorisé dans votre console Firebase. Pour autoriser ce domaine : Allez dans console.firebase.google.com > Authentication > Paramètres > Domaines autorisés, et ajoutez ce domaine.';
   }
   if (code === 'auth/operation-not-allowed') {
-    return 'Le fournisseur Google OAuth n\'est pas encore activé dans votre console Firebase. Basculement automatique sur le sélecteur Google direct.';
+    return 'Le fournisseur Google OAuth n\'est pas activé dans votre console Firebase. Activez "Google" dans Firebase Console > Authentication > Sign-in method.';
   }
   if (code === 'auth/popup-blocked') {
-    return 'La fenêtre de connexion Google a été bloquée par le navigateur. Basculement automatique sur le sélecteur direct.';
+    return 'La fenêtre de connexion Google a été bloquée par votre navigateur. Veuillez autoriser les fenêtres pop-up pour ce site et réessayer.';
+  }
+  if (code === 'auth/popup-closed-by-user') {
+    return 'La fenêtre de connexion Google a été fermée avant la validation. Veuillez cliquer à nouveau pour vous connecter.';
+  }
+  if (code === 'auth/cancelled-popup-request') {
+    return 'La requête d\'authentification Google a été interrompue.';
   }
   if (code === 'auth/configuration-not-found') {
-    return 'Configuration Firebase OAuth non trouvée. Basculement automatique sur le sélecteur direct.';
+    return 'Configuration Firebase OAuth non trouvée. Veuillez vérifier les paramètres du projet Firebase.';
   }
   if (code === 'auth/email-already-in-use') {
     return 'Cette adresse e-mail est déjà enregistrée. Veuillez vous connecter ou utiliser un autre e-mail.';
@@ -647,7 +657,7 @@ let isGoogleAuthInProgress = false;
  */
 export const loginWithGoogle = async (
   desiredRole: UserRole = 'vendeur'
-): Promise<{ user: Partial<FirebaseUser>; profile: UserProfile; location?: DetectedUserLocation }> => {
+): Promise<{ user: FirebaseUser; profile: UserProfile; location?: DetectedUserLocation }> => {
   if (isGoogleAuthInProgress) {
     console.warn('Google Sign-In déjà en cours...');
   }
@@ -656,21 +666,14 @@ export const loginWithGoogle = async (
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
 
-  let user: Partial<FirebaseUser>;
+  let user: FirebaseUser;
   try {
     const result = await signInWithPopup(auth, provider);
     user = result.user;
   } catch (popupErr: any) {
-    console.warn('Firebase signInWithPopup notice (basculement résilient):', popupErr?.message || popupErr);
-    // Résilience en environnement sandbox/iframe : Authentification du compte Google vérifié sans bloquer l'utilisateur
-    const primaryUid = auth.currentUser?.uid || 'google_user_pamphile_gbede';
-    user = auth.currentUser || {
-      uid: primaryUid,
-      email: 'pamphile.gbede@gmail.com',
-      displayName: 'Pamphile Gbede',
-      photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-      emailVerified: true,
-    };
+    console.error('Firebase signInWithPopup error:', popupErr);
+    // Strict authentication: propagate error without any fake bypass user!
+    throw popupErr;
   } finally {
     setTimeout(() => {
       isGoogleAuthInProgress = false;
@@ -678,26 +681,28 @@ export const loginWithGoogle = async (
   }
 
   // Retrieve or create profile
-  let profile = await getUserProfile(user.uid!);
+  let profile = await getUserProfile(user.uid);
 
   if (!profile) {
-    const userEmail = (user.email || 'pamphile.gbede@gmail.com').toLowerCase().trim();
-    const userName = user.displayName || 'Pamphile Gbede';
+    const userEmail = (user.email || '').toLowerCase().trim();
+    const userName = user.displayName || (desiredRole === 'vendeur' ? 'Marchand LivraLink' : 'Livreur LivraLink');
     profile = {
-      uid: user.uid!,
+      uid: user.uid,
       email: userEmail,
       fullName: userName,
-      phone: user.phoneNumber || '+229 97 48 12 34',
+      phone: user.phoneNumber || '+229 97 00 00 00',
       role: desiredRole,
       avatarUrl: user.photoURL || undefined,
       vehicleType: desiredRole === 'livreur' ? 'Moto Honda 150cc Pro' : undefined,
       storeName: desiredRole === 'vendeur' ? `Boutique ${userName}` : undefined,
+      isKycVerified: desiredRole === 'vendeur', // Sellers do not require driver KYC; livreurs need KYC verification
+      kycStatus: desiredRole === 'vendeur' ? 'valide' : 'non_soumis',
       createdAt: new Date().toISOString(),
     };
 
     try {
-      await setDoc(doc(db, 'users', user.uid!), {
-        uid: user.uid!,
+      await setDoc(doc(db, 'users', user.uid), {
+        uid: user.uid,
         email: profile.email,
         fullName: profile.fullName,
         phone: profile.phone,
@@ -705,6 +710,8 @@ export const loginWithGoogle = async (
         avatarUrl: profile.avatarUrl || null,
         storeName: profile.storeName || null,
         vehicleType: profile.vehicleType || null,
+        isKycVerified: profile.isKycVerified ?? false,
+        kycStatus: profile.kycStatus || 'non_soumis',
         createdAt: serverTimestamp(),
       });
     } catch (err) {

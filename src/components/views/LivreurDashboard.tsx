@@ -9,6 +9,7 @@ import { GoogleMapDelivery } from '../maps/GoogleMapDelivery';
 import { getLocationForCommune, calculateDistanceKm, calculateDeliveryPrice } from '../../config/maps';
 import { DeliveryOrder } from '../../types';
 import { OnboardingGuideModal } from '../modals/OnboardingGuideModal';
+import { LivreurDeliveryHistory } from './LivreurDeliveryHistory';
 
 export const LivreurDashboard: React.FC = () => {
   const {
@@ -31,6 +32,8 @@ export const LivreurDashboard: React.FC = () => {
     featureFlags,
     simulateNewPriorityMission,
     openEmailCenter,
+    openKYCModal,
+    kycRequests,
   } = useApp();
 
   const [expandedMapOrderId, setExpandedMapOrderId] = useState<string | null>(null);
@@ -57,8 +60,31 @@ export const LivreurDashboard: React.FC = () => {
     'Coursier LivraLink';
 
   const displayName = activeCourierName.split(' ')[0] || 'Livreur';
-  const activeCourierVehicle = (userProfile?.role === 'livreur' && userProfile.vehicleType) || courierSettings.vehicleType || selectedCourier?.vehicle || 'Moto 125cc';
   const activeCourierPhone = (userProfile?.role === 'livreur' && userProfile.phone) || courierSettings.phone || selectedCourier?.phone || '';
+  const activeCourierVehicle = courierSettings.vehicleType || selectedCourier?.vehicle || 'Moto';
+
+  // KYC status evaluation: courier must be approved before activity is authorized
+  const isKycApproved =
+    selectedCourier?.isKycVerified ||
+    userProfile?.isKycVerified ||
+    courierSettings.isKycVerified ||
+    kycRequests.some(
+      (k) =>
+        (k.courierId === (userProfile?.uid || selectedCourier?.id) ||
+          k.fullName.toLowerCase() === activeCourierName.toLowerCase()) &&
+        k.status === 'valide'
+    );
+
+  const existingKyc = kycRequests.find(
+    (k) =>
+      k.courierId === (userProfile?.uid || selectedCourier?.id) ||
+      k.fullName.toLowerCase() === activeCourierName.toLowerCase() ||
+      k.phone === activeCourierPhone
+  );
+
+  const kycStatus: 'valide' | 'en_attente' | 'refuse' | 'non_soumis' = isKycApproved
+    ? 'valide'
+    : (existingKyc?.status as any) || 'non_soumis';
 
   // Mission active en cours spécifiquement attribuée à ce livreur
   const activeOrder = deliveries.find((d) => {
@@ -268,6 +294,19 @@ export const LivreurDashboard: React.FC = () => {
               </button>
               <button
                 type="button"
+                onClick={openKYCModal}
+                className={`px-3 py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-all cursor-pointer ${
+                  isKycApproved
+                    ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                    : 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-xs'
+                }`}
+                title="Consulter ou soumettre votre dossier KYC pour autoriser l'activité de coursier"
+              >
+                <span className="material-symbols-outlined text-base">verified_user</span>
+                <span>{isKycApproved ? 'KYC Validé ✓' : 'Contrôle KYC Requis !'}</span>
+              </button>
+              <button
+                type="button"
                 onClick={handleCreateTestOrder}
                 className="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-bold border border-blue-200 flex items-center gap-1.5 transition-colors cursor-pointer"
                 title="Simuler une course créée par un vendeur"
@@ -277,6 +316,59 @@ export const LivreurDashboard: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {/* Contrôle KYC Obligatoire Avant Démarrage d'Activité */}
+          {!isKycApproved ? (
+            <div className="p-4 sm:p-5 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 text-amber-950 dark:text-amber-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm mb-6 animate-in fade-in">
+              <div className="flex items-start gap-3.5 min-w-0">
+                <div className="w-11 h-11 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md">
+                  <span className="material-symbols-outlined text-2xl">verified_user</span>
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="font-extrabold text-sm sm:text-base text-amber-950 dark:text-amber-100">
+                      Contrôle KYC Obligatoire : Activité de Livraison Verrouillée
+                    </h3>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 font-bold uppercase tracking-wider">
+                      {kycStatus === 'en_attente' ? 'Examen en cours' : kycStatus === 'refuse' ? 'Dossier Refusé' : 'Non Soumis'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-amber-900/90 dark:text-amber-200/90 mt-1 leading-relaxed">
+                    {kycStatus === 'en_attente'
+                      ? "Votre dossier d'identification est en cours d'examen par l'administration. Dès validation, votre statut « En ligne » et l'acceptation de courses seront automatiquement débloqués."
+                      : kycStatus === 'refuse'
+                      ? `Votre dossier KYC a été rejeté (${existingKyc?.rejectionReason || 'documents non conformes'}). Veuillez corriger vos pièces pour autoriser votre activité.`
+                      : "Avant de démarrer votre activité de coursier et de recevoir des courses, vous devez obligatoirement soumettre votre pièce d'identité (CIP, CNI ou permis) pour contrôle et accréditation."}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={openKYCModal}
+                className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-md transition-all active:scale-95 shrink-0 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-base">badge</span>
+                <span>{kycStatus === 'en_attente' ? 'Vérifier mon statut KYC' : 'Déposer mon dossier KYC'}</span>
+              </button>
+            </div>
+          ) : (
+            <div className="p-3 px-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-center justify-between gap-3 text-xs mb-4">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-emerald-600 dark:text-emerald-400 text-lg">verified</span>
+                <span className="text-emerald-900 dark:text-emerald-200 font-bold">
+                  Compte Coursier Accrédité KYC • Activité Pleinement Autorisée
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={openKYCModal}
+                className="text-emerald-700 dark:text-emerald-400 font-bold hover:underline cursor-pointer"
+              >
+                Voir accréditation
+              </button>
+            </div>
+          )}
 
           {/* Admin Space Maintenance Alert if disabled */}
           {!featureFlags.livreurSpaceEnabled && (
@@ -805,7 +897,10 @@ export const LivreurDashboard: React.FC = () => {
             </section>
           )}
 
-          {/* 5. Emergency SOS Dispatch Banner */}
+          {/* 5. Historique des Livraisons & Gains */}
+          <LivreurDeliveryHistory />
+
+          {/* 6. Emergency SOS Dispatch Banner */}
           <section className="bg-red-50 border border-red-200 rounded-3xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-10 h-10 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">

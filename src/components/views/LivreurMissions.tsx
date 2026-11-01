@@ -20,6 +20,10 @@ export const LivreurMissions: React.FC = () => {
     acceptDelivery,
     refuseDelivery,
     showToast,
+    selectedCourier,
+    userProfile,
+    kycRequests,
+    openKYCModal,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'all' | 'en_cours' | 'en_attente' | 'livree'>('all');
@@ -137,6 +141,48 @@ export const LivreurMissions: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {/* KYC Status Warning Banner */}
+          {(() => {
+            const courierName = userProfile?.fullName || courierSettings.fullName || selectedCourier?.name || '';
+            const isApproved =
+              selectedCourier?.isKycVerified ||
+              userProfile?.isKycVerified ||
+              courierSettings.isKycVerified ||
+              kycRequests.some(
+                (k) =>
+                  (k.courierId === (userProfile?.uid || selectedCourier?.id) ||
+                    k.fullName.toLowerCase() === courierName.toLowerCase()) &&
+                  k.status === 'valide'
+              );
+
+            if (isApproved) return null;
+
+            return (
+              <div className="p-4 sm:p-5 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 text-amber-950 dark:text-amber-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm animate-in fade-in">
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md">
+                    <span className="material-symbols-outlined text-xl">verified_user</span>
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-sm text-amber-950 dark:text-amber-100">
+                      Accréditation KYC Obligatoire requise
+                    </h3>
+                    <p className="text-xs text-amber-900/90 dark:text-amber-200/90 mt-0.5">
+                      Avant de pouvoir accepter des courses et encaisser des paiements, vos pièces d'identité doivent être validées.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={openKYCModal}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs shadow-md transition-all shrink-0 cursor-pointer"
+                >
+                  Déposer / Vérifier mon dossier KYC
+                </button>
+              </div>
+            );
+          })()}
 
           {/* Search & Tabs */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">

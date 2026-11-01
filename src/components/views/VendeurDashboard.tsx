@@ -24,6 +24,8 @@ export const VendeurDashboard: React.FC = () => {
     isDirectorModeActive,
     directorTargetName,
     openEmailCenter,
+    openLivreurSearchModal,
+    openRateLivreurModal,
   } = useApp();
 
   const greetingName = userProfile?.fullName || merchantSettings.managerName || merchantSettings.storeName || 'Commerçant';
@@ -196,6 +198,15 @@ export const VendeurDashboard: React.FC = () => {
               >
                 <span className="material-symbols-outlined text-lg text-indigo-600 dark:text-indigo-400">help_outline</span>
                 <span>Guide de démarrage</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => openLivreurSearchModal()}
+                className="py-2.5 sm:py-3 px-3.5 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/15 cursor-pointer"
+                title="Rechercher des livreurs vérifiés par zone, véhicule et note"
+              >
+                <span className="material-symbols-outlined text-base">person_search</span>
+                <span>Trouver un Livreur</span>
               </button>
               <button
                 type="button"
@@ -650,22 +661,48 @@ export const VendeurDashboard: React.FC = () => {
                           )}
 
                           {order.status === 'en_attente' && (
-                            <button
-                              onClick={() => handleRelaunchSearch(order.id)}
-                              className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold transition-colors"
-                            >
-                              Relancer recherche
-                            </button>
+                            <>
+                              <button
+                                onClick={() => openLivreurSearchModal(order.id)}
+                                className="px-2.5 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                                title="Rechercher et assigner un livreur de la zone"
+                              >
+                                <span className="material-symbols-outlined text-xs">person_search</span>
+                                <span>Assigner</span>
+                              </button>
+                              <button
+                                onClick={() => handleRelaunchSearch(order.id)}
+                                className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold transition-colors"
+                              >
+                                Relancer
+                              </button>
+                            </>
                           )}
 
                           {order.status === 'livree' && (
-                            <button
-                              onClick={() => handleOpenPOD(order)}
-                              className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-700 font-semibold transition-colors flex items-center gap-1"
-                            >
-                              <span className="material-symbols-outlined text-xs">receipt_long</span>
-                              <span>Preuve POD</span>
-                            </button>
+                            <>
+                              <button
+                                onClick={() => handleOpenPOD(order)}
+                                className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-700 font-semibold transition-colors flex items-center gap-1"
+                              >
+                                <span className="material-symbols-outlined text-xs">receipt_long</span>
+                                <span>Preuve POD</span>
+                              </button>
+                              {order.courier && (
+                                <button
+                                  onClick={() => openRateLivreurModal(order)}
+                                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                                    order.courierRating
+                                      ? 'bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100'
+                                      : 'bg-amber-500 hover:bg-amber-600 text-white shadow-2xs'
+                                  }`}
+                                  title={order.courierRating ? `Avis : ${order.courierRating.rating}/5` : 'Noter la prestation du livreur'}
+                                >
+                                  <span className="material-symbols-outlined text-xs">star</span>
+                                  <span>{order.courierRating ? `★ ${order.courierRating.rating}/5` : 'Noter livreur'}</span>
+                                </button>
+                              )}
+                            </>
                           )}
 
                           {order.status === 'echec' && (
@@ -784,25 +821,52 @@ export const VendeurDashboard: React.FC = () => {
                     )}
 
                     {order.status === 'en_attente' && (
-                      <button
-                        type="button"
-                        onClick={() => handleRelaunchSearch(order.id)}
-                        className="min-h-[44px] flex-1 px-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
-                      >
-                        <span className="material-symbols-outlined text-base">radar</span>
-                        <span>Relancer coursier</span>
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => openLivreurSearchModal(order.id)}
+                          className="min-h-[44px] flex-1 px-3 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                          title="Assigner un livreur de la zone"
+                        >
+                          <span className="material-symbols-outlined text-base">person_search</span>
+                          <span>Assigner</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRelaunchSearch(order.id)}
+                          className="min-h-[44px] px-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                        >
+                          <span className="material-symbols-outlined text-base">radar</span>
+                          <span>Relancer</span>
+                        </button>
+                      </>
                     )}
 
                     {order.status === 'livree' && (
-                      <button
-                        type="button"
-                        onClick={() => handleOpenPOD(order)}
-                        className="min-h-[44px] flex-1 px-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
-                      >
-                        <span className="material-symbols-outlined text-base">verified</span>
-                        <span>Preuve POD</span>
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenPOD(order)}
+                          className="min-h-[44px] px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                        >
+                          <span className="material-symbols-outlined text-base">verified</span>
+                          <span>POD</span>
+                        </button>
+                        {order.courier && (
+                          <button
+                            type="button"
+                            onClick={() => openRateLivreurModal(order)}
+                            className={`min-h-[44px] flex-1 px-3 rounded-xl font-bold text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95 ${
+                              order.courierRating
+                                ? 'bg-amber-50 text-amber-900 border border-amber-300'
+                                : 'bg-amber-500 hover:bg-amber-600 text-white'
+                            }`}
+                          >
+                            <span className="material-symbols-outlined text-base">star</span>
+                            <span>{order.courierRating ? `★ ${order.courierRating.rating}/5` : 'Noter livreur'}</span>
+                          </button>
+                        )}
+                      </>
                     )}
 
                     {order.status === 'echec' && (

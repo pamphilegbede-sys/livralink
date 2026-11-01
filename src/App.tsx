@@ -29,6 +29,9 @@ const UrgentMissionModal = React.lazy(() => import('./components/modals/UrgentMi
 const FirebaseTestModal = React.lazy(() => import('./components/modals/FirebaseTestModal').then(m => ({ default: m.FirebaseTestModal })));
 const EmailNotificationCenterModal = React.lazy(() => import('./components/modals/EmailNotificationCenterModal').then(m => ({ default: m.EmailNotificationCenterModal })));
 const NotificationCenterModal = React.lazy(() => import('./components/modals/NotificationCenterModal').then(m => ({ default: m.NotificationCenterModal })));
+const LivreurSearchModal = React.lazy(() => import('./components/modals/LivreurSearchModal').then(m => ({ default: m.LivreurSearchModal })));
+const KYCSubmissionModal = React.lazy(() => import('./components/modals/KYCSubmissionModal').then(m => ({ default: m.KYCSubmissionModal })));
+const RateLivreurModal = React.lazy(() => import('./components/modals/RateLivreurModal').then(m => ({ default: m.RateLivreurModal })));
 
 const MainAppRouter: React.FC = () => {
   const { 
@@ -46,7 +49,15 @@ const MainAppRouter: React.FC = () => {
     isEmailCenterOpen,
     closeEmailCenter,
     isNotificationCenterOpen,
-    closeNotificationCenter
+    closeNotificationCenter,
+    isLivreurSearchModalOpen,
+    closeLivreurSearchModal,
+    livreurSearchTargetOrderId,
+    isKYCModalOpen,
+    closeKYCModal,
+    isRateLivreurModalOpen,
+    closeRateLivreurModal,
+    rateLivreurTargetOrder,
   } = useApp();
   const [deviceMode, setDeviceMode] = useState<'responsive' | 'mobile-mock'>('responsive');
 
@@ -165,6 +176,21 @@ const MainAppRouter: React.FC = () => {
         {isTestModalOpen && <FirebaseTestModal isOpen={isTestModalOpen} onClose={closeTestModal} />}
         {isEmailCenterOpen && <EmailNotificationCenterModal isOpen={isEmailCenterOpen} onClose={closeEmailCenter} />}
         {isNotificationCenterOpen && <NotificationCenterModal isOpen={isNotificationCenterOpen} onClose={closeNotificationCenter} />}
+        {isLivreurSearchModalOpen && (
+          <LivreurSearchModal
+            isOpen={isLivreurSearchModalOpen}
+            onClose={closeLivreurSearchModal}
+            preSelectedOrderId={livreurSearchTargetOrderId}
+          />
+        )}
+        {isKYCModalOpen && <KYCSubmissionModal isOpen={isKYCModalOpen} onClose={closeKYCModal} />}
+        {isRateLivreurModalOpen && (
+          <RateLivreurModal
+            isOpen={isRateLivreurModalOpen}
+            onClose={closeRateLivreurModal}
+            order={rateLivreurTargetOrder}
+          />
+        )}
       </React.Suspense>
     </div>
   );

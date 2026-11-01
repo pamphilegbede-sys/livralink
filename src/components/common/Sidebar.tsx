@@ -18,7 +18,8 @@ export const Sidebar: React.FC = () => {
     deliveries,
     couriers,
     merchants,
-    kycRequests
+    kycRequests,
+    openLivreurSearchModal,
   } = useApp();
 
   const handleLogout = async () => {
@@ -90,8 +91,8 @@ export const Sidebar: React.FC = () => {
                 onClick={() => setCurrentView('vendeur_dashboard')}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'vendeur_dashboard'
-                    ? 'bg-blue-50 text-blue-700 font-bold shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
                 <span className="material-symbols-outlined text-xl">dashboard</span>
@@ -103,8 +104,8 @@ export const Sidebar: React.FC = () => {
                 onClick={() => setCurrentView('vendeur_tracking')}
                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'vendeur_tracking'
-                    ? 'bg-blue-50 text-blue-700 font-bold shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
                 <div className="flex items-center gap-3">
@@ -119,8 +120,8 @@ export const Sidebar: React.FC = () => {
                 onClick={() => setCurrentView('vendeur_reports')}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'vendeur_reports'
-                    ? 'bg-blue-50 text-blue-700 font-bold shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
                 <span className="material-symbols-outlined text-xl">analytics</span>
@@ -129,11 +130,20 @@ export const Sidebar: React.FC = () => {
 
               <button
                 type="button"
+                onClick={() => openLivreurSearchModal()}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/60 hover:text-teal-900 dark:hover:text-teal-200 transition-all cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-xl text-teal-600 dark:text-teal-400">person_search</span>
+                <span>Trouver un coursier</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setCurrentView('vendeur_settings')}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'vendeur_settings'
-                    ? 'bg-blue-50 text-blue-700 font-bold shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
                 <span className="material-symbols-outlined text-xl">settings</span>
@@ -141,11 +151,11 @@ export const Sidebar: React.FC = () => {
               </button>
 
               {/* Bouton Déconnexion dans la barre latérale Vendeur */}
-              <div className="pt-2 mt-2 border-t border-slate-100">
+              <div className="pt-2 mt-2 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={handleLogout}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-red-600 hover:bg-red-50 hover:text-red-700 transition-all active:scale-95 group"
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/50 hover:text-red-700 dark:hover:text-red-300 transition-all active:scale-95 group"
                   title="Déconnexion de votre espace vendeur"
                 >
                   <span className="material-symbols-outlined text-xl text-red-500 group-hover:translate-x-0.5 transition-transform">logout</span>
@@ -163,8 +173,8 @@ export const Sidebar: React.FC = () => {
                 onClick={() => setCurrentView('livreur_dashboard')}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'livreur_dashboard'
-                    ? 'bg-blue-50 text-blue-700 font-bold shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
                 <span className="material-symbols-outlined text-xl">dashboard</span>
@@ -176,8 +186,8 @@ export const Sidebar: React.FC = () => {
                 onClick={() => setCurrentView('livreur_missions')}
                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'livreur_missions'
-                    ? 'bg-blue-50 text-blue-700 font-bold shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
                 <div className="flex items-center gap-3">
@@ -192,8 +202,8 @@ export const Sidebar: React.FC = () => {
                 onClick={() => setCurrentView('livreur_wallet')}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'livreur_wallet'
-                    ? 'bg-blue-50 text-blue-700 font-bold shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
                 <span className="material-symbols-outlined text-xl">account_balance_wallet</span>
@@ -205,8 +215,8 @@ export const Sidebar: React.FC = () => {
                 onClick={() => setCurrentView('livreur_settings')}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'livreur_settings'
-                    ? 'bg-blue-50 text-blue-700 font-bold shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
                 <span className="material-symbols-outlined text-xl">settings</span>
@@ -214,11 +224,11 @@ export const Sidebar: React.FC = () => {
               </button>
 
               {/* Bouton Déconnexion dans la barre latérale Livreur */}
-              <div className="pt-2 mt-2 border-t border-slate-100">
+              <div className="pt-2 mt-2 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={handleLogout}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-red-600 hover:bg-red-50 hover:text-red-700 transition-all active:scale-95 group"
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/50 hover:text-red-700 dark:hover:text-red-300 transition-all active:scale-95 group"
                   title="Déconnexion de votre espace coursier"
                 >
                   <span className="material-symbols-outlined text-xl text-red-500 group-hover:translate-x-0.5 transition-transform">logout</span>

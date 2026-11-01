@@ -216,7 +216,7 @@ export const MobileBottomNav: React.FC = () => {
   return (
     <nav
       aria-label="Navigation principale mobile"
-      className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 md:hidden pb-safe shadow-lg"
+      className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 text-slate-800 dark:text-slate-100 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 md:hidden pb-safe shadow-lg transition-colors"
     >
       <div className="max-w-md mx-auto grid grid-cols-5 h-14">
         {/* Destination 1: Tableau de bord */}
@@ -224,8 +224,8 @@ export const MobileBottomNav: React.FC = () => {
           onClick={() => setCurrentView(currentRole === 'vendeur' ? 'vendeur_dashboard' : 'livreur_dashboard')}
           className={`flex flex-col items-center justify-center py-1 transition-colors ${
             currentView === 'vendeur_dashboard' || currentView === 'livreur_dashboard'
-              ? 'text-blue-600 font-bold'
-              : 'text-slate-500 hover:text-slate-900'
+              ? 'text-blue-600 dark:text-blue-400 font-bold'
+              : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
           }`}
         >
           <span className="material-symbols-outlined text-[20px]">dashboard</span>
@@ -237,8 +237,8 @@ export const MobileBottomNav: React.FC = () => {
           onClick={() => setCurrentView(currentRole === 'vendeur' ? 'vendeur_tracking' : 'livreur_missions')}
           className={`flex flex-col items-center justify-center py-1 transition-colors relative ${
             currentView === 'vendeur_tracking' || currentView === 'livreur_missions'
-              ? 'text-blue-600 font-bold'
-              : 'text-slate-500 hover:text-slate-900'
+              ? 'text-blue-600 dark:text-blue-400 font-bold'
+              : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
           }`}
         >
           <div className="relative">
@@ -254,22 +254,22 @@ export const MobileBottomNav: React.FC = () => {
         {currentRole === 'vendeur' ? (
           <button
             onClick={() => setCurrentView('vendeur_new_delivery')}
-            className="flex flex-col items-center justify-center text-blue-600 py-1 transition-transform active:scale-95"
+            className="flex flex-col items-center justify-center text-blue-600 dark:text-blue-400 py-1 transition-transform active:scale-95"
           >
-            <div className="w-10 h-10 -mt-4 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg ring-4 ring-white">
+            <div className="w-10 h-10 -mt-4 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg ring-4 ring-white dark:ring-slate-900">
               <span className="material-symbols-outlined text-[24px]">add</span>
             </div>
-            <span className="text-[10px] font-bold mt-0.5 text-blue-700">Créer</span>
+            <span className="text-[10px] font-bold mt-0.5 text-blue-700 dark:text-blue-400">Créer</span>
           </button>
         ) : (
           <button
             onClick={() => setCurrentView('livreur_missions')}
-            className="flex flex-col items-center justify-center text-emerald-600 py-1 transition-transform active:scale-95"
+            className="flex flex-col items-center justify-center text-emerald-600 dark:text-emerald-400 py-1 transition-transform active:scale-95"
           >
-            <div className="w-10 h-10 -mt-4 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-lg ring-4 ring-white">
+            <div className="w-10 h-10 -mt-4 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-lg ring-4 ring-white dark:ring-slate-900">
               <span className="material-symbols-outlined text-[22px]">two_wheeler</span>
             </div>
-            <span className="text-[10px] font-bold mt-0.5 text-emerald-700">Missions</span>
+            <span className="text-[10px] font-bold mt-0.5 text-emerald-700 dark:text-emerald-400">Missions</span>
           </button>
         )}
 
@@ -277,7 +277,9 @@ export const MobileBottomNav: React.FC = () => {
         <button
           onClick={() => setCurrentView(currentRole === 'vendeur' ? 'vendeur_reports' : 'livreur_wallet')}
           className={`flex flex-col items-center justify-center py-1 transition-colors ${
-            currentView === 'vendeur_reports' || currentView === 'livreur_wallet' ? 'text-blue-600 font-bold' : 'text-slate-500 hover:text-slate-900'
+            currentView === 'vendeur_reports' || currentView === 'livreur_wallet' 
+              ? 'text-blue-600 dark:text-blue-400 font-bold' 
+              : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
           }`}
         >
           <span className="material-symbols-outlined text-[20px]">
@@ -291,8 +293,8 @@ export const MobileBottomNav: React.FC = () => {
           onClick={() => setCurrentView(currentRole === 'vendeur' ? 'vendeur_settings' : 'livreur_settings')}
           className={`flex flex-col items-center justify-center py-1 transition-colors ${
             currentView === 'vendeur_settings' || currentView === 'livreur_settings'
-              ? 'text-blue-600 font-bold'
-              : 'text-slate-500 hover:text-slate-900'
+              ? 'text-blue-600 dark:text-blue-400 font-bold'
+              : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
           }`}
         >
           <span className="material-symbols-outlined text-[20px]">settings</span>

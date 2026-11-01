@@ -74,6 +74,8 @@ export type AdminTab =
   | 'audit'
   | 'security';
 
+export type ThemeMode = 'light' | 'dark' | 'system';
+
 export interface AdminTestResultItem {
   id: string;
   name: string;
@@ -205,7 +207,9 @@ interface AppContextType {
   adminLogout: () => void;
   verifyAdminPassword: (password: string) => boolean;
   changeAdminPassword: (oldPassword: string, newPassword: string) => { success: boolean; message: string };
-  // Dark Mode
+  // Dark Mode & Theme Selector
+  themeMode: ThemeMode;
+  setThemeMode: (mode: ThemeMode) => void;
   isDarkMode: boolean;
   toggleDarkMode: () => void;
   setIsDarkMode: (dark: boolean) => void;
@@ -251,6 +255,25 @@ interface AppContextType {
   sendTestNotification: (title?: string, message?: string) => void;
   notificationPermission: NotificationPermissionStatus;
   requestBrowserNotificationPermission: () => Promise<NotificationPermissionStatus>;
+
+  // Livreur Search Modal (Vendeurs)
+  isLivreurSearchModalOpen: boolean;
+  openLivreurSearchModal: (targetOrderId?: string) => void;
+  closeLivreurSearchModal: () => void;
+  livreurSearchTargetOrderId?: string;
+
+  // KYC Verification Modal & Action (Livreurs)
+  isKYCModalOpen: boolean;
+  openKYCModal: () => void;
+  closeKYCModal: () => void;
+  submitKYCRequest: (data: Partial<KYCUserRequest>) => KYCUserRequest;
+
+  // Courier Rating Modal & Action (Vendeurs)
+  isRateLivreurModalOpen: boolean;
+  rateLivreurTargetOrder: DeliveryOrder | null;
+  openRateLivreurModal: (order: DeliveryOrder) => void;
+  closeRateLivreurModal: () => void;
+  rateCourier: (orderId: string, courierId: string, rating: number, comment?: string, tags?: string[], ratedBy?: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -451,48 +474,103 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const openEmailCenter = () => setIsEmailCenterOpen(true);
   const closeEmailCenter = () => setIsEmailCenterOpen(false);
 
-  // Dark Mode State with Automatic System Preference Synchronization
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+  // Livreur Search Modal state (for Vendeurs)
+  const [isLivreurSearchModalOpen, setIsLivreurSearchModalOpen] = useState(false);
+  const [livreurSearchTargetOrderId, setLivreurSearchTargetOrderId] = useState<string | undefined>(undefined);
+  const openLivreurSearchModal = (targetOrderId?: string) => {
+    setLivreurSearchTargetOrderId(targetOrderId);
+    setIsLivreurSearchModalOpen(true);
+  };
+  const closeLivreurSearchModal = () => {
+    setIsLivreurSearchModalOpen(false);
+    setLivreurSearchTargetOrderId(undefined);
+  };
+
+  // KYC Verification Modal state (for Livreurs)
+  const [isKYCModalOpen, setIsKYCModalOpen] = useState(false);
+  const openKYCModal = () => setIsKYCModalOpen(true);
+  const closeKYCModal = () => setIsKYCModalOpen(false);
+
+  // Rate Livreur Modal state (for Vendeurs)
+  const [isRateLivreurModalOpen, setIsRateLivreurModalOpen] = useState(false);
+  const [rateLivreurTargetOrder, setRateLivreurTargetOrder] = useState<DeliveryOrder | null>(null);
+  const openRateLivreurModal = (order: DeliveryOrder) => {
+    setRateLivreurTargetOrder(order);
+    setIsRateLivreurModalOpen(true);
+  };
+  const closeRateLivreurModal = () => {
+    setIsRateLivreurModalOpen(false);
+    setRateLivreurTargetOrder(null);
+  };
+
+  // Theme Selector State (light | dark | system)
+  const [themeMode, setThemeModeState] = useState<ThemeMode>(() => {
     try {
-      const saved = localStorage.getItem('livralink_dark_mode');
-      if (saved !== null) {
-        return saved === 'true';
+      const savedMode = localStorage.getItem('livralink_theme_mode') as ThemeMode | null;
+      if (savedMode === 'light' || savedMode === 'dark' || savedMode === 'system') {
+        return savedMode;
       }
+      return 'system';
+    } catch {
+      return 'system';
+    }
+  });
+
+  const [isDarkMode, setIsDarkModeState] = useState<boolean>(() => {
+    try {
+      const savedMode = localStorage.getItem('livralink_theme_mode');
+      if (savedMode === 'dark') return true;
+      if (savedMode === 'light') return false;
       return typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
     } catch {
       return false;
     }
   });
 
-  // Listen to OS / System color scheme preference changes in real-time
+  // Synchronize isDarkMode with themeMode & System OS preference changes in real-time
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
+    if (typeof window === 'undefined') return;
 
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-
-    const handleSystemThemeChange = (e: MediaQueryListEvent | MediaQueryList) => {
-      const isSystemDark = e.matches;
-      setIsDarkMode(isSystemDark);
-      showToast(
-        isSystemDark ? '🌙 Thème système appliqué : Mode Sombre' : '☀️ Thème système appliqué : Mode Clair',
-        'info'
-      );
+    const computeIsDark = (mode: ThemeMode): boolean => {
+      if (mode === 'dark') return true;
+      if (mode === 'light') return false;
+      return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
     };
 
-    if (mediaQuery.addEventListener) {
-      mediaQuery.addEventListener('change', handleSystemThemeChange);
-    } else if ('addListener' in mediaQuery) {
-      (mediaQuery as any).addListener(handleSystemThemeChange);
+    const newIsDark = computeIsDark(themeMode);
+    setIsDarkModeState(newIsDark);
+
+    const mediaQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+
+    const handleSystemThemeChange = (e: MediaQueryListEvent | MediaQueryList) => {
+      if (themeMode === 'system') {
+        const isSystemDark = e.matches;
+        setIsDarkModeState(isSystemDark);
+        showToast(
+          isSystemDark ? '🌙 Thème système appliqué : Mode Sombre' : '☀️ Thème système appliqué : Mode Clair',
+          'info'
+        );
+      }
+    };
+
+    if (mediaQuery) {
+      if (mediaQuery.addEventListener) {
+        mediaQuery.addEventListener('change', handleSystemThemeChange);
+      } else if ('addListener' in mediaQuery) {
+        (mediaQuery as any).addListener(handleSystemThemeChange);
+      }
     }
 
     return () => {
-      if (mediaQuery.removeEventListener) {
-        mediaQuery.removeEventListener('change', handleSystemThemeChange);
-      } else if ('removeListener' in mediaQuery) {
-        (mediaQuery as any).removeListener(handleSystemThemeChange);
+      if (mediaQuery) {
+        if (mediaQuery.removeEventListener) {
+          mediaQuery.removeEventListener('change', handleSystemThemeChange);
+        } else if ('removeListener' in mediaQuery) {
+          (mediaQuery as any).removeListener(handleSystemThemeChange);
+        }
       }
     };
-  }, []);
+  }, [themeMode]);
 
   useEffect(() => {
     try {
@@ -504,17 +582,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         document.body.classList.remove('dark');
       }
       localStorage.setItem('livralink_dark_mode', String(isDarkMode));
+      localStorage.setItem('livralink_theme_mode', themeMode);
     } catch (e) {
       console.warn('Erreur mise à jour mode sombre:', e);
     }
-  }, [isDarkMode]);
+  }, [isDarkMode, themeMode]);
+
+  const setThemeMode = (mode: ThemeMode) => {
+    setThemeModeState(mode);
+    let isDark = false;
+    if (mode === 'dark') isDark = true;
+    else if (mode === 'light') isDark = false;
+    else isDark = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+    setIsDarkModeState(isDark);
+
+    const labels = {
+      light: '☀️ Mode Clair activé',
+      dark: '🌙 Mode Sombre activé',
+      system: isDark ? '💻 Thème Système (Sombre) appliqué' : '💻 Thème Système (Clair) appliqué',
+    };
+    showToast(labels[mode], 'info');
+  };
 
   const toggleDarkMode = () => {
-    setIsDarkMode((prev) => {
-      const next = !prev;
-      showToast(next ? '🌙 Mode sombre activé' : '☀️ Mode clair activé', 'info');
-      return next;
-    });
+    setThemeMode(isDarkMode ? 'light' : 'dark');
+  };
+
+  const setIsDarkMode = (dark: boolean) => {
+    setThemeMode(dark ? 'dark' : 'light');
   };
 
   // Geolocation state (persistent in localStorage)
@@ -1255,6 +1351,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const acceptDelivery = (orderId: string, customCourier?: Courier) => {
+    // Contrôle KYC obligatoire avant qu'un coursier puisse accepter une course
+    const isKycApproved =
+      customCourier?.isKycVerified ||
+      selectedCourier?.isKycVerified ||
+      userProfile?.isKycVerified ||
+      courierSettings.isKycVerified ||
+      kycRequests.some(
+        (k) =>
+          (k.courierId === (userProfile?.uid || selectedCourier?.id) ||
+            k.fullName.toLowerCase() ===
+              (userProfile?.fullName || courierSettings.fullName || selectedCourier?.name || '').toLowerCase()) &&
+          k.status === 'valide'
+      );
+
+    if (!isKycApproved) {
+      showToast(
+        "🛡️ Contrôle KYC Obligatoire : Vous ne pouvez pas accepter de mission tant que votre dossier d'identité n'est pas accrédité par l'administration LivraLink.",
+        'error'
+      );
+      setIsKYCModalOpen(true);
+      return;
+    }
+
     // 1. Déterminer l'identité exacte du livreur connecté qui accepte la mission
     let courier: Courier;
 
@@ -1633,6 +1752,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const toggleCourierAvailability = () => {
+    // Contrôle KYC obligatoire avant de pouvoir passer en service (En ligne)
+    if (!courierSettings.isAvailable) {
+      const isKycApproved =
+        selectedCourier?.isKycVerified ||
+        userProfile?.isKycVerified ||
+        courierSettings.isKycVerified ||
+        kycRequests.some(
+          (k) =>
+            (k.courierId === (userProfile?.uid || selectedCourier?.id) ||
+              k.fullName.toLowerCase() ===
+                (userProfile?.fullName || courierSettings.fullName || selectedCourier?.name || '').toLowerCase()) &&
+            k.status === 'valide'
+        );
+
+      if (!isKycApproved) {
+        showToast(
+          "🛡️ Contrôle KYC Requis : Vous devez soumettre votre dossier KYC et attendre la validation administrative avant de démarrer votre activité de coursier.",
+          'error'
+        );
+        setIsKYCModalOpen(true);
+        return;
+      }
+    }
+
     setCourierSettings(prev => {
       const next = !prev.isAvailable;
       showToast(next ? '🟢 Vous êtes maintenant DISPONIBLE pour les courses.' : '⏸️ Vous êtes passé EN PAUSE / HORS-LIGNE.', next ? 'success' : 'info');
@@ -1640,20 +1783,244 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  const approveKYC = (requestId: string) => {
-    setKycRequests(prev =>
-      prev.map(req => req.id === requestId ? { ...req, status: 'valide' } : req)
-    );
-    addAuditLog('kyc', 'Validation KYC', `Dossier ${requestId} approuvé par l'administrateur`);
-    showToast(`Dossier KYC approuvé avec succès !`, 'success');
+  const submitKYCRequest = (data: Partial<KYCUserRequest>): KYCUserRequest => {
+    const id = `kyc-${Date.now().toString().slice(-6)}`;
+    const newReq: KYCUserRequest = {
+      id,
+      courierId: data.courierId || userProfile?.uid || selectedCourier?.id,
+      fullName: data.fullName || userProfile?.fullName || courierSettings.fullName || 'Coursier LivraLink',
+      phone: data.phone || userProfile?.phone || courierSettings.phone || '+229 97 00 00 00',
+      role: 'coursier',
+      vehicleType: data.vehicleType || courierSettings.vehicleType || 'Moto',
+      vehiclePlate: data.vehiclePlate || courierSettings.vehiclePlate || 'BJ-0000-RB',
+      idType: data.idType || 'CIP',
+      idNumber: data.idNumber || 'BJ-XXXXXX',
+      ifuNumber: data.ifuNumber,
+      operatingZone: data.operatingZone || 'Cotonou Littoral',
+      submittedAt: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      status: 'en_attente',
+      documentPhotoUrl: data.documentPhotoUrl,
+      documents: {
+        cni: data.documents?.cni ?? true,
+        permis: data.documents?.permis ?? true,
+        assurance: data.documents?.assurance ?? true,
+      },
+    };
+
+    setKycRequests(prev => [
+      newReq,
+      ...prev.filter(
+        r => r.id !== id && (r.courierId !== newReq.courierId || r.fullName.toLowerCase() !== newReq.fullName.toLowerCase())
+      ),
+    ]);
+
+    // Update settings status
+    setCourierSettings(prev => ({
+      ...prev,
+      isKycVerified: false,
+      kycStatus: 'en_attente',
+    }));
+
+    if (userProfile?.role === 'livreur') {
+      setUserProfile(prev => (prev ? { ...prev, isKycVerified: false, kycStatus: 'en_attente' } : null));
+    }
+
+    addAuditLog('kyc', 'Dépôt Dossier KYC', `Dossier #${id} soumis par ${newReq.fullName} (${newReq.idNumber})`);
+    addNotification({
+      type: 'kyc',
+      title: '📁 Dossier KYC transmis',
+      message: `Votre dossier d'identification (${newReq.idType} #${newReq.idNumber}) a été transmis pour accréditation.`,
+      actionView: 'livreur_dashboard',
+    });
+    showToast(`Dossier KYC transmis avec succès ! En attente de validation administrative.`, 'success');
+    return newReq;
   };
 
-  const rejectKYC = (requestId: string) => {
+  const approveKYC = (requestId: string) => {
+    let approvedCourierName = '';
+    let approvedCourierId = '';
+
     setKycRequests(prev =>
-      prev.map(req => req.id === requestId ? { ...req, status: 'refuse' } : req)
+      prev.map(req => {
+        if (req.id === requestId) {
+          approvedCourierName = req.fullName;
+          approvedCourierId = req.courierId || '';
+          return { ...req, status: 'valide' as const };
+        }
+        return req;
+      })
     );
-    addAuditLog('kyc', 'Rejet KYC', `Dossier ${requestId} rejeté`);
-    showToast(`Dossier KYC refusé.`, 'error');
+
+    // Update couriers list
+    setCouriers(prev =>
+      prev.map(c => {
+        if (
+          c.id === approvedCourierId ||
+          (approvedCourierName && c.name.toLowerCase() === approvedCourierName.toLowerCase())
+        ) {
+          return { ...c, isKycVerified: true, kycStatus: 'valide' as const, badge: 'Livreur Vérifié KYC ★' };
+        }
+        return c;
+      })
+    );
+
+    // Update selectedCourier if matched
+    setSelectedCourier(prev => {
+      if (
+        prev.id === approvedCourierId ||
+        (approvedCourierName && prev.name.toLowerCase() === approvedCourierName.toLowerCase())
+      ) {
+        return { ...prev, isKycVerified: true, kycStatus: 'valide' as const, badge: 'Livreur Vérifié KYC ★' };
+      }
+      return prev;
+    });
+
+    // Update current courierSettings and userProfile if matched
+    if (
+      userProfile &&
+      (userProfile.uid === approvedCourierId ||
+        (approvedCourierName && userProfile.fullName.toLowerCase() === approvedCourierName.toLowerCase()))
+    ) {
+      setUserProfile(prev => (prev ? { ...prev, isKycVerified: true, kycStatus: 'valide' } : null));
+      setCourierSettings(prev => ({ ...prev, isKycVerified: true, kycStatus: 'valide' }));
+    }
+
+    addAuditLog('kyc', 'Validation KYC', `Dossier ${requestId} approuvé par l'administrateur (${approvedCourierName})`);
+    addNotification({
+      type: 'kyc',
+      title: '🎉 Accréditation KYC validée !',
+      message: `Votre dossier d'accréditation a été validé avec succès. Vous pouvez maintenant passer en ligne et démarrer vos livraisons.`,
+      actionView: 'livreur_dashboard',
+    });
+    showToast(`Dossier KYC (${approvedCourierName || requestId}) approuvé avec succès !`, 'success');
+  };
+
+  const rejectKYC = (requestId: string, reason?: string) => {
+    const rejectionReason = reason || 'Documents d\'identité non conformes ou illisibles.';
+    let targetCourierName = '';
+    let targetCourierId = '';
+
+    setKycRequests(prev =>
+      prev.map(req => {
+        if (req.id === requestId) {
+          targetCourierName = req.fullName;
+          targetCourierId = req.courierId || '';
+          return { ...req, status: 'refuse' as const, rejectionReason };
+        }
+        return req;
+      })
+    );
+
+    setCouriers(prev =>
+      prev.map(c => {
+        if (
+          c.id === targetCourierId ||
+          (targetCourierName && c.name.toLowerCase() === targetCourierName.toLowerCase())
+        ) {
+          return { ...c, isKycVerified: false, kycStatus: 'refuse' as const, kycRejectionReason: rejectionReason };
+        }
+        return c;
+      })
+    );
+
+    addAuditLog('kyc', 'Rejet KYC', `Dossier ${requestId} rejeté : ${rejectionReason}`);
+    addNotification({
+      type: 'kyc',
+      title: '❌ Dossier KYC non validé',
+      message: `Votre dossier KYC a été rejeté. Motif : ${rejectionReason}. Veuillez re-soumettre vos documents.`,
+      actionView: 'livreur_dashboard',
+    });
+    showToast(`Dossier KYC rejeté : ${rejectionReason}`, 'error');
+  };
+
+  const rateCourier = (
+    orderId: string,
+    courierId: string,
+    rating: number,
+    comment?: string,
+    tags?: string[],
+    ratedBy?: string
+  ) => {
+    const nowTime =
+      new Date().toLocaleDateString('fr-FR') +
+      ' à ' +
+      new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const courierRatingData = {
+      rating,
+      comment: comment || undefined,
+      tags: tags || [],
+      ratedAt: nowTime,
+      ratedBy: ratedBy || merchantSettings.storeName || 'Commerçant',
+    };
+
+    // Update delivery order
+    setDeliveries(prev =>
+      prev.map(ord => {
+        if (ord.id === orderId) {
+          return {
+            ...ord,
+            courierRating: courierRatingData,
+          };
+        }
+        return ord;
+      })
+    );
+
+    if (selectedDelivery && selectedDelivery.id === orderId) {
+      setSelectedDelivery(prev => (prev ? { ...prev, courierRating: courierRatingData } : null));
+    }
+
+    // Update courier average rating and review count
+    setCouriers(prev =>
+      prev.map(c => {
+        if (
+          c.id === courierId ||
+          (selectedDelivery?.courier && c.name.toLowerCase() === selectedDelivery.courier.name.toLowerCase())
+        ) {
+          const currentTotal = c.totalReviews || c.totalDeliveries || 10;
+          const currentRating = c.rating || 5.0;
+          const newAvg = Number((((currentRating * currentTotal) + rating) / (currentTotal + 1)).toFixed(1));
+          return {
+            ...c,
+            rating: newAvg,
+            totalReviews: currentTotal + 1,
+          };
+        }
+        return c;
+      })
+    );
+
+    // Update selectedCourier if matched
+    setSelectedCourier(prev => {
+      if (
+        prev.id === courierId ||
+        (selectedDelivery?.courier && prev.name.toLowerCase() === selectedDelivery.courier.name.toLowerCase())
+      ) {
+        const currentTotal = prev.totalReviews || prev.totalDeliveries || 10;
+        const currentRating = prev.rating || 5.0;
+        const newAvg = Number((((currentRating * currentTotal) + rating) / (currentTotal + 1)).toFixed(1));
+        return {
+          ...prev,
+          rating: newAvg,
+          totalReviews: currentTotal + 1,
+        };
+      }
+      return prev;
+    });
+
+    addAuditLog(
+      'system',
+      `Évaluation Livreur ${orderId}`,
+      `Note de ${rating}/5 attribuée à ${selectedDelivery?.courier?.name || courierId} par ${courierRatingData.ratedBy}`
+    );
+
+    addNotification({
+      type: 'order_status',
+      title: '⭐ Nouvel avis reçu !',
+      message: `Vous avez reçu une note de ${rating}/5 étoiles de la part de ${courierRatingData.ratedBy} pour la course ${orderId}.`,
+      orderId,
+      actionView: 'livreur_dashboard',
+    });
   };
 
   const resolveDispute = (orderId: string, resolutionNote: string) => {
@@ -2278,6 +2645,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         adminLogout,
         verifyAdminPassword,
         changeAdminPassword,
+        themeMode,
+        setThemeMode,
         isDarkMode,
         toggleDarkMode,
         setIsDarkMode,
@@ -2311,7 +2680,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         closeNotificationCenter,
         sendTestNotification,
         notificationPermission,
-        requestBrowserNotificationPermission
+        requestBrowserNotificationPermission,
+        isLivreurSearchModalOpen,
+        openLivreurSearchModal,
+        closeLivreurSearchModal,
+        livreurSearchTargetOrderId,
+        isKYCModalOpen,
+        openKYCModal,
+        closeKYCModal,
+        submitKYCRequest,
+        isRateLivreurModalOpen,
+        rateLivreurTargetOrder,
+        openRateLivreurModal,
+        closeRateLivreurModal,
+        rateCourier,
       }}
     >
       {children}

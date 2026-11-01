@@ -29,6 +29,9 @@ export interface Courier {
   netEarningFCFA: number;
   badge?: string;
   isKycVerified?: boolean;
+  kycStatus?: 'non_soumis' | 'en_attente' | 'valide' | 'refuse';
+  kycRejectionReason?: string;
+  totalReviews?: number;
   createdAt?: string;
 }
 
@@ -59,6 +62,14 @@ export interface DeliveryTimelineStep {
   status: 'completed' | 'active' | 'pending';
 }
 
+export interface CourierRating {
+  rating: number; // 1 to 5 stars
+  comment?: string;
+  tags?: string[];
+  ratedAt: string;
+  ratedBy?: string; // Merchant storeName or managerName
+}
+
 export interface DeliveryOrder {
   id: string; // e.g. '#LL-4192'
   clientName: string;
@@ -87,6 +98,7 @@ export interface DeliveryOrder {
   deliveryFee: number;  // Frais de livraison LivraLink in FCFA
   totalCustomerPayable: number; // COD + Fee in FCFA
   courier?: Courier;
+  courierRating?: CourierRating;
   status: DeliveryStatus;
   statusNote?: string;
   createdAt: string;
@@ -110,14 +122,21 @@ export interface DeliveryOrder {
 
 export interface KYCUserRequest {
   id: string;
+  courierId?: string;
   fullName: string;
   phone: string;
+  email?: string;
   role: 'coursier' | 'marchand';
   vehicleType: string;
+  vehiclePlate?: string;
+  idType?: 'CIP' | 'CNI' | 'PASSPORT';
   idNumber: string;
+  ifuNumber?: string;
   operatingZone: string;
   submittedAt: string;
   status: 'en_attente' | 'valide' | 'refuse';
+  rejectionReason?: string;
+  documentPhotoUrl?: string;
   documents: {
     cni: boolean;
     permis: boolean;
@@ -172,6 +191,9 @@ export interface CourierSettings {
   vehicleInsuranceUpToDate: boolean;
   defaultPayoutMethod: string;
   payoutPhone: string;
+  isKycVerified?: boolean;
+  kycStatus?: 'non_soumis' | 'en_attente' | 'valide' | 'refuse';
+  kycRejectionReason?: string;
   twoFactorAuth: boolean;
 }
 
