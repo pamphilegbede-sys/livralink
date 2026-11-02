@@ -236,44 +236,17 @@ export const VendeurTracking: React.FC = () => {
                 </div>
               </div>
 
-              {/* Status Simulation & Testing Bar for Vendor */}
+              {/* Seller Read-Only Tracking Status Info Banner */}
               <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2.5 text-xs">
-                <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200 font-bold">
-                  <span className="material-symbols-outlined text-sm text-blue-600 dark:text-blue-400">tune</span>
-                  <span>Tests &amp; Progression de la course ({currentOrder.id}) :</span>
+                <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200 font-bold">
+                  <span className="material-symbols-outlined text-sm text-blue-600 dark:text-blue-400">info</span>
+                  <span>Suivi Vendeur : Seul le livreur certifié assigné peut valider les étapes de livraison (colis récupéré, en transit, POD).</span>
                 </div>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => updateDeliveryStatus(currentOrder.id, 'colis_recupere', 'Colis récupéré en boutique par le livreur')}
-                    className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-blue-400 text-slate-700 dark:text-slate-200 font-bold active:scale-95 transition-all text-[11px]"
-                  >
-                    📦 Colis récupéré
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateDeliveryStatus(currentOrder.id, 'en_cours', 'En transit vers le domicile du client')}
-                    className="px-2.5 py-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 hover:border-blue-400 text-blue-700 dark:text-blue-300 font-bold active:scale-95 transition-all text-[11px]"
-                  >
-                    🛵 En cours (Transit)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedDelivery(currentOrder);
-                      setIsPODModalOpen(true);
-                    }}
-                    className="px-2.5 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 hover:border-emerald-400 text-emerald-800 dark:text-emerald-300 font-bold active:scale-95 transition-all text-[11px]"
-                  >
-                    ✅ Valider livraison (POD)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateDeliveryStatus(currentOrder.id, 'echec', 'Client injoignable après multiples tentatives')}
-                    className="px-2.5 py-1.5 rounded-xl bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 hover:border-red-400 text-red-700 dark:text-red-300 font-bold active:scale-95 transition-all text-[11px]"
-                  >
-                    ⚠️ Signaler incident
-                  </button>
+                <div className="flex items-center gap-2 text-[11px]">
+                  <span className="px-2.5 py-1 rounded-lg bg-blue-100/70 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300 font-semibold flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                    Mises à jour en direct
+                  </span>
                 </div>
               </div>
 

@@ -267,15 +267,6 @@ export const LivreurDashboard: React.FC = () => {
             <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
               <button
                 type="button"
-                onClick={() => simulateNewPriorityMission()}
-                className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all active:scale-95 shadow-sm cursor-pointer"
-                title="Déclencher une mission prioritaire temps réel avec écouteurs Firestore et carillon sonore"
-              >
-                <span className="material-symbols-outlined text-base">bolt</span>
-                <span>⚡ Alerte Prioritaire Firestore</span>
-              </button>
-              <button
-                type="button"
                 onClick={openEmailCenter}
                 className="px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
                 title="Consulter les e-mails envoyés (Bienvenue, Codes, Sécurité)"
@@ -304,15 +295,6 @@ export const LivreurDashboard: React.FC = () => {
               >
                 <span className="material-symbols-outlined text-base">verified_user</span>
                 <span>{isKycApproved ? 'KYC Validé ✓' : 'Contrôle KYC Requis !'}</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleCreateTestOrder}
-                className="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-bold border border-blue-200 flex items-center gap-1.5 transition-colors cursor-pointer"
-                title="Simuler une course créée par un vendeur"
-              >
-                <span className="material-symbols-outlined text-base">add_circle</span>
-                <span>+ Course vendeur</span>
               </button>
             </div>
           </div>

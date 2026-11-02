@@ -139,14 +139,14 @@ export const LivreurSearchModal: React.FC<LivreurSearchModalProps> = ({
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
-                  Rechercher un Livreur Partenaire
+                  Livreurs Inscrits sur LivraLink
                 </h2>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300">
-                  {filteredCouriers.length} trouvé{filteredCouriers.length > 1 ? 's' : ''}
+                  {filteredCouriers.length} livreur{filteredCouriers.length > 1 ? 's' : ''} inscrit{filteredCouriers.length > 1 ? 's' : ''}
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Consultez les coursiers vérifiés KYC, leurs notes, véhicules et disponibilités en temps réel.
+                Recherche uniquement parmi les livreurs inscrits sur la plateforme, leurs notes, véhicules et disponibilités.
               </p>
             </div>
           </div>

@@ -43,6 +43,7 @@ import {
   createFreshCourierSettings, 
   createFreshCourierEntity 
 } from '../utils/userIsolation';
+import { runDeliveryStepValidationTestSuite } from '../utils/deliveryValidationTests';
 
 export type AppView =
   | 'landing'
@@ -125,7 +126,7 @@ interface AppContextType {
   createDelivery: (newOrder: Partial<DeliveryOrder>) => DeliveryOrder;
   acceptDelivery: (orderId: string, customCourier?: Courier) => void;
   refuseDelivery: (orderId: string, reason?: string) => void;
-  updateDeliveryStatus: (orderId: string, newStatus: DeliveryStatus, note?: string) => void;
+  updateDeliveryStatus: (orderId: string, newStatus: DeliveryStatus, note?: string, callerRoleOverride?: UserRole) => { success: boolean; reason?: string };
   assignCourierToDelivery: (orderId: string, courierId: string) => void;
   validatePOD: (
     orderId: string,
@@ -135,8 +136,9 @@ interface AppContextType {
       signatureDataUrl: string;
       signedByName: string;
     },
-    code?: string
-  ) => void;
+    code?: string,
+    callerRoleOverride?: UserRole
+  ) => { success: boolean; reason?: string };
   generateNewOTP: (orderId: string) => string;
   toggleCourierAvailability: () => void;
   selectActiveCourier: (courierOrId: Courier | string) => void;
@@ -1105,7 +1107,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [isUrgentOfferOpen, urgentOfferTimer]);
 
-  // Contextual real-time Firestore listener for priority missions
+  // Track current role, view, and user state with refs for real-time listeners
+  const currentRoleRef = React.useRef(currentRole);
+  const currentViewRef = React.useRef(currentView);
+  const firebaseUserRef = React.useRef(firebaseUser);
+  const userProfileRef = React.useRef(userProfile);
+
+  useEffect(() => {
+    currentRoleRef.current = currentRole;
+    currentViewRef.current = currentView;
+    firebaseUserRef.current = firebaseUser;
+    userProfileRef.current = userProfile;
+  }, [currentRole, currentView, firebaseUser, userProfile]);
+
+  // Dismiss priority mission alert automatically if user is not logged in as courier or leaves courier space
+  useEffect(() => {
+    const isCourierActive =
+      (currentRole === 'livreur' || userProfile?.role === 'livreur') &&
+      (currentView.startsWith('livreur_') || currentRole === 'livreur') &&
+      (firebaseUser != null || userProfile != null);
+
+    if (!isCourierActive) {
+      setPriorityMissionAlert(null);
+    }
+  }, [currentRole, currentView, firebaseUser, userProfile]);
+
+  // Contextual real-time Firestore listener for priority missions (strictly for logged-in couriers)
   useEffect(() => {
     try {
       const unsubscribe = onSnapshot(collection(db, 'priority_missions'), (snapshot) => {
@@ -1113,12 +1140,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (change.type === 'added' || change.type === 'modified') {
             const data = change.doc.data();
             const missionId = data.id || data.orderId || change.doc.id;
-            
-            // Trigger contextual alert only if the mission is waiting for a courier ('en_attente')
-            // and hasn't already been notified to this client instance
-            if (data.status === 'en_attente' && !notifiedMissionsRef.current.has(missionId)) {
+
+            // Trigger alert ONLY IF the user is authenticated as an active courier in their space
+            const isCourierActive =
+              (currentRoleRef.current === 'livreur' || userProfileRef.current?.role === 'livreur') &&
+              (currentViewRef.current.startsWith('livreur_') || currentRoleRef.current === 'livreur') &&
+              (firebaseUserRef.current != null || userProfileRef.current != null);
+
+            if (isCourierActive && data.status === 'en_attente' && !notifiedMissionsRef.current.has(missionId)) {
               notifiedMissionsRef.current.add(missionId);
-              
+
               setPriorityMissionAlert({
                 id: missionId,
                 orderId: data.orderId || missionId,
@@ -1397,6 +1428,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const acceptDelivery = (orderId: string, customCourier?: Courier) => {
+    // 0. Strict authentication & courier role check: only logged-in couriers can accept missions
+    const isCourierLoggedIn =
+      (currentRole === 'livreur' || userProfile?.role === 'livreur') &&
+      (firebaseUser != null || userProfile != null);
+
+    if (!isCourierLoggedIn && !isDirectorModeActive) {
+      showToast("🔒 Accès refusé : Vous devez être connecté à un compte livreur actif pour accepter une commande.", "error");
+      setCurrentView('login_livreur');
+      return;
+    }
+
     // Contrôle KYC obligatoire avant qu'un coursier puisse accepter une course
     const isKycApproved =
       customCourier?.isKycVerified ||
@@ -1623,7 +1665,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`Course ${orderId} refusée. Elle reste dans la file des livraisons disponibles.`, 'info');
   };
 
-  const updateDeliveryStatus = (orderId: string, newStatus: DeliveryStatus, note?: string) => {
+  const updateDeliveryStatus = (orderId: string, newStatus: DeliveryStatus, note?: string, callerRoleOverride?: UserRole): { success: boolean; reason?: string } => {
+    // 0. Strict Role Check: Only assigned delivery couriers (or admin / director mode) can validate delivery steps
+    const activeRole = callerRoleOverride || currentRole || userProfile?.role;
+    const isSupervisory = isDirectorModeActive || activeRole === 'admin';
+
+    if (activeRole === 'vendeur' && !isSupervisory) {
+      const reason = "🔒 Action réservée au livreur : Seul le coursier assigné à cette mission peut valider les étapes de livraison. Le vendeur suit l'avancement en temps réel.";
+      showToast(reason, "error");
+      return { success: false, reason };
+    }
+
+    const orderToUpdate = deliveries.find(d => d.id === orderId);
+    if (activeRole === 'livreur' && !isSupervisory && orderToUpdate) {
+      const assignedCourierId = orderToUpdate.courier?.id;
+      const currentCourierId = selectedCourier?.id || userProfile?.uid;
+      const currentCourierName = userProfile?.fullName || selectedCourier?.name;
+
+      const isAssigned =
+        assignedCourierId === currentCourierId ||
+        (orderToUpdate.courier?.name && currentCourierName && orderToUpdate.courier.name.toLowerCase() === currentCourierName.toLowerCase());
+
+      if (orderToUpdate.courier && !isAssigned) {
+        const reason = "🔒 Mission non attribuée : Vous ne pouvez valider que les étapes de votre propre mission assignée.";
+        showToast(reason, "error");
+        return { success: false, reason };
+      }
+    }
+
     setDeliveries(prev =>
       prev.map(ord => {
         if (ord.id === orderId) {
@@ -1662,6 +1731,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       actionView: 'vendeur_tracking'
     });
     showToast(`Statut de la course ${orderId} mis à jour : ${newStatus}`, 'info');
+    return { success: true };
   };
 
   const assignCourierToDelivery = (orderId: string, courierId: string) => {
@@ -1714,8 +1784,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       signatureDataUrl: string;
       signedByName: string;
     },
-    code?: string
-  ) => {
+    code?: string,
+    callerRoleOverride?: UserRole
+  ): { success: boolean; reason?: string } => {
+    // 0. Strict Role Check: Only assigned delivery couriers (or admin / director mode) can validate POD
+    const activeRole = callerRoleOverride || currentRole || userProfile?.role;
+    const isSupervisory = isDirectorModeActive || activeRole === 'admin';
+
+    if (activeRole === 'vendeur' && !isSupervisory) {
+      const reason = "🔒 Action réservée au livreur : Seul le coursier assigné à cette mission peut certifier la preuve de livraison POD. Le vendeur suit l'avancement en temps réel.";
+      showToast(reason, "error");
+      return { success: false, reason };
+    }
+
+    const orderToUpdate = deliveries.find(d => d.id === orderId);
+    if (activeRole === 'livreur' && !isSupervisory && orderToUpdate) {
+      const assignedCourierId = orderToUpdate.courier?.id;
+      const currentCourierId = selectedCourier?.id || userProfile?.uid;
+      const currentCourierName = userProfile?.fullName || selectedCourier?.name;
+
+      const isAssigned =
+        assignedCourierId === currentCourierId ||
+        (orderToUpdate.courier?.name && currentCourierName && orderToUpdate.courier.name.toLowerCase() === currentCourierName.toLowerCase());
+
+      if (orderToUpdate.courier && !isAssigned) {
+        const reason = "🔒 Mission non attribuée : Vous ne pouvez valider que les étapes de votre propre mission assignée.";
+        showToast(reason, "error");
+        return { success: false, reason };
+      }
+    }
+
     const nowTime = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
     const isTriFactorObject = typeof methodOrData === 'object' && methodOrData !== null;
 
@@ -1795,6 +1893,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       actionView: 'vendeur_tracking'
     });
     showToast(`🎉 Livraison ${orderId} certifiée et validée avec succès !`, 'success');
+    return { success: true };
   };
 
   const toggleCourierAvailability = () => {
@@ -2553,6 +2652,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         status: 'FAILED',
         durationMs: Date.now() - t9Start,
         message: e?.message || 'Erreur test directeur général'
+      });
+    }
+
+    // Test 10: Validation des Étapes de Livraison par Rôle (Audit Sécurité RBAC)
+    const t10Start = Date.now();
+    try {
+      const stepTestResults = await runDeliveryStepValidationTestSuite(
+        updateDeliveryStatus,
+        validatePOD
+      );
+      const mappedResults: AdminTestResultItem[] = stepTestResults.map(r => ({
+        id: r.testId,
+        name: r.name,
+        category: 'auth',
+        status: r.passed ? 'SUCCESS' : 'FAILED',
+        durationMs: r.durationMs,
+        message: r.message
+      }));
+      results.push(...mappedResults);
+    } catch (e: any) {
+      results.push({
+        id: 't-delivery-step-rbac-error',
+        name: 'Validation des Étapes de Livraison (Suite RBAC)',
+        category: 'auth',
+        status: 'FAILED',
+        durationMs: Date.now() - t10Start,
+        message: e?.message || 'Erreur lors de l\'exécution de la suite de tests.'
       });
     }
 

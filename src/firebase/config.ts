@@ -1,11 +1,11 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
-import { getFirestore, Firestore, setLogLevel } from 'firebase/firestore';
+import { initializeFirestore, getFirestore, Firestore, setLogLevel, doc, getDocFromServer } from 'firebase/firestore';
 import appletConfig from '../../firebase-applet-config.json';
 
-// Silence non-critical offline timeout warnings
+// Silence non-critical network / offline timeout warnings in preview environments
 try {
-  setLogLevel('error');
+  setLogLevel('silent');
 } catch {}
 
 // Firebase configuration from provisioned project or environment variables
@@ -35,15 +35,40 @@ if (!getApps().length) {
 export const app = firebaseApp;
 export const auth: Auth = getAuth(app);
 
-// Initialize Firestore according to standard Firebase specification
+// Initialize Firestore with experimentalForceLongPolling to ensure resilient connection across iframe/sandbox proxies
 const firestoreDbId = (appletConfig as any)?.firestoreDatabaseId;
-export const db: Firestore = getFirestore(
-  app,
-  firestoreDbId && firestoreDbId !== '(default)' ? firestoreDbId : undefined
-);
+let firestoreDb: Firestore;
+
+try {
+  firestoreDb = initializeFirestore(
+    app,
+    {
+      experimentalForceLongPolling: true,
+    },
+    firestoreDbId && firestoreDbId !== '(default)' ? firestoreDbId : undefined
+  );
+} catch {
+  firestoreDb = getFirestore(
+    app,
+    firestoreDbId && firestoreDbId !== '(default)' ? firestoreDbId : undefined
+  );
+}
+
+export const db: Firestore = firestoreDb;
+
+// Validate Connection to Firestore asynchronously without blocking app render
+async function testFirestoreConnection() {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.warn('Firestore operating in offline/resilient cache mode.');
+    }
+  }
+}
+testFirestoreConnection();
 
 // Helper to check if project credentials have been configured
 export const isCustomFirebaseConfigured = (): boolean => {
   return Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
 };
-

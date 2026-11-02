@@ -2,9 +2,20 @@ import React from 'react';
 import { useApp } from '../../context/AppContext';
 
 export const UrgentMissionModal: React.FC = () => {
-  const { isUrgentOfferOpen, urgentOfferTimer, acceptUrgentOffer, dismissUrgentOffer } = useApp();
+  const { 
+    isUrgentOfferOpen, 
+    urgentOfferTimer, 
+    acceptUrgentOffer, 
+    dismissUrgentOffer,
+    currentRole,
+    currentView,
+    firebaseUser,
+    userProfile
+  } = useApp();
 
-  if (!isUrgentOfferOpen) return null;
+  const isCourierActive = (currentRole === 'livreur' || currentView.startsWith('livreur_')) && (firebaseUser != null || userProfile != null);
+
+  if (!isUrgentOfferOpen || !isCourierActive) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">

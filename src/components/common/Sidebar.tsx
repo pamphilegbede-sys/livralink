@@ -130,15 +130,6 @@ export const Sidebar: React.FC = () => {
 
               <button
                 type="button"
-                onClick={() => openLivreurSearchModal()}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/60 hover:text-teal-900 dark:hover:text-teal-200 transition-all cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-xl text-teal-600 dark:text-teal-400">person_search</span>
-                <span>Trouver un coursier</span>
-              </button>
-
-              <button
-                type="button"
                 onClick={() => setCurrentView('vendeur_settings')}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'vendeur_settings'
@@ -512,16 +503,6 @@ export const Sidebar: React.FC = () => {
 
       {/* Footer Navigation Tabs (Help, Logout, Profile preview) - Always Pinned */}
       <div className="p-4 border-t border-slate-200 dark:border-slate-800 space-y-2 shrink-0 bg-white dark:bg-slate-900 transition-colors">
-        <button
-          onClick={openTestModal}
-          className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold transition-colors border border-amber-200/80 shadow-2xs"
-        >
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-base text-amber-600">science</span>
-            <span>Suite de Tests &amp; Profils</span>
-          </div>
-          <span className="px-1.5 py-0.2 rounded-full bg-amber-200 text-amber-900 text-[10px] font-extrabold">7</span>
-        </button>
         <button
           onClick={() => showToast('Centre d\'assistance LivraLink 24/7 disponible au 01 02 03 04', 'info')}
           className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-slate-600 hover:bg-slate-50 text-xs font-medium transition-colors"

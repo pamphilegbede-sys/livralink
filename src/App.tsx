@@ -37,6 +37,9 @@ const MainAppRouter: React.FC = () => {
   const { 
     currentView, 
     setCurrentView,
+    currentRole,
+    firebaseUser,
+    userProfile,
     deliveries,
     setSelectedDelivery,
     acceptDelivery,
@@ -60,6 +63,8 @@ const MainAppRouter: React.FC = () => {
     rateLivreurTargetOrder,
   } = useApp();
   const [deviceMode, setDeviceMode] = useState<'responsive' | 'mobile-mock'>('responsive');
+
+  const isCourierActive = (currentRole === 'livreur' || currentView.startsWith('livreur_')) && (firebaseUser != null || userProfile != null);
 
   const renderActiveView = () => {
     if (isAuthLoading) {
@@ -150,23 +155,25 @@ const MainAppRouter: React.FC = () => {
         </div>
       )}
 
-      {/* Priority Mission Contextual Real-Time Alert Banner */}
-      <PriorityMissionNotificationBanner
-        alert={priorityMissionAlert}
-        onDismiss={dismissPriorityMissionAlert}
-        onAccept={(orderId) => {
-          acceptDelivery(orderId);
-          dismissPriorityMissionAlert();
-        }}
-        onViewDetails={(orderId) => {
-          const ord = deliveries.find(d => d.id === orderId);
-          if (ord) {
-            setSelectedDelivery(ord);
-          }
-          setCurrentView('livreur_missions');
-          dismissPriorityMissionAlert();
-        }}
-      />
+      {/* Priority Mission Contextual Real-Time Alert Banner - Strictly visible ONLY for logged-in couriers */}
+      {isCourierActive && (
+        <PriorityMissionNotificationBanner
+          alert={priorityMissionAlert}
+          onDismiss={dismissPriorityMissionAlert}
+          onAccept={(orderId) => {
+            acceptDelivery(orderId);
+            dismissPriorityMissionAlert();
+          }}
+          onViewDetails={(orderId) => {
+            const ord = deliveries.find(d => d.id === orderId);
+            if (ord) {
+              setSelectedDelivery(ord);
+            }
+            setCurrentView('livreur_missions');
+            dismissPriorityMissionAlert();
+          }}
+        />
+      )}
 
       {/* Global Modals (Lazy-loaded with Suspense) */}
       <React.Suspense fallback={null}>

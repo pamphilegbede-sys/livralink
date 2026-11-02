@@ -241,6 +241,99 @@ try {
   console.warn('[FIREBASE-ADMIN] Note d\'initialisation:', adminInitErr?.message);
 }
 
+// =========================================================================
+// MULTI-LAYER SECURITY: BEARER TOKEN VERIFICATION & ANOMALY TRACKER
+// =========================================================================
+interface AuthenticatedRequest extends Request {
+  user?: {
+    uid: string;
+    email?: string;
+    email_verified?: boolean;
+    isAdmin?: boolean;
+  };
+}
+
+interface SecurityAnomalyEntry {
+  id: string;
+  timestamp: string;
+  ip: string;
+  type: string;
+  details: string;
+}
+
+const securityAnomaliesRingBuffer: SecurityAnomalyEntry[] = [];
+const MAX_ANOMALIES = 50;
+
+const recordSecurityAnomaly = (ip: string, type: string, details: string) => {
+  const entry: SecurityAnomalyEntry = {
+    id: `ANOMALY-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    timestamp: new Date().toISOString(),
+    ip,
+    type,
+    details: details.slice(0, 300),
+  };
+  securityAnomaliesRingBuffer.unshift(entry);
+  if (securityAnomaliesRingBuffer.length > MAX_ANOMALIES) {
+    securityAnomaliesRingBuffer.pop();
+  }
+  console.warn(`[SECURITY ANOMALY DETECTED] IP: ${ip} | Type: ${type} | ${details}`);
+};
+
+/**
+ * Middleware: Verify Firebase Bearer ID Token if present in headers
+ */
+const authenticateFirebaseToken = async (req: AuthenticatedRequest, res: Response, next: any) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    req.user = undefined;
+    return next();
+  }
+
+  const token = authHeader.split('Bearer ')[1].trim();
+  if (!token) {
+    req.user = undefined;
+    return next();
+  }
+
+  if (firebaseAdminApp) {
+    try {
+      const decoded = await getAuth(firebaseAdminApp).verifyIdToken(token);
+      const isSuperAdminEmail = (decoded.email || '').toLowerCase().trim() === 'pamphile.gbede@gmail.com';
+      req.user = {
+        uid: decoded.uid,
+        email: decoded.email,
+        email_verified: decoded.email_verified,
+        isAdmin: isSuperAdminEmail || Boolean(decoded.admin),
+      };
+    } catch (err: any) {
+      recordSecurityAnomaly(getClientIp(req), 'INVALID_BEARER_TOKEN', `Échec vérification jeton Firebase: ${err?.message || err}`);
+      req.user = undefined;
+    }
+  }
+  next();
+};
+
+/**
+ * Middleware: Enforce Super-Admin authorization for high-privilege routes
+ */
+const requireAdminAuthorization = (req: AuthenticatedRequest, res: Response, next: any) => {
+  const adminSecret = req.headers['x-admin-secret'];
+  const masterKeyMatch = adminSecret === (process.env.ADMIN_MASTER_KEY || 'livralink_super_admin_2026_key');
+  const isSuperAdminUser = req.user?.email && req.user.email.toLowerCase().trim() === 'pamphile.gbede@gmail.com';
+  const isAdminAuthorized = isSuperAdminUser || req.user?.isAdmin || masterKeyMatch;
+
+  if (!isAdminAuthorized) {
+    recordSecurityAnomaly(getClientIp(req), 'UNAUTHORIZED_ADMIN_ROUTE_ATTEMPT', `Tentative d'accès non autorisée à la route admin: ${req.path}`);
+    return res.status(403).json({
+      success: false,
+      error: 'Accès refusé. Droits d\'administration Super-Admin requis pour exécuter cette action.',
+    });
+  }
+  next();
+};
+
+app.use('/api', authenticateFirebaseToken as any);
+
 // Secret salt for HMAC-SHA256 OTP hashing (never exposed to client)
 const OTP_SECRET_SALT = process.env.OTP_SECRET_SALT || 'livralink-brevo-otp-secret-salt-2026';
 
@@ -1104,11 +1197,11 @@ app.get('/api/email/outbox', (_req: Request, res: Response) => {
 
 /**
  * POST /api/email/clear-outbox
- * Resets the in-memory outbox history.
+ * Resets the in-memory outbox history. Protected by Super-Admin authorization.
  */
-app.post('/api/email/clear-outbox', (_req: Request, res: Response) => {
+app.post('/api/email/clear-outbox', requireAdminAuthorization as any, (_req: Request, res: Response) => {
   sentEmailsHistory.length = 0;
-  res.json({ success: true, message: 'Boîte d\'envoi réinitialisée.' });
+  res.json({ success: true, message: 'Boîte d\'envoi réinitialisée par l\'administrateur.' });
 });
 
 // Health check endpoints for Render / cloud monitoring
@@ -1320,11 +1413,11 @@ app.get('/api/monitoring/status', (_req: Request, res: Response) => {
 });
 
 // =========================================================================
-// POINT 20: SYSTÈME DE SAUVEGARDE & RESTAURATION VÉRIFIÉE
+// POINT 20: SYSTÈME DE SAUVEGARDE & RESTAURATION VÉRIFIÉE (PROTECTION ADMIN)
 // =========================================================================
 let testBackupSnapshot: any = null;
 
-app.post('/api/system/backup', (req: Request, res: Response) => {
+app.post('/api/system/backup', requireAdminAuthorization as any, (req: Request, res: Response) => {
   const { data } = req.body || {};
   testBackupSnapshot = {
     timestamp: new Date().toISOString(),
@@ -1333,13 +1426,13 @@ app.post('/api/system/backup', (req: Request, res: Response) => {
   };
   res.json({
     success: true,
-    message: 'Sauvegarde instantanée d\'état générée avec succès.',
+    message: 'Sauvegarde instantanée d\'état générée avec succès par l\'administrateur.',
     snapshotChecksum: testBackupSnapshot.checksum,
     timestamp: testBackupSnapshot.timestamp,
   });
 });
 
-app.post('/api/system/restore', (_req: Request, res: Response) => {
+app.post('/api/system/restore', requireAdminAuthorization as any, (_req: Request, res: Response) => {
   if (!testBackupSnapshot) {
     return res.status(404).json({ success: false, error: 'Aucun instantané de sauvegarde disponible.' });
   }
