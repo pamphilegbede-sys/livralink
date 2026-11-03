@@ -858,7 +858,8 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response): Promis
  * POST /api/email/welcome
  * Dispatches a welcome email to a newly registered merchant or courier.
  */
-app.post('/api/email/welcome', async (req: Request, res: Response): Promise<void> => {
+// Welcome email handler function
+const handleWelcomeEmailRequest = async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, fullName, role, storeName, vehicleType, phone } = req.body || {};
 
@@ -877,38 +878,46 @@ app.post('/api/email/welcome', async (req: Request, res: Response): Promise<void
 
     const isVendeur = role === 'vendeur';
     const roleLabel = isVendeur ? 'Vendeur / Marchand' : 'Livreur Partenaire';
-    const roleBadgeColor = isVendeur ? '#3b82f6' : '#10b981';
+    const roleBadgeBg = isVendeur ? '#eff6ff' : '#f0fdf4';
+    const roleBadgeText = isVendeur ? '#1d4ed8' : '#15803d';
 
-    const subject = `Bienvenue sur LivraLink, ${safeName} ! 🚀 Votre compte ${roleLabel} est activé`;
-    const previewText = `Félicitations ! Votre compte LivraLink ${roleLabel} a été créé avec succès. Accédez dès maintenant à votre espace.`;
+    const subject = `Bienvenue sur LivraLink, ${safeName} ! 🚀 Votre compte ${roleLabel} est prêt`;
+    const previewText = `Félicitations ! Votre compte LivraLink ${roleLabel} a été créé avec succès. Découvrez comment utiliser votre espace.`;
 
     const htmlContent = `
       <div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 580px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); color: #0f172a;">
+        {/* Header */}
         <div style="background-color: #0f172a; padding: 28px 24px; text-align: center;">
           <h1 style="color: #ffffff; margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.5px;">
-            Livra<span style="color: #3b82f6;">Link</span>
+            Livra<span style="color: #2563eb;">Link</span>
           </h1>
           <p style="color: #94a3b8; font-size: 11px; margin: 6px 0 0 0; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700;">
             Logistique Urbaine &amp; Livraison Sécurisée
           </p>
         </div>
 
+        {/* Content Body */}
         <div style="padding: 32px 24px;">
-          <div style="display: inline-block; background-color: ${isVendeur ? '#eff6ff' : '#ecfdf5'}; color: ${roleBadgeColor}; font-weight: 800; font-size: 12px; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.5px;">
+          <div style="display: inline-block; background-color: ${roleBadgeBg}; color: ${roleBadgeText}; font-weight: 800; font-size: 12px; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid ${isVendeur ? '#bfdbfe' : '#bbf7d0'};">
             🎉 COMPTE ${roleLabel.toUpperCase()} ACTIVÉ
           </div>
 
           <h2 style="font-size: 20px; font-weight: 800; color: #0f172a; margin: 0 0 14px 0;">
-            Bienvenue dans la communauté LivraLink, ${safeName} !
+            Bienvenue sur LivraLink, ${safeName} !
           </h2>
 
           <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 24px 0;">
-            Nous sommes ravis de vous compter parmi nos utilisateurs. Votre profil a été configuré avec succès et vous pouvez dès à présent utiliser toutes les fonctionnalités de la plateforme.
+            ${
+              isVendeur
+                ? 'Votre compte marchand est désormais actif. LivraLink vous permet de gérer vos livraisons urbaines en toute simplicité avec suivi GPS en direct et certification par code secret OTP.'
+                : 'Votre compte livreur partenaire est créé avec succès. Rejoignez notre réseau de coursier certifiés à Cotonou et Calavi et profitez d\'une rétribution directe à 100 FCFA/km net.'
+            }
           </p>
 
+          {/* Account Summary Box */}
           <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 20px; margin-bottom: 24px;">
-            <h3 style="font-size: 13px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 12px 0;">
-              Récapitulatif de votre compte
+            <h3 style="font-size: 12px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px; margin: 0 0 12px 0;">
+              Coordonnées de votre compte
             </h3>
             <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
               <tr>
@@ -916,12 +925,12 @@ app.post('/api/email/welcome', async (req: Request, res: Response): Promise<void
                 <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${safeName}</td>
               </tr>
               <tr>
-                <td style="padding: 6px 0; color: #64748b;">📧 Identifiant :</td>
+                <td style="padding: 6px 0; color: #64748b;">📧 Adresse e-mail :</td>
                 <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${escapeHtml(cleanEmail)}</td>
               </tr>
               ${safePhone ? `
               <tr>
-                <td style="padding: 6px 0; color: #64748b;">📱 Contact :</td>
+                <td style="padding: 6px 0; color: #64748b;">📱 Contact WhatsApp :</td>
                 <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${safePhone}</td>
               </tr>` : ''}
               ${isVendeur && safeStore ? `
@@ -931,33 +940,62 @@ app.post('/api/email/welcome', async (req: Request, res: Response): Promise<void
               </tr>` : ''}
               ${!isVendeur && safeVehicle ? `
               <tr>
-                <td style="padding: 6px 0; color: #64748b;">🛵 Véhicule :</td>
+                <td style="padding: 6px 0; color: #64748b;">🛵 Moyen de transport :</td>
                 <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${safeVehicle}</td>
               </tr>` : ''}
             </table>
           </div>
 
+          {/* Role-tailored Onboarding Guide */}
+          <div style="background-color: #f1f5f9; border-left: 4px solid #2563eb; border-radius: 12px; padding: 20px; margin-bottom: 28px;">
+            <h3 style="font-size: 14px; font-weight: 800; color: #0f172a; margin: 0 0 12px 0;">
+              💡 Comment utiliser votre espace ${isVendeur ? 'Vendeur' : 'Livreur'} :
+            </h3>
+            
+            ${
+              isVendeur
+                ? `
+                <ol style="margin: 0; padding-left: 20px; font-size: 13px; color: #334155; line-height: 1.7;">
+                  <li style="margin-bottom: 8px;">
+                    <strong>Créer une course en 30 secondes :</strong> Renseignez l'adresse de votre client. L'application calcule automatiquement la distance et le tarif kilométrique (100 F/km).
+                  </li>
+                  <li style="margin-bottom: 8px;">
+                    <strong>Partager le suivi WhatsApp :</strong> Transmettez le lien de suivi en temps réel à votre client pour qu'il suive la progression du livreur sur la carte.
+                  </li>
+                  <li>
+                    <strong>Sécuriser par Code OTP :</strong> Envoyez le code secret à 4 chiffres à votre client. Le livreur devra saisir ce code à la remise pour valider la livraison.
+                  </li>
+                </ol>
+                `
+                : `
+                <ol style="margin: 0; padding-left: 20px; font-size: 13px; color: #334155; line-height: 1.7;">
+                  <li style="margin-bottom: 8px;">
+                    <strong>Passer « En ligne » :</strong> Activez votre disponibilité pour recevoir en temps réel les notifications de missions publiées dans votre zone.
+                  </li>
+                  <li style="margin-bottom: 8px;">
+                    <strong>Accepter &amp; Guider :</strong> Consultez le gain garanti et l'itinéraire Google Maps avant d'accepter une course.
+                  </li>
+                  <li>
+                    <strong>Valider la Preuve POD :</strong> Saisissez le code OTP communiqué par le client, prenez la photo du colis et recueillez sa signature tactile.
+                  </li>
+                </ol>
+                `
+            }
+          </div>
+
+          {/* Primary CTA Button */}
           <div style="text-align: center; margin: 28px 0;">
-            <a href="https://ais-dev-ra34vpbmrgqe3eimwdz2y2-319073276082.europe-west3.run.app" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: 700; font-size: 14px; padding: 14px 28px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(37,99,235,0.2);">
+            <a href="https://ais-dev-ra34vpbmrgqe3eimwdz2y2-319073276082.europe-west3.run.app" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: 800; font-size: 14px; padding: 14px 32px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(37,99,235,0.25);">
               Accéder à mon espace ${isVendeur ? 'Vendeur' : 'Livreur'} →
             </a>
           </div>
 
-          <div style="background-color: #f1f5f9; border-radius: 12px; padding: 14px 16px; margin-bottom: 20px;">
-            <p style="font-size: 12px; color: #64748b; margin: 0; line-height: 1.5;">
-              💡 <strong>Prochaine étape :</strong> ${
-                isVendeur
-                  ? 'Créez votre première livraison en quelques secondes et diffusez-la auprès des coursiers disponibles.'
-                  : 'Activez votre statut "En ligne" pour recevoir en temps réel les notifications de missions prioritaires.'
-              }
-            </p>
-          </div>
-
           <p style="font-size: 12px; color: #94a3b8; line-height: 1.5; margin: 0; border-top: 1px solid #f1f5f9; padding-top: 16px;">
-            Ce message est envoyé automatiquement. En cas de besoin, contactez l'équipe support LivraLink via l'application.
+            Cet e-mail automatique est envoyé à la création de votre compte. Pour toute question, l'assistance LivraLink reste disponible dans votre application.
           </p>
         </div>
 
+        {/* Footer */}
         <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0;">
           <p style="font-size: 11px; color: #94a3b8; margin: 0;">
             © ${new Date().getFullYear()} LivraLink — Tous droits réservés. Cotonou, Bénin.
@@ -1007,7 +1045,10 @@ app.post('/api/email/welcome', async (req: Request, res: Response): Promise<void
     console.error('[EMAIL ERROR] welcome:', error);
     res.status(500).json({ success: false, error: 'Erreur lors de l\'envoi de l\'e-mail de bienvenue.' });
   }
-});
+};
+
+app.post('/api/email/welcome', handleWelcomeEmailRequest);
+app.post('/api/email/bienvenue', handleWelcomeEmailRequest);
 
 /**
  * POST /api/email/password-changed
