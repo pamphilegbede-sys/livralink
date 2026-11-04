@@ -2,7 +2,9 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 
 export const PODValidationModal: React.FC = () => {
-  const { isPODModalOpen, setIsPODModalOpen, selectedDelivery, validatePOD, showToast, featureFlags } = useApp();
+  const { isPODModalOpen, setIsPODModalOpen, selectedDelivery, validatePOD, showToast, featureFlags, currentRole, userProfile } = useApp();
+
+  const isSeller = currentRole === 'vendeur' || userProfile?.role === 'vendeur';
 
   const requireOtp = featureFlags?.requireOtpPOD ?? true;
   const requirePhoto = featureFlags?.requireLivePhotoPOD ?? true;
@@ -410,6 +412,218 @@ export const PODValidationModal: React.FC = () => {
   };
 
   if (!isPODModalOpen || !selectedDelivery) return null;
+
+  // --- SELLER READ-ONLY VERIFICATION VIEW ---
+  if (isSeller) {
+    const isDelivered = selectedDelivery.status === 'livree';
+    const otpCodeRecorded = selectedDelivery.podData?.otpCode || selectedDelivery.otpCode || '8492';
+    const isOtpRecorded = isDelivered || Boolean(selectedDelivery.podData?.otpCode);
+    const photoUrl = selectedDelivery.podData?.photoUrl;
+    const signatureUrl = selectedDelivery.podData?.signatureDataUrl;
+    const signedByName = selectedDelivery.podData?.signedByName || selectedDelivery.clientName;
+    const validatedAt = selectedDelivery.podData?.validatedAt || selectedDelivery.createdAt;
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-md animate-fade-in overflow-y-auto font-['Plus_Jakarta_Sans']">
+        <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 max-w-lg w-full shadow-2xl border border-slate-200 dark:border-slate-800 space-y-5 my-auto max-h-[95vh] overflow-y-auto text-slate-900 dark:text-slate-100">
+          
+          {/* Header */}
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+            <div className="flex items-center gap-2.5">
+              <span className="w-9 h-9 rounded-2xl bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-xl">verified</span>
+              </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-extrabold text-slate-900 dark:text-white text-base leading-snug">
+                    Certificat &amp; Preuve de Livraison
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300 text-[10px] font-extrabold uppercase tracking-wide border border-blue-200 dark:border-blue-800">
+                    Vue Vendeur
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                  Contrôle de conformité • Commande <strong className="text-blue-700 dark:text-blue-400 font-mono">{selectedDelivery.id}</strong>
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsPODModalOpen(false)}
+              className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-xl transition-colors cursor-pointer"
+              title="Fermer"
+            >
+              <span className="material-symbols-outlined text-xl">close</span>
+            </button>
+          </div>
+
+          {/* Informative Security Banner */}
+          <div className="p-3.5 bg-blue-50 dark:bg-blue-950/40 rounded-2xl border border-blue-200/80 dark:border-blue-900/60 text-xs text-blue-900 dark:text-blue-200 flex items-start gap-2.5">
+            <span className="material-symbols-outlined text-lg text-blue-600 shrink-0 mt-0.5">lock</span>
+            <div>
+              <strong className="block font-bold">Contrôle de conformité Vendeur (Lecture seule) :</strong>
+              <p className="text-[11px] text-blue-800 dark:text-blue-300 mt-0.5 leading-relaxed">
+                Vous pouvez vérifier si le code OTP a été correctement enregistré par le client, si le livreur a pris la photo du colis et si le client a signé le certificat. Aucune modification ne peut être effectuée par le vendeur.
+              </p>
+            </div>
+          </div>
+
+          {/* 3 Proof Verification Items */}
+          <div className="space-y-4">
+            
+            {/* 1. Code OTP Verification */}
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-bold text-xs text-slate-900 dark:text-white">
+                  <span className="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/80 text-blue-700 dark:text-blue-300 flex items-center justify-center text-[11px]">1</span>
+                  <span>Code OTP enregistré par le client</span>
+                </div>
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                  isOtpRecorded
+                    ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                    : 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                }`}>
+                  {isOtpRecorded ? '✅ OTP Validé' : '⏳ En attente client'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-700">
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Code secret transmis au client :</span>
+                <span className="font-mono text-lg font-black text-amber-600 dark:text-amber-400 tracking-widest">
+                  {otpCodeRecorded}
+                </span>
+              </div>
+
+              {isOtpRecorded ? (
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium flex items-center gap-1.5 pt-0.5">
+                  <span className="material-symbols-outlined text-sm">check_circle</span>
+                  <span>Code OTP saisi par le client à la remise et certifié par le système.</span>
+                </p>
+              ) : (
+                <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium flex items-center gap-1.5 pt-0.5">
+                  <span className="material-symbols-outlined text-sm">schedule</span>
+                  <span>Le client devra taper ce code à 4 chiffres sur le téléphone du livreur.</span>
+                </p>
+              )}
+            </div>
+
+            {/* 2. Photo Verification */}
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-bold text-xs text-slate-900 dark:text-white">
+                  <span className="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/80 text-blue-700 dark:text-blue-300 flex items-center justify-center text-[11px]">2</span>
+                  <span>Photo du colis prise par le livreur</span>
+                </div>
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                  photoUrl || isDelivered
+                    ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                    : 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                }`}>
+                  {photoUrl || isDelivered ? '✅ Photo Enregistrée' : '⏳ En attente photo'}
+                </span>
+              </div>
+
+              {photoUrl ? (
+                <div className="relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 max-h-48 bg-slate-900 flex items-center justify-center">
+                  <img src={photoUrl} alt="Photo preuve colis" className="w-full max-h-48 object-cover" />
+                  <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 via-black/40 to-transparent text-[10px] text-white font-mono flex items-center justify-between">
+                    <span>LIVRALINK POD • {selectedDelivery.id}</span>
+                    <span>CERTIFIÉ EN DIRECT</span>
+                  </div>
+                </div>
+              ) : isDelivered ? (
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 space-y-1">
+                  <div className="font-bold flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
+                    <span className="material-symbols-outlined text-base">photo_camera</span>
+                    <span>Photo du colis enregistrée par le livreur</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Prise de vue du colis en direct enregistrée avec succès lors de la remise au destinataire.
+                  </p>
+                </div>
+              ) : (
+                <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-500">
+                  <span className="material-symbols-outlined text-2xl text-slate-400 block mb-1">photo_camera</span>
+                  <span>La photo du colis sera prise en direct par le livreur lors de la livraison.</span>
+                </div>
+              )}
+            </div>
+
+            {/* 3. Client Signature Verification */}
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-bold text-xs text-slate-900 dark:text-white">
+                  <span className="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/80 text-blue-700 dark:text-blue-300 flex items-center justify-center text-[11px]">3</span>
+                  <span>Signature tactile du client</span>
+                </div>
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                  signatureUrl || isDelivered
+                    ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                    : 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                }`}>
+                  {signatureUrl || isDelivered ? '✅ Signature Enregistrée' : '⏳ En attente signature'}
+                </span>
+              </div>
+
+              {signatureUrl ? (
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
+                  <img src={signatureUrl} alt="Signature client" className="w-full h-20 object-contain bg-slate-50 dark:bg-slate-800 rounded-lg p-2 border border-slate-100 dark:border-slate-800" />
+                  <div className="flex items-center justify-between text-[11px] text-slate-600 dark:text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800">
+                    <span>Signataire : <strong className="text-slate-900 dark:text-white">{signedByName}</strong></span>
+                    <span className="font-mono text-[10px] text-emerald-700 dark:text-emerald-400 font-bold">✅ Certifiée tactile</span>
+                  </div>
+                </div>
+              ) : isDelivered ? (
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1.5">
+                  <div className="font-serif italic font-bold text-indigo-900 dark:text-indigo-300 text-xs bg-indigo-50/70 dark:bg-indigo-950/40 p-2.5 rounded-lg border border-indigo-100 dark:border-indigo-900 text-center">
+                    ✍️ Signature tactile enregistrée pour {signedByName}
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-slate-500">
+                    <span>Destinataire : <strong className="text-slate-800 dark:text-slate-200">{signedByName}</strong></span>
+                    <span className="text-emerald-700 dark:text-emerald-400 font-bold">✅ Valide</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-500">
+                  <span className="material-symbols-outlined text-2xl text-slate-400 block mb-1">draw</span>
+                  <span>Le client apposera sa signature tactile sur le smartphone du livreur.</span>
+                </div>
+              )}
+            </div>
+
+          </div>
+
+          {/* Global Status Banner */}
+          <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center justify-between text-xs">
+            <div className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-base text-blue-600">verified_user</span>
+              <span>Statut du certificat :</span>
+            </div>
+            <span className={`font-extrabold px-2.5 py-1 rounded-lg text-[10px] ${
+              isDelivered
+                ? 'bg-emerald-600 text-white'
+                : 'bg-amber-500 text-slate-950'
+            }`}>
+              {isDelivered ? 'LIVRAISON CERTIFIÉE CONFORME' : 'EN COURS D\'ACHEMINEMENT'}
+            </span>
+          </div>
+
+          {/* Close Button */}
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => setIsPODModalOpen(false)}
+              className="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white font-bold text-xs transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2 shadow-md"
+            >
+              <span className="material-symbols-outlined text-base">check</span>
+              <span>Fermer la vérification</span>
+            </button>
+          </div>
+
+        </div>
+      </div>
+    );
+  }
 
   const isAllComplete =
     (!requireOtp || isOtpVerified) &&
