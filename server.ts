@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import { initializeApp, getApps, App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
+import { getFirestore, Firestore } from 'firebase-admin/firestore';
 
 const envPath = path.resolve(process.cwd(), '.env');
 if (fs.existsSync(envPath)) {
@@ -16,7 +17,7 @@ if (fs.existsSync(envPath)) {
   dotenv.config();
 }
 
-console.log('[SERVER INIT] Brevo SMTP User configuré:', process.env.BREVO_SMTP_USER ? 'OUI (' + process.env.BREVO_SMTP_USER + ')' : 'NON');
+console.log('[SERVER INIT] Gmail SMTP User configuré:', (process.env.GMAIL_SMTP_USER || process.env.SMTP_USER) ? 'OUI' : 'NON');
 
 const app = express();
 // In AI Studio and Cloud Run environments, DEFAULT_APP_PORT is 3000, while PORT=8080 is reserved for Nginx.
@@ -109,7 +110,7 @@ app.use('/api', (req, res, next) => {
 // POINTS 02 & 03: PLAFONNEMENT DES APPELS D'API & DÉPENSES FOURNISSEURS
 // =========================================================================
 interface ApiQuotaTracker {
-  brevoEmails: { count: number; dailyCap: number; unitCostEur: number };
+  gmailEmails: { count: number; dailyCap: number; unitCostEur: number };
   mapsApiCalls: { count: number; dailyCap: number; unitCostEur: number };
   geminiApiCalls: { count: number; dailyCap: number; unitCostEur: number };
   dailyBudgetCapEur: number;
@@ -117,7 +118,7 @@ interface ApiQuotaTracker {
 }
 
 const apiUsageStats: ApiQuotaTracker = {
-  brevoEmails: { count: 0, dailyCap: 100, unitCostEur: 0.0005 },
+  gmailEmails: { count: 0, dailyCap: 500, unitCostEur: 0.000 },
   mapsApiCalls: { count: 0, dailyCap: 500, unitCostEur: 0.005 },
   geminiApiCalls: { count: 0, dailyCap: 200, unitCostEur: 0.001 },
   dailyBudgetCapEur: 5.0, // Plafond maximal de 5,00 € par jour
@@ -127,7 +128,7 @@ const apiUsageStats: ApiQuotaTracker = {
 const checkAndResetDailyQuotas = () => {
   const currentDay = new Date().toISOString().slice(0, 10);
   if (apiUsageStats.lastResetDay !== currentDay) {
-    apiUsageStats.brevoEmails.count = 0;
+    apiUsageStats.gmailEmails.count = 0;
     apiUsageStats.mapsApiCalls.count = 0;
     apiUsageStats.geminiApiCalls.count = 0;
     apiUsageStats.lastResetDay = currentDay;
@@ -136,13 +137,13 @@ const checkAndResetDailyQuotas = () => {
 
 const calculateTotalEstimatedCostToday = (): number => {
   checkAndResetDailyQuotas();
-  const brevoCost = apiUsageStats.brevoEmails.count * apiUsageStats.brevoEmails.unitCostEur;
+  const gmailCost = apiUsageStats.gmailEmails.count * apiUsageStats.gmailEmails.unitCostEur;
   const mapsCost = apiUsageStats.mapsApiCalls.count * apiUsageStats.mapsApiCalls.unitCostEur;
   const geminiCost = apiUsageStats.geminiApiCalls.count * apiUsageStats.geminiApiCalls.unitCostEur;
-  return Number((brevoCost + mapsCost + geminiCost).toFixed(4));
+  return Number((gmailCost + mapsCost + geminiCost).toFixed(4));
 };
 
-const canConsumeApi = (type: 'brevoEmails' | 'mapsApiCalls' | 'geminiApiCalls'): { allowed: boolean; reason?: string } => {
+const canConsumeApi = (type: 'gmailEmails' | 'mapsApiCalls' | 'geminiApiCalls'): { allowed: boolean; reason?: string } => {
   checkAndResetDailyQuotas();
   const currentTotal = calculateTotalEstimatedCostToday();
   if (currentTotal >= apiUsageStats.dailyBudgetCapEur) {
@@ -163,14 +164,14 @@ const canConsumeApi = (type: 'brevoEmails' | 'mapsApiCalls' | 'geminiApiCalls'):
   return { allowed: true };
 };
 
-const trackApiConsumption = (type: 'brevoEmails' | 'mapsApiCalls' | 'geminiApiCalls', count: number = 1) => {
+const trackApiConsumption = (type: 'gmailEmails' | 'mapsApiCalls' | 'geminiApiCalls', count: number = 1) => {
   checkAndResetDailyQuotas();
   apiUsageStats[type].count += count;
 };
 
 // Circuit Breaker tracker for external providers
 const circuitBreakers = new Map<string, { state: 'CLOSED' | 'OPEN'; failures: number }>();
-circuitBreakers.set('brevo_smtp', { state: 'CLOSED', failures: 0 });
+circuitBreakers.set('gmail_smtp', { state: 'CLOSED', failures: 0 });
 circuitBreakers.set('google_maps', { state: 'CLOSED', failures: 0 });
 circuitBreakers.set('gemini_api', { state: 'CLOSED', failures: 0 });
 
@@ -218,6 +219,8 @@ const uptimeTracker: UptimeHealthTracker = {
 
 // Initialize Firebase Admin SDK
 let firebaseAdminApp: App | null = null;
+let firestoreAdmin: Firestore | null = null;
+
 try {
   let projectId = process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT || 'gen-lang-client-0654978401';
   const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
@@ -236,6 +239,11 @@ try {
     console.log(`[FIREBASE-ADMIN] SDK initialisé avec succès pour le projet: ${projectId}`);
   } else {
     firebaseAdminApp = existingApps[0];
+  }
+
+  if (firebaseAdminApp) {
+    firestoreAdmin = getFirestore(firebaseAdminApp);
+    console.log('[FIREBASE-ADMIN] Firestore Admin DB disponible pour historisation centralisée.');
   }
 } catch (adminInitErr: any) {
   console.warn('[FIREBASE-ADMIN] Note d\'initialisation:', adminInitErr?.message);
@@ -335,7 +343,7 @@ const requireAdminAuthorization = (req: AuthenticatedRequest, res: Response, nex
 app.use('/api', authenticateFirebaseToken as any);
 
 // Secret salt for HMAC-SHA256 OTP hashing (never exposed to client)
-const OTP_SECRET_SALT = process.env.OTP_SECRET_SALT || 'livralink-brevo-otp-secret-salt-2026';
+const OTP_SECRET_SALT = process.env.OTP_SECRET_SALT || 'livralink-gmail-otp-secret-salt-2026';
 
 interface SecureOTPEntry {
   hashedCode: string;
@@ -352,41 +360,77 @@ const resetTokensStore = new Map<string, { email: string; expiresAt: number }>()
 
 export interface SentEmailRecord {
   id: string;
+  dedupKey?: string;
   type: 'welcome' | 'password_reset_request' | 'password_changed_confirmation' | 'priority_mission' | 'custom';
+  eventType?: string;
   to: string;
   recipientName: string;
   recipientRole?: string;
   subject: string;
   previewText: string;
   htmlContent: string;
+  status?: 'sent' | 'queued' | 'failed';
+  retryCount?: number;
+  lastError?: string;
   sentAt: string;
   deliveredViaSmtp: boolean;
 }
 
 const sentEmailsHistory: SentEmailRecord[] = [];
+const processedEmailDedupKeys = new Map<string, number>();
 
-const recordSentEmail = (record: Omit<SentEmailRecord, 'id' | 'sentAt'>): SentEmailRecord => {
+const recordSentEmail = async (record: Omit<SentEmailRecord, 'id' | 'sentAt'> & { id?: string; sentAt?: string }): Promise<SentEmailRecord> => {
   const item: SentEmailRecord = {
     ...record,
-    id: `mail_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-    sentAt: new Date().toISOString(),
+    id: record.id || `mail_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    sentAt: record.sentAt || new Date().toISOString(),
+    status: record.status || (record.deliveredViaSmtp ? 'sent' : 'queued'),
+    retryCount: record.retryCount ?? (record.deliveredViaSmtp ? 0 : 1),
   };
-  sentEmailsHistory.unshift(item);
-  if (sentEmailsHistory.length > 100) {
-    sentEmailsHistory.pop();
+
+  if (item.dedupKey) {
+    processedEmailDedupKeys.set(item.dedupKey, Date.now());
   }
+
+  const existingIdx = sentEmailsHistory.findIndex(e => e.id === item.id);
+  if (existingIdx !== -1) {
+    sentEmailsHistory[existingIdx] = item;
+  } else {
+    sentEmailsHistory.unshift(item);
+    if (sentEmailsHistory.length > 100) {
+      sentEmailsHistory.pop();
+    }
+  }
+
+  if (firestoreAdmin) {
+    try {
+      await firestoreAdmin.collection('email_logs').doc(item.id).set(item, { merge: true });
+    } catch (fsErr: any) {
+      console.warn('[FIRESTORE EMAIL LOG WARN]:', fsErr?.message);
+    }
+  }
+
   return item;
 };
 
+// Dynamic runtime configuration for Gmail SMTP (updatable via Admin Console)
+const activeSmtpConfig = {
+  host: process.env.GMAIL_SMTP_HOST || process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: parseInt(process.env.GMAIL_SMTP_PORT || process.env.SMTP_PORT || '587', 10),
+  user: process.env.GMAIL_SMTP_USER || process.env.SMTP_USER || 'Pamphile.gbede@gmail.com',
+  pass: process.env.GMAIL_SMTP_PASS || process.env.SMTP_PASS || '',
+  from: process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink Sécurité <Pamphile.gbede@gmail.com>',
+};
+
 /**
- * Configure Brevo SMTP Transporter
- * Brevo Relay: smtp-relay.brevo.com:587
+ * Configure Gmail SMTP Transporter
+ * Gmail Relay: smtp.gmail.com:587 (STARTTLS)
  */
-const getBrevoTransporter = () => {
-  const host = process.env.BREVO_SMTP_HOST || process.env.SMTP_HOST || 'smtp-relay.brevo.com';
-  const port = parseInt(process.env.BREVO_SMTP_PORT || process.env.SMTP_PORT || '587', 10);
-  const user = process.env.BREVO_SMTP_USER || process.env.SMTP_USER;
-  const pass = process.env.BREVO_SMTP_KEY || process.env.BREVO_SMTP_PASS || process.env.SMTP_PASS;
+const getGmailTransporter = () => {
+  const host = activeSmtpConfig.host || 'smtp.gmail.com';
+  const port = Number(activeSmtpConfig.port) || 587;
+  const user = activeSmtpConfig.user;
+  const pass = activeSmtpConfig.pass;
 
   if (user && pass) {
     return nodemailer.createTransport({
@@ -397,13 +441,57 @@ const getBrevoTransporter = () => {
         user,
         pass,
       },
-      tls: {
-        rejectUnauthorized: false,
-      },
     });
   }
   return null;
 };
+
+/**
+ * Background retry worker: Processes any emails marked as 'queued' (retry count <= 3)
+ */
+const processQueuedEmails = async (): Promise<{ processedCount: number; successCount: number }> => {
+  const transporter = getGmailTransporter();
+  if (!transporter) return { processedCount: 0, successCount: 0 };
+
+  const queuedItems = sentEmailsHistory.filter(e => e.status === 'queued' && (e.retryCount || 0) < 3);
+  let successCount = 0;
+
+  for (const item of queuedItems) {
+    try {
+      const rawFrom = activeSmtpConfig.from || 'LivraLink <Pamphile.gbede@gmail.com>';
+      await transporter.sendMail({
+        from: rawFrom.replace(/\\"/g, '').trim(),
+        to: item.to,
+        subject: item.subject,
+        text: `${item.previewText}\n\nOuvrez l'application LivraLink pour plus de détails.`,
+        html: item.htmlContent,
+      });
+
+      item.deliveredViaSmtp = true;
+      item.status = 'sent';
+      item.lastError = undefined;
+
+      await recordSentEmail(item);
+      successCount++;
+      console.log(`[QUEUE RETRY SUCCESS] E-mail (${item.id}) transmis avec succès à ${item.to}`);
+    } catch (retryErr: any) {
+      item.retryCount = (item.retryCount || 0) + 1;
+      item.lastError = retryErr?.message || 'Échec de tentative SMTP.';
+      if (item.retryCount >= 3) {
+        item.status = 'failed';
+      }
+      await recordSentEmail(item);
+      console.warn(`[QUEUE RETRY FAIL] E-mail (${item.id}) - Tentative ${item.retryCount}/3: ${item.lastError}`);
+    }
+  }
+
+  return { processedCount: queuedItems.length, successCount };
+};
+
+// Periodic queue processor interval (runs every 45 seconds in background)
+setInterval(() => {
+  processQueuedEmails().catch(() => {});
+}, 45 * 1000);
 
 const hashOTPCode = (email: string, code: string): string => {
   return crypto
@@ -432,7 +520,7 @@ const escapeHtml = (unsafe: any): string => {
 /**
  * POST /api/auth/send-reset-code
  * Generates an unpredictable 6-digit random code, hashes it on the server,
- * enforces rate-limiting (60s), and dispatches it via Brevo SMTP.
+ * enforces rate-limiting (60s), and dispatches it via Gmail SMTP.
  */
 app.post('/api/auth/send-reset-code', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -496,100 +584,116 @@ app.post('/api/auth/send-reset-code', async (req: Request, res: Response): Promi
 
     console.log(`[AUTH-OTP] Code de sécurité généré et haché HMAC-SHA256 pour ${cleanEmail}. Expire à: ${new Date(expiresAt).toISOString()}`);
 
-    // Send email via Brevo SMTP
-    const transporter = getBrevoTransporter();
-    let emailDelivered = false;
-
-    if (transporter) {
-      try {
-        const rawFrom =
-          process.env.BREVO_SMTP_FROM ||
-          process.env.SMTP_FROM ||
-          'LivraLink Sécurité <Pamphile.gbede@gmail.com>';
-        const fromAddress = rawFrom.replace(/\\"/g, '').trim();
-
-        await transporter.sendMail({
-          from: fromAddress,
-          to: cleanEmail,
-          subject: `Votre code de réinitialisation LivraLink : ${rawCode}`,
-          text: `Bienvenue sur LivraLink\n\nVotre code de réinitialisation de mot de passe est :\n\n${rawCode}\n\nCe code est temporaire (valide 10 minutes). Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet e-mail.`,
-          html: `
-            <div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); color: #0f172a;">
-              <div style="background-color: #0f172a; padding: 24px; text-align: center;">
-                <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px;">
-                  Livra<span style="color: #3b82f6;">Link</span>
-                </h1>
-                <p style="color: #94a3b8; font-size: 11px; margin: 6px 0 0 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;">
-                  Sécurité &amp; Authentification
-                </p>
-              </div>
-
-              <div style="padding: 32px 24px;">
-                <h2 style="font-size: 18px; font-weight: 700; color: #0f172a; margin: 0 0 12px 0;">
-                  Bienvenue sur LivraLink
-                </h2>
-                
-                <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 24px 0;">
-                  Vous avez demandé la réinitialisation de votre mot de passe. Voici votre code de sécurité personnel à 6 chiffres :
-                </p>
-
-                <div style="background-color: #f8fafc; border: 2px dashed #93c5fd; border-radius: 16px; padding: 24px; text-align: center; margin-bottom: 24px;">
-                  <div style="font-size: 38px; font-weight: 900; letter-spacing: 10px; color: #1d4ed8; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; display: inline-block;">
-                    ${rawCode}
-                  </div>
-                  <p style="font-size: 12px; color: #64748b; margin: 12px 0 0 0; font-weight: 600;">
-                    ⏱️ Ce code est temporaire et expire dans <span style="color: #dc2626;">10 minutes</span>.
-                  </p>
-                </div>
-
-                <div style="background-color: #f1f5f9; border-radius: 12px; padding: 14px 16px; margin-bottom: 24px;">
-                  <p style="font-size: 12px; color: #64748b; margin: 0; line-height: 1.5;">
-                    🔒 <strong>Conseil de sécurité :</strong> Ne partagez jamais ce code. L'équipe LivraLink ne vous demandera jamais votre code de vérification.
-                  </p>
-                </div>
-
-                <p style="font-size: 12px; color: #94a3b8; line-height: 1.5; margin: 0; border-top: 1px solid #f1f5f9; padding-top: 16px;">
-                  Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet e-mail en toute sécurité. Votre mot de passe actuel reste inchangé.
-                </p>
-              </div>
-
-              <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0;">
-                <p style="font-size: 11px; color: #94a3b8; margin: 0;">
-                  © ${new Date().getFullYear()} LivraLink CI — Plateforme logistique et livraison sécurisée.
-                </p>
-              </div>
-            </div>
-          `,
-        });
-        emailDelivered = true;
-        console.log(`[BREVO SMTP] E-mail de réinitialisation envoyé avec succès à ${cleanEmail}`);
-      } catch (mailErr: any) {
-        console.error('[BREVO SMTP ERROR] Échec de l\'envoi:', mailErr.message);
-      }
-    } else {
-      console.warn('[BREVO SMTP] Identifiants SMTP non configurés dans l\'environnement. Mode sécurisé actif.');
+    // Send email via Gmail SMTP
+    const transporter = getGmailTransporter();
+    if (!transporter) {
+      console.warn('[GMAIL SMTP] Identifiants SMTP (GMAIL_SMTP_USER / GMAIL_SMTP_PASS ou SMTP_USER / SMTP_PASS) non configurés.');
+      res.status(503).json({
+        success: false,
+        emailDelivered: false,
+        error: 'Serveur SMTP Gmail non configuré. Veuillez vérifier les variables d\'environnement du serveur (GMAIL_SMTP_USER / GMAIL_SMTP_PASS).',
+      });
+      return;
     }
 
-    recordSentEmail({
+    let emailDelivered = false;
+    let smtpErrorMessage = '';
+
+    try {
+      const rawFrom =
+        process.env.GMAIL_SMTP_FROM ||
+        process.env.SMTP_FROM ||
+        'LivraLink Sécurité <Pamphile.gbede@gmail.com>';
+      const fromAddress = rawFrom.replace(/\\"/g, '').trim();
+
+      await transporter.sendMail({
+        from: fromAddress,
+        to: cleanEmail,
+        subject: `Votre code de réinitialisation LivraLink : ${rawCode}`,
+        text: `Bienvenue sur LivraLink\n\nVotre code de réinitialisation de mot de passe est :\n\n${rawCode}\n\nCe code est temporaire (valide 10 minutes). Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet e-mail.`,
+        html: `
+          <div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); color: #0f172a;">
+            <div style="background-color: #0f172a; padding: 24px; text-align: center;">
+              <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px;">
+                Livra<span style="color: #3b82f6;">Link</span>
+              </h1>
+              <p style="color: #94a3b8; font-size: 11px; margin: 6px 0 0 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;">
+                Sécurité &amp; Authentification
+              </p>
+            </div>
+
+            <div style="padding: 32px 24px;">
+              <h2 style="font-size: 18px; font-weight: 700; color: #0f172a; margin: 0 0 12px 0;">
+                Bienvenue sur LivraLink
+              </h2>
+              
+              <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 24px 0;">
+                Vous avez demandé la réinitialisation de votre mot de passe. Voici votre code de sécurité personnel à 6 chiffres :
+              </p>
+
+              <div style="background-color: #f8fafc; border: 2px dashed #93c5fd; border-radius: 16px; padding: 24px; text-align: center; margin-bottom: 24px;">
+                <div style="font-size: 38px; font-weight: 900; letter-spacing: 10px; color: #1d4ed8; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; display: inline-block;">
+                  ${rawCode}
+                </div>
+                <p style="font-size: 12px; color: #64748b; margin: 12px 0 0 0; font-weight: 600;">
+                  ⏱️ Ce code est temporaire et expire dans <span style="color: #dc2626;">10 minutes</span>.
+                </p>
+              </div>
+
+              <div style="background-color: #f1f5f9; border-radius: 12px; padding: 14px 16px; margin-bottom: 24px;">
+                <p style="font-size: 12px; color: #64748b; margin: 0; line-height: 1.5;">
+                  🔒 <strong>Conseil de sécurité :</strong> Ne partagez jamais ce code. L'équipe LivraLink ne vous demandera jamais votre code de vérification.
+                </p>
+              </div>
+
+              <p style="font-size: 12px; color: #94a3b8; line-height: 1.5; margin: 0; border-top: 1px solid #f1f5f9; padding-top: 16px;">
+                Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet e-mail en toute sécurité. Votre mot de passe actuel reste inchangé.
+              </p>
+            </div>
+
+            <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0;">
+              <p style="font-size: 11px; color: #94a3b8; margin: 0;">
+                © ${new Date().getFullYear()} LivraLink CI — Plateforme logistique et livraison sécurisée.
+              </p>
+            </div>
+          </div>
+        `,
+      });
+      emailDelivered = true;
+      console.log(`[GMAIL SMTP] E-mail de réinitialisation accepté avec succès par Gmail SMTP pour ${cleanEmail}`);
+    } catch (mailErr: any) {
+      smtpErrorMessage = mailErr.message || 'Échec de connexion au serveur Gmail SMTP.';
+      console.error('[GMAIL SMTP ERROR] Échec de l\'envoi:', smtpErrorMessage);
+    }
+
+    if (!emailDelivered) {
+      res.status(503).json({
+        success: false,
+        emailDelivered: false,
+        error: `Le serveur Gmail SMTP n'a pas confirmé l'envoi : ${smtpErrorMessage || 'Relais Gmail SMTP indisponible.'}`,
+      });
+      return;
+    }
+
+    await recordSentEmail({
       type: 'password_reset_request',
       to: cleanEmail,
       recipientName: cleanEmail.split('@')[0],
       subject: `Votre code de réinitialisation LivraLink : ••••••`,
-      previewText: `Code de sécurité à 6 chiffres transmis avec succès (masqué par politique de sécurité).`,
-      htmlContent: `<div style="font-family: 'Plus Jakarta Sans', sans-serif; padding: 20px; color: #0f172a;"><h2>Code de réinitialisation</h2><p>Le code temporaire a été expédié à l'utilisateur par e-mail. <em>(Contenu masqué dans l'historique par politique de sécurité)</em>.</p></div>`,
-      deliveredViaSmtp: emailDelivered,
+      previewText: `Code de sécurité à 6 chiffres transmis avec succès au relais Gmail SMTP.`,
+      htmlContent: `<div style="font-family: 'Plus Jakarta Sans', sans-serif; padding: 20px; color: #0f172a;"><h2>Code de réinitialisation</h2><p>Le code temporaire a été expédié à l'utilisateur via Gmail SMTP.</p></div>`,
+      deliveredViaSmtp: true,
     });
 
-    // Protection against account enumeration: return consistent response
     res.json({
       success: true,
       email: cleanEmail,
-      message: `Si un compte correspond à ${cleanEmail}, un code de sécurité à 6 chiffres vient d'être envoyé par e-mail.`,
-      emailDelivered,
+      message: `Un code de sécurité à 6 chiffres a été transmis avec succès au serveur SMTP Gmail pour ${cleanEmail}.`,
+      emailDelivered: true,
     });
   } catch (error: any) {
     console.error('[AUTH ERROR] send-reset-code:', error);
-    res.status(500).json({ success: false, error: 'Une erreur interne est survenue lors de l\'envoi du code.' });
+    res.status(500).json({ success: false, error: 'Une erreur interne est survenue lors de la génération du code.' });
   }
 });
 
@@ -780,7 +884,7 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response): Promis
     }
 
     // Send confirmation email
-    const transporter = getBrevoTransporter();
+    const transporter = getGmailTransporter();
     let confirmationDelivered = false;
     const confirmHtml = `
       <div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); color: #0f172a;">
@@ -813,7 +917,7 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response): Promis
 
     if (transporter) {
       try {
-        const rawFrom = process.env.BREVO_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink Sécurité <Pamphile.gbede@gmail.com>';
+        const rawFrom = process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink Sécurité <Pamphile.gbede@gmail.com>';
         await transporter.sendMail({
           from: rawFrom.replace(/\\"/g, '').trim(),
           to: cleanEmail,
@@ -822,13 +926,13 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response): Promis
           html: confirmHtml,
         });
         confirmationDelivered = true;
-        console.log(`[BREVO SMTP] E-mail de confirmation mot de passe envoyé à ${cleanEmail}`);
+        console.log(`[GMAIL SMTP] E-mail de confirmation mot de passe envoyé à ${cleanEmail}`);
       } catch (mailErr: any) {
-        console.error('[BREVO SMTP ERROR] Échec de l\'envoi confirmation:', mailErr.message);
+        console.error('[GMAIL SMTP ERROR] Échec de l\'envoi confirmation:', mailErr.message);
       }
     }
 
-    recordSentEmail({
+    await recordSentEmail({
       type: 'password_changed_confirmation',
       to: cleanEmail,
       recipientName: cleanEmail.split('@')[0],
@@ -1004,12 +1108,12 @@ const handleWelcomeEmailRequest = async (req: Request, res: Response): Promise<v
       </div>
     `;
 
-    const transporter = getBrevoTransporter();
+    const transporter = getGmailTransporter();
     let emailDelivered = false;
 
     if (transporter) {
       try {
-        const rawFrom = process.env.BREVO_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink <Pamphile.gbede@gmail.com>';
+        const rawFrom = process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink <Pamphile.gbede@gmail.com>';
         await transporter.sendMail({
           from: rawFrom.replace(/\\"/g, '').trim(),
           to: cleanEmail,
@@ -1018,13 +1122,13 @@ const handleWelcomeEmailRequest = async (req: Request, res: Response): Promise<v
           html: htmlContent,
         });
         emailDelivered = true;
-        console.log(`[BREVO SMTP] E-mail de bienvenue envoyé avec succès à ${cleanEmail}`);
+        console.log(`[GMAIL SMTP] E-mail de bienvenue envoyé avec succès à ${cleanEmail}`);
       } catch (mailErr: any) {
-        console.error('[BREVO SMTP ERROR] Échec de l\'envoi de bienvenue:', mailErr.message);
+        console.error('[GMAIL SMTP ERROR] Échec de l\'envoi de bienvenue:', mailErr.message);
       }
     }
 
-    const emailRecord = recordSentEmail({
+    const emailRecord = await recordSentEmail({
       type: 'welcome',
       to: cleanEmail,
       recipientName: cleanName,
@@ -1092,12 +1196,12 @@ app.post('/api/email/password-changed', async (req: Request, res: Response): Pro
       </div>
     `;
 
-    const transporter = getBrevoTransporter();
+    const transporter = getGmailTransporter();
     let emailDelivered = false;
 
     if (transporter) {
       try {
-        const rawFrom = process.env.BREVO_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink Sécurité <Pamphile.gbede@gmail.com>';
+        const rawFrom = process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink Sécurité <Pamphile.gbede@gmail.com>';
         await transporter.sendMail({
           from: rawFrom.replace(/\\"/g, '').trim(),
           to: cleanEmail,
@@ -1107,11 +1211,11 @@ app.post('/api/email/password-changed', async (req: Request, res: Response): Pro
         });
         emailDelivered = true;
       } catch (err: any) {
-        console.error('[EMAIL ERROR] Confirmation mot de passe:', err.message);
+        console.error('[GMAIL SMTP ERROR] Confirmation mot de passe:', err.message);
       }
     }
 
-    const emailRecord = recordSentEmail({
+    const emailRecord = await recordSentEmail({
       type: 'password_changed_confirmation',
       to: cleanEmail,
       recipientName: cleanName,
@@ -1184,12 +1288,12 @@ app.post('/api/email/priority-mission', async (req: Request, res: Response): Pro
       </div>
     `;
 
-    const transporter = getBrevoTransporter();
+    const transporter = getGmailTransporter();
     let emailDelivered = false;
 
     if (transporter) {
       try {
-        const rawFrom = process.env.BREVO_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink Dispatch <Pamphile.gbede@gmail.com>';
+        const rawFrom = process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink Dispatch <Pamphile.gbede@gmail.com>';
         await transporter.sendMail({
           from: rawFrom.replace(/\\"/g, '').trim(),
           to: cleanEmail,
@@ -1199,11 +1303,11 @@ app.post('/api/email/priority-mission', async (req: Request, res: Response): Pro
         });
         emailDelivered = true;
       } catch (err: any) {
-        console.error('[EMAIL ERROR] Mission email:', err.message);
+        console.error('[GMAIL SMTP ERROR] Mission email:', err.message);
       }
     }
 
-    const emailRecord = recordSentEmail({
+    const emailRecord = await recordSentEmail({
       type: 'priority_mission',
       to: cleanEmail,
       recipientName: cleanName,
@@ -1225,14 +1329,343 @@ app.post('/api/email/priority-mission', async (req: Request, res: Response): Pro
 });
 
 /**
- * GET /api/email/outbox
- * Returns the history of sent emails for audit and in-app viewing.
+ * POST /api/email/notification
+ * Centralized endpoint for dispatching automated platform activity email notifications
+ * (Creation, Acceptance, Pickup, Delivery, Cancellation, Payment, Security)
  */
-app.get('/api/email/outbox', (_req: Request, res: Response) => {
+app.post('/api/email/notification', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { eventType, recipientEmail, recipientName, details } = req.body || {};
+
+    const EMAIL_REGEX = /^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$/;
+    if (!recipientEmail || typeof recipientEmail !== 'string' || !EMAIL_REGEX.test(recipientEmail.trim())) {
+      res.status(400).json({ success: false, error: 'Adresse e-mail valide requise pour le destinataire.' });
+      return;
+    }
+
+    const cleanEmail = recipientEmail.trim().toLowerCase();
+    const cleanName = (recipientName || cleanEmail.split('@')[0]).trim().slice(0, 100);
+    const safeName = escapeHtml(cleanName);
+    const d = details || {};
+
+    // Durable anti-doublons key check
+    const dedupKey = req.body?.dedupKey || (d.orderId ? `${d.orderId}:${eventType}` : `${cleanEmail}:${eventType}:${new Date().toISOString().slice(0, 10)}`);
+
+    if (processedEmailDedupKeys.has(dedupKey)) {
+      console.log(`[DEDUP BLOCKED] Notification déjà envoyée pour la clé: ${dedupKey}`);
+      res.json({
+        success: true,
+        duplicateBlocked: true,
+        emailDelivered: true,
+        message: `Notification déjà transmise pour cet événement (${dedupKey}). Anti-doublons actif.`,
+      });
+      return;
+    }
+
+    let subject = '📢 LivraLink : Notification d\'activité';
+    let previewText = 'Mise à jour importante concernant votre compte LivraLink.';
+    let emailCategory: 'welcome' | 'password_reset_request' | 'password_changed_confirmation' | 'priority_mission' | 'custom' = 'custom';
+    let eventBadgeText = 'ÉVÉNEMENT PLATFORME';
+    let eventBadgeBg = '#f1f5f9';
+    let eventBadgeColor = '#334155';
+    let bodyHtml = '';
+
+    switch (eventType) {
+      case 'delivery_created': {
+        const orderId = escapeHtml(String(d.orderId || '#LL-0000'));
+        const pickup = escapeHtml(String(d.pickupName || 'Point de collecte'));
+        const dropoff = escapeHtml(String(d.dropoffCommune || 'Destination'));
+        const fee = Math.max(0, parseInt(String(d.feeFCFA), 10) || 1500);
+        const cod = Math.max(0, parseInt(String(d.codFCFA), 10) || 0);
+
+        subject = `📦 LivraLink : Nouvelle course créée (${orderId})`;
+        previewText = `Votre livraison ${orderId} de ${pickup} vers ${dropoff} est enregistrée.`;
+        eventBadgeText = '📦 COURSE CRÉÉE';
+        eventBadgeBg = '#eff6ff';
+        eventBadgeColor = '#1d4ed8';
+
+        bodyHtml = `
+          <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 0 0 12px 0;">Course enregistrée avec succès</h2>
+          <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 16px 0;">
+            Bonjour <strong>${safeName}</strong>, votre commande <strong>${orderId}</strong> a été enregistrée sur le réseau LivraLink et est en attente d'attribution d'un livreur partenaire.
+          </p>
+          <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; font-size: 13px; color: #334155; margin-bottom: 20px;">
+            <p style="margin: 4px 0;"><strong>📦 N° Commande :</strong> ${orderId}</p>
+            <p style="margin: 4px 0;"><strong>🏪 Collecte :</strong> ${pickup}</p>
+            <p style="margin: 4px 0;"><strong>📍 Destination :</strong> ${dropoff}</p>
+            <p style="margin: 4px 0; color: #2563eb;"><strong>💰 Frais de livraison :</strong> ${fee.toLocaleString('fr-FR')} FCFA</p>
+            ${cod > 0 ? `<p style="margin: 4px 0; color: #16a34a;"><strong>💵 Montant COD à encaisser :</strong> ${cod.toLocaleString('fr-FR')} FCFA</p>` : ''}
+          </div>
+        `;
+        break;
+      }
+
+      case 'delivery_accepted': {
+        const orderId = escapeHtml(String(d.orderId || '#LL-0000'));
+        const courierName = escapeHtml(String(d.courierName || 'Un coursier partenaire'));
+        const courierPhone = escapeHtml(String(d.courierPhone || 'Non renseigné'));
+
+        subject = `🛵 LivraLink : Course ${orderId} acceptée par ${courierName}`;
+        previewText = `Le coursier ${courierName} a pris en charge votre livraison.`;
+        eventBadgeText = '🛵 LIVREUR EN ROUTE';
+        eventBadgeBg = '#f0fdf4';
+        eventBadgeColor = '#15803d';
+
+        bodyHtml = `
+          <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 0 0 12px 0;">Coursier assigné à votre livraison</h2>
+          <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 16px 0;">
+            Bonne nouvelle ! Le coursier <strong>${courierName}</strong> vient d'accepter la commande <strong>${orderId}</strong> et se dirige vers le point de collecte.
+          </p>
+          <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 16px; font-size: 13px; color: #166534; margin-bottom: 20px;">
+            <p style="margin: 4px 0;"><strong>👤 Coursier :</strong> ${courierName}</p>
+            <p style="margin: 4px 0;"><strong>📱 Téléphone coursier :</strong> ${courierPhone}</p>
+            <p style="margin: 4px 0;"><strong>📦 Commande concernée :</strong> ${orderId}</p>
+          </div>
+        `;
+        break;
+      }
+
+      case 'delivery_picked_up': {
+        const orderId = escapeHtml(String(d.orderId || '#LL-0000'));
+        const pickup = escapeHtml(String(d.pickupName || 'Point de collecte'));
+
+        subject = `🏷️ LivraLink : Colis récupéré pour la course ${orderId}`;
+        previewText = `Le colis a été récupéré à ${pickup} et est en cours d'acheminement.`;
+        eventBadgeText = '🏷️ COLIS EN ROUTE';
+        eventBadgeBg = '#fef3c7';
+        eventBadgeColor = '#b45309';
+
+        bodyHtml = `
+          <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 0 0 12px 0;">Colis pris en charge</h2>
+          <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 16px 0;">
+            Le coursier vient de récupérer le colis pour la commande <strong>${orderId}</strong> à <strong>${pickup}</strong>. Le trajet vers le client est en cours.
+          </p>
+        `;
+        break;
+      }
+
+      case 'delivery_completed': {
+        const orderId = escapeHtml(String(d.orderId || '#LL-0000'));
+        const otpVerified = d.otpVerified ? 'Oui (Code secret certifié)' : 'Oui';
+
+        subject = `✅ LivraLink : Livraison ${orderId} effectuée avec succès !`;
+        previewText = `La livraison ${orderId} a été remise au destinataire et certifiée.`;
+        eventBadgeText = '✅ LIVRAISON EFFECTUÉE';
+        eventBadgeBg = '#dcfce7';
+        eventBadgeColor = '#15803d';
+
+        bodyHtml = `
+          <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 0 0 12px 0;">Colis livré et validé</h2>
+          <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 16px 0;">
+            Félicitations ! La commande <strong>${orderId}</strong> a été livrée avec succès à la destination prévue.
+          </p>
+          <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 16px; font-size: 13px; color: #166534; margin-bottom: 20px;">
+            <p style="margin: 4px 0;"><strong>📦 N° Commande :</strong> ${orderId}</p>
+            <p style="margin: 4px 0;"><strong>🔐 Certification OTP :</strong> ${otpVerified}</p>
+            <p style="margin: 4px 0;"><strong>🕒 Date &amp; Heure :</strong> ${new Date().toLocaleString('fr-FR')}</p>
+          </div>
+        `;
+        break;
+      }
+
+      case 'delivery_cancelled': {
+        const orderId = escapeHtml(String(d.orderId || '#LL-0000'));
+        const reason = escapeHtml(String(d.reason || 'Annulation par l\'utilisateur ou le destinataire'));
+
+        subject = `⚠️ LivraLink : Annulation de la course ${orderId}`;
+        previewText = `La course ${orderId} a été annulée. Motif : ${reason}`;
+        eventBadgeText = '⚠️ COURSE ANNULÉE';
+        eventBadgeBg = '#fef2f2';
+        eventBadgeColor = '#b91c1c';
+
+        bodyHtml = `
+          <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 0 0 12px 0;">Notification d'annulation de course</h2>
+          <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 16px 0;">
+            La livraison <strong>${orderId}</strong> a été annulée ou interrompue.
+          </p>
+          <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 14px; border-radius: 8px; margin-bottom: 20px;">
+            <p style="font-size: 13px; color: #991b1b; margin: 0;"><strong>Motif :</strong> ${reason}</p>
+          </div>
+        `;
+        break;
+      }
+
+      case 'wallet_transaction': {
+        const typeLabel = d.transactionType === 'credit' ? 'Crédit / Recharge' : 'Débit / Retrait';
+        const amount = Math.max(0, parseInt(String(d.amountFCFA), 10) || 0);
+        const newBalance = Math.max(0, parseInt(String(d.newBalanceFCFA), 10) || 0);
+
+        subject = `💳 LivraLink : Opération portefeuille (${typeLabel} de ${amount.toLocaleString('fr-FR')} FCFA)`;
+        previewText = `Mouvement sur votre solde : ${typeLabel} de ${amount.toLocaleString('fr-FR')} FCFA. Nouveau solde : ${newBalance.toLocaleString('fr-FR')} FCFA.`;
+        eventBadgeText = '💳 SOLDE PORTEFEUILLE';
+        eventBadgeBg = '#f3e8ff';
+        eventBadgeColor = '#6b21a8';
+
+        bodyHtml = `
+          <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 0 0 12px 0;">Avis de mouvement financier</h2>
+          <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 16px 0;">
+            Bonjour <strong>${safeName}</strong>, une opération financière a été appliquée sur votre portefeuille virtuel LivraLink.
+          </p>
+          <div style="background-color: #faf5ff; border: 1px solid #e9d5ff; border-radius: 12px; padding: 16px; font-size: 13px; color: #581c87; margin-bottom: 20px;">
+            <p style="margin: 4px 0;"><strong>💰 Type d'opération :</strong> ${typeLabel}</p>
+            <p style="margin: 4px 0;"><strong>💵 Montant :</strong> ${amount.toLocaleString('fr-FR')} FCFA</p>
+            <p style="margin: 4px 0;"><strong>🏦 Nouveau Solde Disponible :</strong> ${newBalance.toLocaleString('fr-FR')} FCFA</p>
+          </div>
+        `;
+        break;
+      }
+
+      case 'security_alert': {
+        const title = escapeHtml(String(d.alertTitle || 'Alerte de sécurité'));
+        const desc = escapeHtml(String(d.alertDesc || 'Une modification est survenue sur vos accès.'));
+
+        subject = `🛡️ LivraLink : ${title}`;
+        previewText = desc;
+        eventBadgeText = '🛡️ ALERTE DE SÉCURITÉ';
+        eventBadgeBg = '#fff7ed';
+        eventBadgeColor = '#c2410c';
+
+        bodyHtml = `
+          <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 0 0 12px 0;">${title}</h2>
+          <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 16px 0;">
+            Bonjour <strong>${safeName}</strong>, ${desc}
+          </p>
+        `;
+        break;
+      }
+
+      default: {
+        bodyHtml = `<p style="font-size: 14px; color: #475569;">${escapeHtml(String(d.message || 'Notification automatique de la plateforme LivraLink.'))}</p>`;
+        break;
+      }
+    }
+
+    const fullHtml = `
+      <div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 580px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); color: #0f172a;">
+        <div style="background-color: #0f172a; padding: 24px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px;">
+            Livra<span style="color: #3b82f6;">Link</span>
+          </h1>
+          <p style="color: #94a3b8; font-size: 11px; margin: 6px 0 0 0; text-transform: uppercase; letter-spacing: 1.2px; font-weight: 700;">
+            Notifications Automatisées
+          </p>
+        </div>
+
+        <div style="padding: 32px 24px;">
+          <div style="display: inline-block; background-color: ${eventBadgeBg}; color: ${eventBadgeColor}; font-weight: 800; font-size: 12px; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.5px;">
+            ${eventBadgeText}
+          </div>
+
+          ${bodyHtml}
+
+          <div style="text-align: center; margin: 28px 0;">
+            <a href="https://ais-dev-ra34vpbmrgqe3eimwdz2y2-319073276082.europe-west3.run.app" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: 800; font-size: 13px; padding: 12px 28px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(37,99,235,0.25);">
+              Ouvrir mon application LivraLink →
+            </a>
+          </div>
+
+          <p style="font-size: 12px; color: #94a3b8; line-height: 1.5; margin: 0; border-top: 1px solid #f1f5f9; padding-top: 16px;">
+            E-mail automatique envoyé par la plateforme LivraLink Bénin. Pour modifier vos préférences, accédez aux paramètres de votre profil.
+          </p>
+        </div>
+
+        <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0;">
+          <p style="font-size: 11px; color: #94a3b8; margin: 0;">
+            © ${new Date().getFullYear()} LivraLink — Tous droits réservés. Cotonou / Calavi.
+          </p>
+        </div>
+      </div>
+    `;
+
+    const transporter = getGmailTransporter();
+    let emailDelivered = false;
+
+    if (transporter) {
+      try {
+        const rawFrom = process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink <Pamphile.gbede@gmail.com>';
+        await transporter.sendMail({
+          from: rawFrom.replace(/\\"/g, '').trim(),
+          to: cleanEmail,
+          subject,
+          text: `${previewText}\n\nOuvrez l'application LivraLink pour plus de détails.`,
+          html: fullHtml,
+        });
+        emailDelivered = true;
+        console.log(`[AUTOMATED NOTIFICATION] E-mail (${eventType}) transmis avec succès via Gmail SMTP à ${cleanEmail}`);
+      } catch (mailErr: any) {
+        console.error(`[AUTOMATED NOTIFICATION ERROR] Échec envoi (${eventType}):`, mailErr.message);
+      }
+    }
+
+    const emailRecord = await recordSentEmail({
+      type: emailCategory,
+      eventType,
+      dedupKey,
+      to: cleanEmail,
+      recipientName: cleanName,
+      subject,
+      previewText,
+      htmlContent: fullHtml,
+      deliveredViaSmtp: emailDelivered,
+      status: emailDelivered ? 'sent' : 'queued',
+      retryCount: emailDelivered ? 0 : 1,
+    });
+
+    res.json({
+      success: true,
+      emailDelivered,
+      emailId: emailRecord.id,
+      eventType,
+      dedupKey,
+      message: `Notification e-mail (${eventType}) traitée pour ${cleanEmail}`,
+    });
+  } catch (error: any) {
+    console.error('[EMAIL NOTIFICATION ERROR]:', error);
+    res.status(500).json({ success: false, error: 'Erreur lors du traitement de la notification automatisée.' });
+  }
+});
+
+/**
+ * GET /api/email/outbox
+ * Returns the history of sent emails from Firestore or memory.
+ */
+app.get('/api/email/outbox', async (_req: Request, res: Response) => {
+  if (firestoreAdmin) {
+    try {
+      const snap = await firestoreAdmin.collection('email_logs').orderBy('sentAt', 'desc').limit(100).get();
+      if (!snap.empty) {
+        const firestoreLogs = snap.docs.map(doc => doc.data() as SentEmailRecord);
+        res.json({
+          success: true,
+          total: firestoreLogs.length,
+          emails: firestoreLogs,
+          source: 'firestore',
+        });
+        return;
+      }
+    } catch (fsErr: any) {
+      console.warn('[FIRESTORE OUTBOX WARN]:', fsErr?.message);
+    }
+  }
+
   res.json({
     success: true,
     total: sentEmailsHistory.length,
     emails: sentEmailsHistory.slice(0, 50),
+    source: 'memory',
+  });
+});
+
+/**
+ * POST /api/admin/email/process-queue
+ * Manually triggers retry processor for queued email messages
+ */
+app.post('/api/admin/email/process-queue', requireAdminAuthorization as any, async (_req: Request, res: Response) => {
+  const result = await processQueuedEmails();
+  res.json({
+    success: true,
+    message: `File d'attente traitée : ${result.successCount}/${result.processedCount} message(s) réexpédié(s) avec succès.`,
+    ...result,
   });
 });
 
@@ -1243,6 +1676,180 @@ app.get('/api/email/outbox', (_req: Request, res: Response) => {
 app.post('/api/email/clear-outbox', requireAdminAuthorization as any, (_req: Request, res: Response) => {
   sentEmailsHistory.length = 0;
   res.json({ success: true, message: 'Boîte d\'envoi réinitialisée par l\'administrateur.' });
+});
+
+/**
+ * GET /api/admin/email/config
+ * Retrieves the active SMTP parameters (sanitizing password details)
+ */
+app.get('/api/admin/email/config', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    config: {
+      host: activeSmtpConfig.host,
+      port: activeSmtpConfig.port,
+      user: activeSmtpConfig.user,
+      from: activeSmtpConfig.from,
+      hasPassword: Boolean(activeSmtpConfig.pass),
+      secure: activeSmtpConfig.port === 465,
+      isConfigured: Boolean(activeSmtpConfig.user && activeSmtpConfig.pass),
+    },
+  });
+});
+
+/**
+ * POST /api/admin/email/config
+ * Updates active SMTP parameters dynamically at runtime
+ */
+app.post('/api/admin/email/config', requireAdminAuthorization as any, (req: Request, res: Response) => {
+  const { host, port, user, pass, from } = req.body || {};
+
+  if (host && typeof host === 'string') activeSmtpConfig.host = host.trim();
+  if (port) activeSmtpConfig.port = parseInt(String(port), 10) || 587;
+  if (user && typeof user === 'string') activeSmtpConfig.user = user.trim();
+  if (pass && typeof pass === 'string' && pass.trim() !== '') activeSmtpConfig.pass = pass.trim();
+  if (from && typeof from === 'string') activeSmtpConfig.from = from.trim();
+
+  // Sync with process.env
+  process.env.GMAIL_SMTP_HOST = activeSmtpConfig.host;
+  process.env.GMAIL_SMTP_PORT = String(activeSmtpConfig.port);
+  process.env.GMAIL_SMTP_USER = activeSmtpConfig.user;
+  if (pass && pass.trim() !== '') process.env.GMAIL_SMTP_PASS = activeSmtpConfig.pass;
+  process.env.GMAIL_SMTP_FROM = activeSmtpConfig.from;
+
+  console.log(`[SMTP CONFIG UPDATED] Hôte: ${activeSmtpConfig.host}:${activeSmtpConfig.port} | User: ${activeSmtpConfig.user} | From: ${activeSmtpConfig.from}`);
+
+  res.json({
+    success: true,
+    message: 'Paramètres Gmail SMTP mis à jour avec succès.',
+    config: {
+      host: activeSmtpConfig.host,
+      port: activeSmtpConfig.port,
+      user: activeSmtpConfig.user,
+      from: activeSmtpConfig.from,
+      hasPassword: Boolean(activeSmtpConfig.pass),
+      isConfigured: Boolean(activeSmtpConfig.user && activeSmtpConfig.pass),
+    },
+  });
+});
+
+/**
+ * POST /api/admin/email/test-smtp
+ * Performs a live handshake verification with smtp.gmail.com via Nodemailer verify()
+ * and optionally dispatches a test email.
+ */
+app.post('/api/admin/email/test-smtp', async (req: Request, res: Response): Promise<void> => {
+  const startTime = Date.now();
+  const { sendTestEmail, targetEmail } = req.body || {};
+  const transporter = getGmailTransporter();
+
+  if (!transporter) {
+    res.status(503).json({
+      success: false,
+      verified: false,
+      error: 'Identifiants Gmail SMTP non configurés. Veuillez renseigner l\'e-mail Gmail et le mot de passe d\'application dans les paramètres.',
+      config: {
+        host: activeSmtpConfig.host,
+        port: activeSmtpConfig.port,
+        user: activeSmtpConfig.user,
+        from: activeSmtpConfig.from,
+        hasPassword: Boolean(activeSmtpConfig.pass),
+      },
+    });
+    return;
+  }
+
+  try {
+    // Perform Nodemailer connection & TLS handshake verification
+    await transporter.verify();
+    const latencyMs = Date.now() - startTime;
+    let messageSent = false;
+    let testEmailError = '';
+
+    const recipient = (targetEmail && typeof targetEmail === 'string' && targetEmail.includes('@'))
+      ? targetEmail.trim()
+      : activeSmtpConfig.user || 'Pamphile.gbede@gmail.com';
+
+    if (sendTestEmail !== false) {
+      try {
+        const rawFrom = activeSmtpConfig.from || 'LivraLink Test SMTP <Pamphile.gbede@gmail.com>';
+        await transporter.sendMail({
+          from: rawFrom.replace(/\\"/g, '').trim(),
+          to: recipient,
+          subject: '🧪 LivraLink : Test de connexion Gmail SMTP réussi !',
+          text: `Bonjour,\n\nCe message confirme que la connexion SMTP avec ${activeSmtpConfig.host} (port ${activeSmtpConfig.port}) fonctionne parfaitement.\n\nLatence : ${latencyMs}ms\nDate : ${new Date().toLocaleString('fr-FR')}`,
+          html: `
+            <div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif; max-width: 560px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+              <div style="background-color: #0f172a; padding: 24px; text-align: center; color: white;">
+                <h1 style="margin: 0; font-size: 24px; font-weight: 800;">Livra<span style="color: #3b82f6;">Link</span></h1>
+                <p style="color: #34d399; font-size: 11px; margin: 6px 0 0 0; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">Diagnostic Gmail SMTP Validé</p>
+              </div>
+              <div style="padding: 28px 24px; color: #0f172a;">
+                <h2 style="font-size: 18px; font-weight: 800; margin: 0 0 12px 0; color: #0f172a;">Connexion Gmail SMTP Établie avec Succès 🚀</h2>
+                <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 20px 0;">
+                  Le backend Express de LivraLink a établi une liaison sécurisée avec le relais <strong>${activeSmtpConfig.host}:${activeSmtpConfig.port}</strong>.
+                </p>
+                <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 16px; font-size: 13px; color: #334155;">
+                  <p style="margin: 4px 0;"><strong>Hôte SMTP :</strong> ${activeSmtpConfig.host}</p>
+                  <p style="margin: 4px 0;"><strong>Port :</strong> ${activeSmtpConfig.port} (${activeSmtpConfig.port === 465 ? 'SSL' : 'STARTTLS'})</p>
+                  <p style="margin: 4px 0;"><strong>Expéditeur :</strong> ${activeSmtpConfig.from}</p>
+                  <p style="margin: 4px 0; color: #16a34a;"><strong>Latence handshake :</strong> ${latencyMs} ms</p>
+                </div>
+              </div>
+              <div style="background-color: #f8fafc; padding: 14px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 11px; color: #94a3b8;">
+                © ${new Date().getFullYear()} LivraLink — Diagnostic SMTP Admin.
+              </div>
+            </div>
+          `,
+        });
+        messageSent = true;
+        await recordSentEmail({
+          type: 'custom',
+          to: recipient,
+          recipientName: 'Administrateur',
+          subject: '🧪 LivraLink : Test de connexion Gmail SMTP réussi !',
+          previewText: `Connexion vérifiée avec le relais Gmail SMTP en ${latencyMs}ms.`,
+          htmlContent: `<div>Diagnostic SMTP accompli avec succès (${latencyMs}ms).</div>`,
+          deliveredViaSmtp: true,
+        });
+      } catch (sendErr: any) {
+        testEmailError = sendErr?.message || 'Erreur lors de l\'envoi du message de test.';
+        console.error('[SMTP TEST ERROR] Envoi message test:', testEmailError);
+      }
+    }
+
+    res.json({
+      success: true,
+      verified: true,
+      latencyMs,
+      messageSent,
+      recipient,
+      testEmailError: testEmailError || undefined,
+      config: {
+        host: activeSmtpConfig.host,
+        port: activeSmtpConfig.port,
+        user: activeSmtpConfig.user,
+        from: activeSmtpConfig.from,
+        hasPassword: Boolean(activeSmtpConfig.pass),
+      },
+      message: `Connexion Gmail SMTP (${activeSmtpConfig.host}:${activeSmtpConfig.port}) vérifiée avec succès en ${latencyMs}ms.`,
+    });
+  } catch (verifyErr: any) {
+    const errorMsg = verifyErr?.message || 'Échec de connexion au serveur Gmail SMTP.';
+    console.error('[SMTP TEST VERIFY ERROR]:', errorMsg);
+    res.status(503).json({
+      success: false,
+      verified: false,
+      error: `Échec du test de connexion SMTP : ${errorMsg}`,
+      config: {
+        host: activeSmtpConfig.host,
+        port: activeSmtpConfig.port,
+        user: activeSmtpConfig.user,
+        from: activeSmtpConfig.from,
+        hasPassword: Boolean(activeSmtpConfig.pass),
+      },
+    });
+  }
 });
 
 // Health check endpoints for Render / cloud monitoring
@@ -1308,11 +1915,11 @@ app.get('/api/security/budget', (_req: Request, res: Response) => {
     estimatedCostTodayEur: totalCost,
     budgetRemainingEur: Math.max(0, Number((apiUsageStats.dailyBudgetCapEur - totalCost).toFixed(4))),
     quotas: {
-      brevoEmails: {
-        used: apiUsageStats.brevoEmails.count,
-        cap: apiUsageStats.brevoEmails.dailyCap,
-        remaining: Math.max(0, apiUsageStats.brevoEmails.dailyCap - apiUsageStats.brevoEmails.count),
-        unitCostEur: apiUsageStats.brevoEmails.unitCostEur,
+      gmailEmails: {
+        used: apiUsageStats.gmailEmails.count,
+        cap: apiUsageStats.gmailEmails.dailyCap,
+        remaining: Math.max(0, apiUsageStats.gmailEmails.dailyCap - apiUsageStats.gmailEmails.count),
+        unitCostEur: apiUsageStats.gmailEmails.unitCostEur,
       },
       mapsApiCalls: {
         used: apiUsageStats.mapsApiCalls.count,

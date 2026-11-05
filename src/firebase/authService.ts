@@ -765,7 +765,7 @@ export const loginWithGoogle = async (
 
 /**
  * Request a 6-digit Password Reset Code (Step 1 of the secure recovery flow).
- * Calls server API to generate a cryptographically random code, hash it, and dispatch it via Brevo SMTP.
+ * Calls server API to generate a cryptographically random code, hash it, and dispatch it via Gmail SMTP.
  */
 export const requestPasswordResetCode = async (
   email: string
@@ -776,7 +776,7 @@ export const requestPasswordResetCode = async (
     throw new Error(validation.error!);
   }
 
-  // 1. Call secure server API to generate code and dispatch via Brevo SMTP
+  // 1. Call secure server API to generate code and dispatch via Gmail SMTP
   const res = await fetch('/api/auth/send-reset-code', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -785,8 +785,8 @@ export const requestPasswordResetCode = async (
 
   const data = await res.json();
 
-  if (!res.ok || !data.success) {
-    throw new Error(data.error || 'Impossible d\'envoyer le code de sécurité. Veuillez réessayer.');
+  if (!res.ok || !data.success || data.emailDelivered === false) {
+    throw new Error(data.error || 'Le serveur SMTP Gmail n\'a pas confirmé l\'acceptation du message.');
   }
 
   return {

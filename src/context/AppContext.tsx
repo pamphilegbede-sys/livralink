@@ -17,6 +17,7 @@ import {
   DEFAULT_PLATFORM_FEATURE_FLAGS,
   AppNotification
 } from '../types';
+import { sendPlatformNotification } from '../services/emailService';
 import {
   INITIAL_DELIVERIES,
   INITIAL_COURIERS,
@@ -71,6 +72,7 @@ export type AdminTab =
   | 'disputes'
   | 'pricing'
   | 'features'
+  | 'email_settings'
   | 'tests'
   | 'audit'
   | 'security';
@@ -864,11 +866,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return authorizedAdminEmails.some((authMail) => authMail.toLowerCase().trim() === clean);
   };
 
+  const isUserMasterAdmin = Boolean(userProfile?.email && isEmailAuthorizedAdmin(userProfile.email));
+
   const isAdminAuthenticated = Boolean(
-    isAdminSessionUnlocked &&
-    userProfile?.role === 'admin' &&
-    userProfile?.email &&
-    isEmailAuthorizedAdmin(userProfile.email)
+    isUserMasterAdmin ||
+    (isAdminSessionUnlocked && (userProfile?.role === 'admin' || isUserMasterAdmin))
   );
 
   const addAuthorizedAdminEmail = (newEmail: string): { success: boolean; message: string } => {
@@ -1375,6 +1377,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       roleTarget: 'vendeur'
     });
 
+    // Dispatch automated platform activity email notification
+    sendPlatformNotification({
+      eventType: 'delivery_created',
+      recipientEmail: newOrder.merchantEmail || userProfile?.email || 'Pamphile.gbede@gmail.com',
+      recipientName: newOrder.merchantStoreName || userProfile?.fullName || 'Commerçant',
+      details: {
+        orderId: newOrder.id,
+        pickupName: newOrder.pickupLocation.name,
+        dropoffCommune: newOrder.dropoffLocation.commune,
+        feeFCFA: newOrder.deliveryFee,
+        codFCFA: newOrder.itemValueCOD,
+      },
+    });
+
     // Sync to Firestore priority_missions collection so couriers receive real-time notifications
     if (!courierObj || initialStatus === 'en_attente') {
       const cleanDocId = newId.replace(/[^a-zA-Z0-9_-]/g, '');
@@ -1730,6 +1746,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       orderId,
       actionView: 'vendeur_tracking'
     });
+
+    // Dispatch automated platform activity email notification
+    if (orderToUpdate) {
+      let eventType: 'delivery_picked_up' | 'delivery_completed' | 'delivery_cancelled' | 'delivery_accepted' = 'delivery_picked_up';
+      if (newStatus === 'colis_recupere') eventType = 'delivery_picked_up';
+      else if (newStatus === 'en_cours') eventType = 'delivery_accepted';
+      else if (newStatus === 'livree') eventType = 'delivery_completed';
+      else if (newStatus === 'echec') eventType = 'delivery_cancelled';
+
+      sendPlatformNotification({
+        eventType,
+        recipientEmail: orderToUpdate.merchantEmail || userProfile?.email || 'Pamphile.gbede@gmail.com',
+        recipientName: orderToUpdate.merchantStoreName || userProfile?.fullName || 'Commerçant',
+        details: {
+          orderId,
+          pickupName: orderToUpdate.pickupLocation.name,
+          dropoffCommune: orderToUpdate.dropoffLocation.commune,
+          courierName: orderToUpdate.courier?.name || userProfile?.fullName,
+          courierPhone: orderToUpdate.courier?.phone,
+          reason: note,
+          otpVerified: newStatus === 'livree',
+        },
+      });
+    }
+
     showToast(`Statut de la course ${orderId} mis à jour : ${newStatus}`, 'info');
     return { success: true };
   };
@@ -2283,6 +2324,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const opLabel = type === 'credit' ? `+${delta.toLocaleString('fr-FR')} FCFA` : `-${delta.toLocaleString('fr-FR')} FCFA`;
           addAuditLog('system', `Portefeuille #${id} : ${opLabel}`, note || `Ajustement admin (${type})`);
           showToast(`Portefeuille de ${c.name} : ${opLabel}`, 'success');
+
+          // Dispatch automated platform activity email notification
+          const targetEmail = c.email || userProfile?.email || 'Pamphile.gbede@gmail.com';
+          sendPlatformNotification({
+            eventType: 'wallet_transaction',
+            recipientEmail: targetEmail,
+            recipientName: c.name,
+            details: {
+              transactionType: type,
+              amountFCFA: delta,
+              newBalanceFCFA: newBal,
+            },
+          });
+
           return { ...c, walletBalanceFCFA: newBal };
         }
         return c;

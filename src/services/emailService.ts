@@ -1,5 +1,6 @@
 export interface SentEmailItem {
   id: string;
+  dedupKey?: string;
   type: 'welcome' | 'password_reset_request' | 'password_changed_confirmation' | 'priority_mission' | 'custom';
   to: string;
   recipientName: string;
@@ -9,6 +10,9 @@ export interface SentEmailItem {
   htmlContent: string;
   sentAt: string;
   deliveredViaSmtp: boolean;
+  status?: 'sent' | 'queued' | 'failed';
+  retryCount?: number;
+  lastError?: string;
 }
 
 const LOCAL_STORAGE_KEY = 'livralink_sent_emails';
@@ -176,3 +180,160 @@ export const fetchSentEmailsHistory = async (): Promise<SentEmailItem[]> => {
   }
   return getLocalSentEmails();
 };
+
+export interface SmtpConfig {
+  host: string;
+  port: number;
+  user: string;
+  from: string;
+  hasPassword: boolean;
+  secure?: boolean;
+  isConfigured?: boolean;
+}
+
+export const fetchSmtpConfig = async (): Promise<SmtpConfig | null> => {
+  try {
+    const res = await fetch('/api/admin/email/config');
+    const data = await res.json();
+    if (res.ok && data.success) {
+      return data.config;
+    }
+  } catch (err) {
+    console.warn('Erreur récupération config SMTP:', err);
+  }
+  return null;
+};
+
+export const updateSmtpConfig = async (payload: {
+  host?: string;
+  port?: number;
+  user?: string;
+  pass?: string;
+  from?: string;
+}): Promise<{ success: boolean; message?: string; config?: SmtpConfig }> => {
+  try {
+    const res = await fetch('/api/admin/email/config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-secret': 'livralink_super_admin_2026_key',
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      return { success: true, message: data.message, config: data.config };
+    }
+    return { success: false, message: data.error || 'Erreur lors de la mise à jour SMTP.' };
+  } catch (err: any) {
+    return { success: false, message: err?.message || 'Erreur réseau.' };
+  }
+};
+
+export const testSmtpConnection = async (payload?: {
+  sendTestEmail?: boolean;
+  targetEmail?: string;
+}): Promise<{
+  success: boolean;
+  verified: boolean;
+  latencyMs?: number;
+  messageSent?: boolean;
+  recipient?: string;
+  testEmailError?: string;
+  message?: string;
+  error?: string;
+  config?: SmtpConfig;
+}> => {
+  try {
+    const res = await fetch('/api/admin/email/test-smtp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-secret': 'livralink_super_admin_2026_key',
+      },
+      body: JSON.stringify(payload || {}),
+    });
+    const data = await res.json();
+    return data;
+  } catch (err: any) {
+    return {
+      success: false,
+      verified: false,
+      error: err?.message || 'Impossible de contacter le serveur backend pour tester SMTP.',
+    };
+  }
+};
+
+export interface AutomatedEmailPayload {
+  eventType: 'delivery_created' | 'delivery_accepted' | 'delivery_picked_up' | 'delivery_completed' | 'delivery_cancelled' | 'wallet_transaction' | 'security_alert';
+  recipientEmail: string;
+  recipientName?: string;
+  details?: {
+    orderId?: string;
+    pickupName?: string;
+    dropoffCommune?: string;
+    feeFCFA?: number;
+    codFCFA?: number;
+    courierName?: string;
+    courierPhone?: string;
+    otpVerified?: boolean;
+    reason?: string;
+    transactionType?: 'credit' | 'debit';
+    amountFCFA?: number;
+    newBalanceFCFA?: number;
+    alertTitle?: string;
+    alertDesc?: string;
+    message?: string;
+  };
+}
+
+/**
+ * Service centralisé d'envoi automatique de notifications par e-mail
+ * pour les événements de la plateforme LivraLink (création, acceptation, récupération, livraison, annulation, paiement, sécurité).
+ */
+export const sendPlatformNotification = async (
+  payload: AutomatedEmailPayload
+): Promise<{ success: boolean; emailDelivered?: boolean; message?: string }> => {
+  try {
+    const res = await fetch('/api/email/notification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    return {
+      success: Boolean(data.success),
+      emailDelivered: Boolean(data.emailDelivered),
+      message: data.message,
+    };
+  } catch (err) {
+    console.warn('Erreur envoi notification e-mail automatisée:', err);
+    return { success: false, emailDelivered: false };
+  }
+};
+
+export const processEmailQueue = async (): Promise<{
+  success: boolean;
+  message?: string;
+  processedCount?: number;
+  successCount?: number;
+}> => {
+  try {
+    const res = await fetch('/api/admin/email/process-queue', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-secret': 'livralink_super_admin_2026_key',
+      },
+    });
+    const data = await res.json();
+    return data;
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err?.message || 'Erreur lors du traitement de la file d\'attente.',
+    };
+  }
+};
+
+

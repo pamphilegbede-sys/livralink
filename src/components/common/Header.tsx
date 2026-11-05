@@ -24,8 +24,11 @@ export const Header: React.FC<{
     openEmailCenter,
     notifications,
     openNotificationCenter,
+    userProfile,
+    isEmailAuthorizedAdmin,
   } = useApp();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const isUserSuperAdmin = Boolean(userProfile?.email && isEmailAuthorizedAdmin(userProfile.email));
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
 
@@ -155,6 +158,27 @@ export const Header: React.FC<{
             </button>
           </div>
 
+          {/* Super-Admin Direct Console Access for pamphile.gbede@gmail.com */}
+          {isUserSuperAdmin && (
+            <button
+              type="button"
+              onClick={() => {
+                if (currentView === 'admin_console') {
+                  setCurrentView(currentRole === 'livreur' ? 'livreur_dashboard' : 'vendeur_dashboard');
+                } else {
+                  setCurrentView('admin_console');
+                }
+              }}
+              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-extrabold text-xs shadow-md flex items-center gap-1.5 active:scale-95 transition-all border border-amber-300/80 cursor-pointer shrink-0"
+              title="Dashboard Administrateur Direct (Pamphile Gbede)"
+            >
+              <span className="text-sm">👑</span>
+              <span className="hidden xs:inline">
+                {currentView === 'admin_console' ? 'Espace Normal' : 'Console Admin'}
+              </span>
+            </button>
+          )}
+
           {/* New Delivery CTA for Vendor */}
           {currentRole === 'vendeur' && currentView !== 'vendeur_new_delivery' && (
             <button
@@ -276,6 +300,25 @@ export const Header: React.FC<{
                       </button>
                     </div>
                   </>
+                )}
+                {isUserSuperAdmin && (
+                  <div className="pt-3 mt-3 border-t border-amber-200 dark:border-amber-900/40">
+                    <p className="px-3 text-[10px] font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-1.5">Accès Super-Admin</p>
+                    <button
+                      onClick={() => { setCurrentView('admin_console'); setIsMobileMenuOpen(false); }}
+                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold ${
+                        currentView === 'admin_console'
+                          ? 'bg-amber-500 text-slate-950 font-black'
+                          : 'bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-200'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-base">👑</span>
+                        <span>Console Administrateur</span>
+                      </div>
+                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

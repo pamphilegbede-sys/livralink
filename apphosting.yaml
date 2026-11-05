@@ -11,3 +11,14 @@ runConfig:
 env:
   - variable: NODE_ENV
     value: production
+  - variable: SMTP_HOST
+    value: smtp.gmail.com
+  - variable: SMTP_PORT
+    value: "587"
+  - variable: GMAIL_SMTP_USER
+    secret: GMAIL_SMTP_USER
+  - variable: GMAIL_SMTP_PASS
+    secret: GMAIL_SMTP_PASS
+  - variable: SMTP_FROM
+    value: "LivraLink <Pamphile.gbede@gmail.com>"
+

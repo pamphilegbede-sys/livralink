@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp, AdminTestResultItem } from '../../context/AppContext';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
@@ -8,6 +8,176 @@ import { Courier, Merchant, DeliveryOrder, DeliveryStatus } from '../../types';
 import { loginWithGoogle, getFirebaseAuthErrorMessage } from '../../firebase/authService';
 import { AdminOverviewDashboard } from './AdminOverviewDashboard';
 import { ResetUserAccessModal, TargetResetUser } from '../modals/ResetUserAccessModal';
+import {
+  fetchSmtpConfig,
+  updateSmtpConfig,
+  testSmtpConnection,
+  fetchSentEmailsHistory,
+  SentEmailItem,
+  sendWelcomeEmail,
+  sendPasswordChangedConfirmationEmail,
+  processEmailQueue,
+} from '../../services/emailService';
+
+const AdminSidebarContent: React.FC<{
+  activeTab: string;
+  onSelectTab: (tab: any) => void;
+  onCloseMobile?: () => void;
+  deliveriesCount: number;
+  usersCount: number;
+  kycPendingCount: number;
+  couriersCount: number;
+  merchantsCount: number;
+  disputesCount: number;
+  currentRole: 'vendeur' | 'livreur' | 'admin';
+  onReturnToUserDashboard: () => void;
+}> = ({
+  activeTab,
+  onSelectTab,
+  onCloseMobile,
+  deliveriesCount,
+  usersCount,
+  kycPendingCount,
+  couriersCount,
+  merchantsCount,
+  disputesCount,
+  currentRole,
+  onReturnToUserDashboard,
+}) => {
+  const categories = [
+    {
+      group: 'VUE D\'ENSEMBLE & ACTIVITÉ',
+      items: [
+        { id: 'overview', label: 'Synthèse & KPIs', icon: 'dashboard' },
+        { id: 'deliveries', label: 'Supervision Courses', icon: 'local_shipping', badge: deliveriesCount > 0 ? `${deliveriesCount}` : undefined, badgeColor: 'bg-blue-600 text-white' },
+        { id: 'users', label: 'Annuaire Utilisateurs', icon: 'group', badge: `${usersCount}`, badgeColor: 'bg-slate-800 text-slate-200' },
+      ],
+    },
+    {
+      group: 'ACCRÉDITATION & SÉCURITÉ',
+      items: [
+        { id: 'kyc', label: 'Vérifications KYC', icon: 'verified_user', badge: kycPendingCount > 0 ? `${kycPendingCount}` : undefined, badgeColor: 'bg-amber-400 text-slate-950 font-black' },
+        { id: 'security', label: 'Whitelist & Sécurité', icon: 'shield_person' },
+        { id: 'audit', label: 'Journal d\'Audit', icon: 'history' },
+      ],
+    },
+    {
+      group: 'EXPÉDITION & RÉSEAU',
+      items: [
+        { id: 'couriers', label: 'Flotte Livreurs', icon: 'two_wheeler', badge: `${couriersCount}`, badgeColor: 'bg-emerald-950 text-emerald-300 border border-emerald-800' },
+        { id: 'merchants', label: 'Boutiques Vendeurs', icon: 'storefront', badge: `${merchantsCount}`, badgeColor: 'bg-sky-950 text-sky-300 border border-sky-800' },
+        { id: 'disputes', label: 'Litiges & Arbitrage', icon: 'warning', badge: disputesCount > 0 ? `${disputesCount}` : undefined, badgeColor: 'bg-red-600 text-white' },
+      ],
+    },
+    {
+      group: 'CONFIGURATION & SYSTÈME',
+      items: [
+        { id: 'features', label: 'Directeur Fonctionnalités', icon: 'toggle_on', badge: 'Directeur', badgeColor: 'bg-purple-900/80 text-purple-200 border border-purple-700' },
+        { id: 'pricing', label: 'Tarifs & Commissions', icon: 'tune' },
+        { id: 'email_settings', label: 'Paramètres E-mail (SMTP)', icon: 'mail', badge: 'Gmail', badgeColor: 'bg-emerald-950 text-emerald-300 border border-emerald-800' },
+        { id: 'tests', label: 'Suite Tests (8 Pôles)', icon: 'science', badge: '8/8', badgeColor: 'bg-indigo-950 text-indigo-300 border border-indigo-800' },
+      ],
+    },
+  ];
+
+  return (
+    <aside className="w-64 bg-slate-900 text-slate-200 border-r border-slate-800/90 flex flex-col h-full shrink-0 select-none shadow-xl">
+      {/* Brand Header */}
+      <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 via-indigo-600 to-purple-600 p-0.5 shadow-md flex items-center justify-center text-slate-950 font-extrabold text-base shrink-0">
+            👑
+          </div>
+          <div>
+            <div className="font-extrabold text-sm text-white tracking-tight leading-tight">
+              Livra<span className="text-amber-400">Link</span>
+            </div>
+            <p className="text-[10px] font-mono font-bold text-amber-400 uppercase tracking-wider">
+              Console Admin
+            </p>
+          </div>
+        </div>
+        {onCloseMobile && (
+          <button
+            type="button"
+            onClick={onCloseMobile}
+            className="md:hidden p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-xl">close</span>
+          </button>
+        )}
+      </div>
+
+      {/* Return to User Dashboard CTA */}
+      <div className="p-3 border-b border-slate-800/80 bg-slate-950/40">
+        <button
+          type="button"
+          onClick={() => {
+            if (onCloseMobile) onCloseMobile();
+            onReturnToUserDashboard();
+          }}
+          className="w-full py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95 cursor-pointer"
+        >
+          <span className="material-symbols-outlined text-sm">space_dashboard</span>
+          <span>{currentRole === 'livreur' ? 'Espace Livreur' : 'Espace Vendeur'}</span>
+        </button>
+      </div>
+
+      {/* Navigation Sections */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-5">
+        {categories.map((cat, idx) => (
+          <div key={idx} className="space-y-1">
+            <div className="px-2 text-[10px] font-black text-slate-500 tracking-wider uppercase mb-1">
+              {cat.group}
+            </div>
+            {cat.items.map((item) => {
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    onSelectTab(item.id);
+                    if (onCloseMobile) onCloseMobile();
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs transition-all active:scale-95 cursor-pointer ${
+                    isActive
+                      ? 'bg-amber-400 text-slate-950 font-black shadow-md'
+                      : 'text-slate-300 hover:bg-slate-800/80 hover:text-white font-medium'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className={`material-symbols-outlined text-lg shrink-0 ${isActive ? 'text-slate-950' : 'text-slate-400'}`}>
+                      {item.icon}
+                    </span>
+                    <span className="truncate">{item.label}</span>
+                  </div>
+                  {item.badge && (
+                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold shrink-0 ml-1 ${isActive ? 'bg-slate-950 text-amber-300' : item.badgeColor}`}>
+                      {item.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+
+      {/* User Footer Profile */}
+      <div className="p-3 border-t border-slate-800 bg-slate-950/80 flex items-center gap-2.5 text-xs text-slate-300">
+        <div className="w-8 h-8 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 flex items-center justify-center font-bold text-xs shrink-0">
+          PG
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="font-bold text-white truncate text-xs">Pamphile Gbede</p>
+          <p className="text-[10px] text-emerald-400 font-mono truncate">pamphile.gbede@gmail.com</p>
+        </div>
+      </div>
+    </aside>
+  );
+};
 
 export const AdminConsole: React.FC = () => {
   const {
@@ -52,6 +222,7 @@ export const AdminConsole: React.FC = () => {
     userProfile,
     openWhatsAppModal,
     setCurrentView,
+    currentRole,
     setCurrentRole,
     navigateBack,
     adminActiveTab: activeViewTab,
@@ -192,6 +363,136 @@ export const AdminConsole: React.FC = () => {
   const [editUserPlate, setEditUserPlate] = useState('');
   const [editUserChannel, setEditUserChannel] = useState<'WhatsApp' | 'Instagram' | 'TikTok' | 'E-commerce'>('WhatsApp');
   const [editUserVerified, setEditUserVerified] = useState(false);
+
+  // SMTP Parameters & Test State
+  const [smtpHost, setSmtpHost] = useState('smtp.gmail.com');
+  const [smtpPort, setSmtpPort] = useState('587');
+  const [smtpUser, setSmtpUser] = useState('Pamphile.gbede@gmail.com');
+  const [smtpPass, setSmtpPass] = useState('');
+  const [smtpFrom, setSmtpFrom] = useState('LivraLink Sécurité <Pamphile.gbede@gmail.com>');
+  const [showSmtpPass, setShowSmtpPass] = useState(false);
+  const [isSmtpConfigured, setIsSmtpConfigured] = useState(false);
+  const [isLoadingSmtpConfig, setIsLoadingSmtpConfig] = useState(false);
+  const [isSavingSmtpConfig, setIsSavingSmtpConfig] = useState(false);
+
+  const [isTestingSmtp, setIsTestingSmtp] = useState(false);
+  const [smtpTestResult, setSmtpTestResult] = useState<{
+    success: boolean;
+    verified: boolean;
+    latencyMs?: number;
+    messageSent?: boolean;
+    recipient?: string;
+    testEmailError?: string;
+    message?: string;
+    error?: string;
+  } | null>(null);
+  const [testTargetEmail, setTestTargetEmail] = useState('Pamphile.gbede@gmail.com');
+
+  const [outboxEmails, setOutboxEmails] = useState<SentEmailItem[]>([]);
+  const [isOutboxLoading, setIsOutboxLoading] = useState(false);
+  const [outboxFilter, setOutboxFilter] = useState<'all' | 'welcome' | 'password_reset_request' | 'password_changed_confirmation' | 'priority_mission' | 'custom'>('all');
+  const [previewModalEmail, setPreviewModalEmail] = useState<SentEmailItem | null>(null);
+
+  useEffect(() => {
+    if (activeViewTab === 'email_settings') {
+      const loadSmtpData = async () => {
+        setIsLoadingSmtpConfig(true);
+        setIsOutboxLoading(true);
+        try {
+          const cfg = await fetchSmtpConfig();
+          if (cfg) {
+            if (cfg.host) setSmtpHost(cfg.host);
+            if (cfg.port) setSmtpPort(String(cfg.port));
+            if (cfg.user) setSmtpUser(cfg.user);
+            if (cfg.from) setSmtpFrom(cfg.from);
+            setIsSmtpConfigured(Boolean(cfg.isConfigured || (cfg.user && cfg.hasPassword)));
+          }
+          const history = await fetchSentEmailsHistory();
+          setOutboxEmails(history);
+        } catch (err) {
+          console.warn('Erreur chargement données SMTP:', err);
+        } finally {
+          setIsLoadingSmtpConfig(false);
+          setIsOutboxLoading(false);
+        }
+      };
+      loadSmtpData();
+    }
+  }, [activeViewTab]);
+
+  const handleSaveSmtpSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingSmtpConfig(true);
+    try {
+      const res = await updateSmtpConfig({
+        host: smtpHost.trim(),
+        port: parseInt(smtpPort, 10) || 587,
+        user: smtpUser.trim(),
+        pass: smtpPass.trim() || undefined,
+        from: smtpFrom.trim(),
+      });
+      if (res.success) {
+        showToast('Paramètres Gmail SMTP mis à jour avec succès !', 'success');
+        setIsSmtpConfigured(true);
+      } else {
+        showToast(res.message || 'Erreur lors de la mise à jour SMTP.', 'error');
+      }
+    } catch {
+      showToast('Erreur lors de l\'enregistrement des paramètres SMTP.', 'error');
+    } finally {
+      setIsSavingSmtpConfig(false);
+    }
+  };
+
+  const handleRunSmtpTest = async () => {
+    setIsTestingSmtp(true);
+    setSmtpTestResult(null);
+    showToast('Vérification handshake Gmail SMTP et envoi message de test...', 'info');
+    try {
+      const result = await testSmtpConnection({
+        sendTestEmail: true,
+        targetEmail: testTargetEmail.trim() || smtpUser.trim(),
+      });
+      setSmtpTestResult(result);
+      if (result.success && result.verified) {
+        showToast(`Test SMTP Réussi (${result.latencyMs || 0}ms) ! E-mail transmis à ${result.recipient}`, 'success');
+        const history = await fetchSentEmailsHistory();
+        setOutboxEmails(history);
+      } else {
+        showToast(`Échec du test SMTP : ${result.error || result.message}`, 'error');
+      }
+    } catch (err: any) {
+      setSmtpTestResult({
+        success: false,
+        verified: false,
+        error: err?.message || 'Erreur lors du test de connexion.',
+      });
+      showToast('Impossible de joindre le serveur backend.', 'error');
+    } finally {
+      setIsTestingSmtp(false);
+    }
+  };
+
+  const [isProcessingQueue, setIsProcessingQueue] = useState(false);
+
+  const handleProcessEmailQueue = async () => {
+    setIsProcessingQueue(true);
+    showToast('Exécution de la file d\'attente des e-mails...', 'info');
+    try {
+      const res = await processEmailQueue();
+      if (res.success) {
+        showToast(res.message || 'File d\'attente traitée avec succès !', 'success');
+        const history = await fetchSentEmailsHistory();
+        setOutboxEmails(history);
+      } else {
+        showToast(res.message || 'Erreur lors du traitement de la file d\'attente.', 'error');
+      }
+    } catch {
+      showToast('Impossible de joindre le serveur.', 'error');
+    } finally {
+      setIsProcessingQueue(false);
+    }
+  };
 
   // Test Suite execution state
   const [isTestingInProgress, setIsTestingInProgress] = useState(false);
@@ -570,235 +871,105 @@ export const AdminConsole: React.FC = () => {
     return d.status === deliveryStatusFilter;
   });
 
-  // Security Guard: Check if user is authenticated with Google and whitelisted
+  // Mobile Admin Sidebar state
+  const [isMobileAdminSidebarOpen, setIsMobileAdminSidebarOpen] = useState(false);
+
+  // Security Guard: Check if user is authenticated with Google and whitelisted (pamphile.gbede@gmail.com)
   if (!isAdminAuthenticated) {
-    const handleGoogleAdminPopupLogin = async () => {
-      setIsLoggingInWithGoogle(true);
-      setAdminLoginError(null);
-      try {
-        const { user, profile } = await loginWithGoogle('admin');
-        const email = user.email || profile.email;
-        const result = adminLoginWithGoogle(email, user.displayName || profile.fullName);
-        if (!result.success) {
-          setAdminLoginError(result.error || "Adresse Google non autorisée sur la Whitelist administrateur.");
-        }
-      } catch (err: any) {
-        const errorMsg = getFirebaseAuthErrorMessage(err);
-        setAdminLoginError(errorMsg);
-        showToast(errorMsg, 'error');
-      } finally {
-        setIsLoggingInWithGoogle(false);
-      }
-    };
-
-    const handleDirectGoogleLogin = (e: React.FormEvent) => {
-      e.preventDefault();
-      setAdminLoginError(null);
-
-      if (adminLoginStep === 'email') {
-        const clean = adminLoginEmailInput.toLowerCase().trim();
-        if (!isEmailAuthorizedAdmin(clean)) {
-          setAdminLoginError(`Accès refusé. L'adresse "${clean}" n'est pas autorisée sur la Whitelist administrateur.`);
-          return;
-        }
-        setAdminLoginStep('password');
-        return;
-      }
-
-      // Step 2: Password verification
-      setIsLoggingInWithGoogle(true);
-      setTimeout(() => {
-        setIsLoggingInWithGoogle(false);
-        if (adminPasswordInput !== 'livralink2026' && adminPasswordInput !== 'Admin2026!') {
-          setAdminLoginError("Mot de passe administrateur incorrect.");
-          return;
-        }
-        const result = adminLoginWithGoogle(adminLoginEmailInput);
-        if (!result.success) {
-          setAdminLoginError(result.error || "Échec de l'authentification administrateur.");
-        }
-      }, 350);
-    };
-
     return (
-      <div className="min-h-full flex-1 w-full overflow-y-auto custom-scrollbar bg-slate-950 flex flex-col items-center justify-center p-3 sm:p-4 py-6 sm:py-8 text-white font-['Plus_Jakarta_Sans'] relative selection:bg-amber-500 selection:text-slate-950">
-        {/* Ambient Glows */}
-        <div className="absolute top-1/4 -left-20 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl pointer-events-none"></div>
-        <div className="absolute bottom-1/4 -right-20 w-96 h-96 bg-blue-600/20 rounded-full blur-3xl pointer-events-none"></div>
-
-        <div className="w-full max-w-lg bg-slate-900/90 border border-slate-700/80 backdrop-blur-xl rounded-3xl p-4 sm:p-8 shadow-2xl space-y-5 sm:space-y-6 relative z-10 text-center my-auto">
-          {/* Top Shield icon */}
-          <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-tr from-purple-700 via-indigo-600 to-amber-500 p-0.5 shadow-xl shadow-purple-900/40">
-            <div className="w-full h-full bg-slate-950 rounded-[22px] flex items-center justify-center">
-              <span className="material-symbols-outlined text-4xl text-amber-400">shield_lock</span>
-            </div>
+      <div className="min-h-full flex-1 w-full overflow-y-auto custom-scrollbar bg-slate-950 flex flex-col items-center justify-center p-4 py-12 text-white font-['Plus_Jakarta_Sans'] relative">
+        <div className="w-full max-w-md bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 text-center">
+          <div className="w-20 h-20 mx-auto rounded-3xl bg-red-500/10 border border-red-500/30 flex items-center justify-center">
+            <span className="material-symbols-outlined text-4xl text-red-400">shield_lock</span>
           </div>
 
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold">
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
-              <span>ZONE SÉCURISÉE ADMIN • ACCÈS RESTREINT</span>
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-bold">
+              <span>ACCÈS RESTREINT (403)</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-              Connexion Console Administrateur
+            <h1 className="text-xl sm:text-2xl font-extrabold text-white">
+              Console Administrateur Privée
             </h1>
-            <p className="text-slate-400 text-xs sm:text-sm leading-relaxed max-w-md mx-auto">
-              Pour accéder à la console générale de gestion LivraLink, vous devez <strong className="text-amber-300 font-bold">authentifier votre compte Google Super-Admin</strong>.
+            <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+              L'accès au tableau de bord administrateur est réservé exclusivement au compte autorisé <strong className="text-amber-300 font-mono">pamphile.gbede@gmail.com</strong>.
             </p>
           </div>
 
-
-
-
-
-          {/* Error message */}
-          {adminLoginError && (
-            <div className="p-3.5 rounded-2xl bg-red-500/10 border border-red-500/40 text-red-200 text-left flex items-start gap-2.5">
-              <span className="material-symbols-outlined text-red-400 text-lg shrink-0 mt-0.5">block</span>
-              <div className="text-xs">
-                <p className="font-bold text-red-300">⛔ Accès Refusé (403)</p>
-                <p className="text-[11px] text-red-200 mt-0.5 leading-relaxed">{adminLoginError}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Action buttons & Interactive Google Login Form */}
-          <div className="space-y-3 pt-1 text-left">
-            {/* Primary Google Login Button (Popup Flow) */}
-            <button
-              type="button"
-              disabled={isLoggingInWithGoogle}
-              onClick={handleGoogleAdminPopupLogin}
-              className="w-full py-3.5 px-6 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-2xl font-bold text-sm shadow-lg shadow-indigo-600/30 active:scale-[0.99] transition-all flex items-center justify-center gap-3 cursor-pointer"
-            >
-              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-              </svg>
-              <span>Authentifier via Google (Popup OAuth)</span>
-            </button>
-
-
-
-            {/* Direct Google email connector */}
-            <form onSubmit={handleDirectGoogleLogin} className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-3">
-              <label className="block text-xs font-bold text-slate-300">
-                {adminLoginStep === 'email' ? 'Ou connectez directement votre adresse Google certifiée :' : `Saisissez le mot de passe pour (${adminLoginEmailInput}) :`}
-              </label>
-
-              {adminLoginStep === 'email' ? (
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                    <span className="material-symbols-outlined text-base">mail</span>
-                  </span>
-                  <input
-                    type="email"
-                    value={adminLoginEmailInput}
-                    onChange={(e) => {
-                      setAdminLoginEmailInput(e.target.value);
-                      setAdminLoginError(null);
-                    }}
-                    placeholder="connexion@gmail.com"
-                    required
-                    autoFocus
-                    className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white font-mono focus:ring-2 focus:ring-blue-500 outline-none"
-                  />
-                </div>
-              ) : (
-                <div className="relative space-y-2">
-                  <div className="relative">
-                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                      <span className="material-symbols-outlined text-base">key</span>
-                    </span>
-                    <input
-                      type="password"
-                      value={adminPasswordInput}
-                      onChange={(e) => {
-                        setAdminPasswordInput(e.target.value);
-                        setAdminLoginError(null);
-                      }}
-                      placeholder="Mot de passe administrateur (ex: livralink2026)"
-                      required
-                      autoFocus
-                      className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white font-mono focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
-                  </div>
-                  <p className="text-[10px] text-amber-400 font-medium">
-                    Mot de passe requis pour valider l'accès Super-Admin (Astuce test : <span className="font-mono underline">livralink2026</span>)
-                  </p>
-                </div>
-              )}
-
-              <div className="pt-1 flex gap-2">
-                {adminLoginStep === 'password' && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAdminLoginStep('email');
-                      setAdminPasswordInput('');
-                      setAdminLoginError(null);
-                    }}
-                    className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-colors cursor-pointer"
-                  >
-                    Retour
-                  </button>
-                )}
-                <button
-                  type="submit"
-                  disabled={isLoggingInWithGoogle}
-                  className="flex-1 py-2.5 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-sm"
-                >
-                  {isLoggingInWithGoogle ? (
-                    <>
-                      <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                      <span>Vérification...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="material-symbols-outlined text-sm">{adminLoginStep === 'email' ? 'arrow_forward' : 'lock_open'}</span>
-                      <span>{adminLoginStep === 'email' ? 'Continuer vers le mot de passe' : 'Déverrouiller la Console'}</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-
-            {/* Back to previous page */}
-            <div className="text-center pt-2">
-              <button
-                type="button"
-                onClick={navigateBack}
-                className="text-slate-400 hover:text-white text-xs font-bold transition-all inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl hover:bg-slate-800 border border-transparent hover:border-slate-700 cursor-pointer"
-                title="Retour à la page précédente"
-              >
-                <span className="material-symbols-outlined text-sm">arrow_back</span>
-                <span>Retour à la page précédente</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="pt-2 border-t border-slate-800/80 text-[11px] text-slate-500 flex items-center justify-between">
-            <span>Protocole Google OAuth 2.0 &amp; Whitelist RBAC</span>
-            <span className="font-mono text-amber-400">Verrouillé 🔒</span>
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (userProfile) {
+                setCurrentView(currentRole === 'livreur' ? 'livreur_dashboard' : 'vendeur_dashboard');
+              } else {
+                setCurrentView('landing');
+              }
+            }}
+            className="w-full py-3 px-5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-md active:scale-95 transition-all cursor-pointer"
+          >
+            Retourner à l'Espace Utilisateur
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans']">
-      {/* Global Sidebar */}
-      <Sidebar />
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans'] relative">
+      {/* Desktop Dedicated Admin Sidebar */}
+      <div className="hidden md:flex h-full shrink-0">
+        <AdminSidebarContent
+          activeTab={activeViewTab}
+          onSelectTab={setActiveViewTab}
+          deliveriesCount={activeDeliveriesCount}
+          usersCount={couriers.length + merchants.length}
+          kycPendingCount={kycRequests.filter(k => k.status === 'en_attente').length}
+          couriersCount={couriers.length}
+          merchantsCount={merchants.length}
+          disputesCount={disputeCount}
+          currentRole={currentRole}
+          onReturnToUserDashboard={() => setCurrentView(currentRole === 'livreur' ? 'livreur_dashboard' : 'vendeur_dashboard')}
+        />
+      </div>
+
+      {/* Mobile Admin Sidebar Drawer */}
+      {isMobileAdminSidebarOpen && (
+        <div
+          className="fixed inset-0 z-50 md:hidden bg-slate-950/70 backdrop-blur-xs flex animate-fade-in"
+          onClick={() => setIsMobileAdminSidebarOpen(false)}
+        >
+          <div className="h-full" onClick={(e) => e.stopPropagation()}>
+            <AdminSidebarContent
+              activeTab={activeViewTab}
+              onSelectTab={setActiveViewTab}
+              onCloseMobile={() => setIsMobileAdminSidebarOpen(false)}
+              deliveriesCount={activeDeliveriesCount}
+              usersCount={couriers.length + merchants.length}
+              kycPendingCount={kycRequests.filter(k => k.status === 'en_attente').length}
+              couriersCount={couriers.length}
+              merchantsCount={merchants.length}
+              disputesCount={disputeCount}
+              currentRole={currentRole}
+              onReturnToUserDashboard={() => setCurrentView(currentRole === 'livreur' ? 'livreur_dashboard' : 'vendeur_dashboard')}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Main Container */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff] dark:bg-slate-950">
         {/* Top Navbar */}
         <header className="h-[72px] bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 md:px-8 flex justify-between items-center shrink-0 z-20 shadow-xs">
-          {/* Back button (PC & Mobile) + Search bar */}
+          {/* Mobile Drawer Trigger + Back button (PC & Mobile) + Search bar */}
           <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0 max-w-sm md:w-1/2">
+            <button
+              type="button"
+              onClick={() => setIsMobileAdminSidebarOpen(!isMobileAdminSidebarOpen)}
+              className="md:hidden p-1.5 rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 active:scale-95 shrink-0 cursor-pointer"
+              title="Menu Admin Sidebar"
+            >
+              <span className="material-symbols-outlined text-xl">menu</span>
+            </button>
+
             <button
               type="button"
               onClick={navigateBack}
@@ -807,7 +978,7 @@ export const AdminConsole: React.FC = () => {
               aria-label="Retour à la page précédente"
             >
               <span className="material-symbols-outlined text-base">arrow_back</span>
-              <span className="font-bold">Retour</span>
+              <span className="font-bold hidden xs:inline">Retour</span>
             </button>
 
             <div className="relative w-full">
@@ -862,7 +1033,7 @@ export const AdminConsole: React.FC = () => {
             <button
               onClick={openEmailCenter}
               className="px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs bg-blue-50 text-blue-800 hover:bg-blue-100 border border-blue-200 cursor-pointer"
-              title="Consulter et tester l'historique des emails Brevo / SMTP (Bienvenue, Réinitialisation, Alertes)"
+              title="Consulter et tester l'historique des emails Gmail / SMTP (Bienvenue, Réinitialisation, Alertes)"
             >
               <span className="material-symbols-outlined text-sm text-blue-600">mail</span>
               <span className="hidden sm:inline">Boîte E-mails</span>
@@ -890,9 +1061,21 @@ export const AdminConsole: React.FC = () => {
               <span className="hidden sm:inline">Whitelist &amp; Sécurité</span>
             </button>
 
+            {/* Quick Switch to Merchant or Driver Space */}
+            <button
+              onClick={() => setCurrentView(currentRole === 'livreur' ? 'livreur_dashboard' : 'vendeur_dashboard')}
+              className="px-2.5 sm:px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95 shrink-0"
+              title={`Revenir à votre espace ${currentRole === 'livreur' ? 'Livreur' : 'Vendeur'}`}
+            >
+              <span className="material-symbols-outlined text-sm">space_dashboard</span>
+              <span className="hidden sm:inline">
+                {currentRole === 'livreur' ? 'Espace Livreur' : 'Espace Vendeur'}
+              </span>
+            </button>
+
             <button
               onClick={adminLogout}
-              className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors"
+              className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors shrink-0"
               title="Fermer la session administrateur"
             >
               <span className="material-symbols-outlined text-sm">logout</span>
@@ -969,6 +1152,7 @@ export const AdminConsole: React.FC = () => {
                   {activeViewTab === 'disputes' && 'Litiges & Support'}
                   {activeViewTab === 'pricing' && 'Tarifs & Commissions'}
                   {activeViewTab === 'features' && 'Directeur Général des Fonctionnalités'}
+                  {activeViewTab === 'email_settings' && 'Centre & Paramètres E-mail (Gmail SMTP)'}
                   {activeViewTab === 'tests' && 'Tests & Validations'}
                   {activeViewTab === 'audit' && 'Journal d\'Audit'}
                   {activeViewTab === 'security' && 'Whitelist & Sécurité'}
@@ -980,6 +1164,7 @@ export const AdminConsole: React.FC = () => {
                   activeViewTab === 'disputes' ? 'bg-red-600' :
                   activeViewTab === 'kyc' ? 'bg-amber-600' :
                   activeViewTab === 'features' ? 'bg-purple-600 shadow-sm' :
+                  activeViewTab === 'email_settings' ? 'bg-emerald-600 shadow-sm' :
                   activeViewTab === 'tests' ? 'bg-indigo-600' : 'bg-slate-900'
                 }`}>
                   {activeViewTab === 'deliveries' && 'local_shipping'}
@@ -991,6 +1176,7 @@ export const AdminConsole: React.FC = () => {
                   {activeViewTab === 'disputes' && 'warning'}
                   {activeViewTab === 'pricing' && 'tune'}
                   {activeViewTab === 'features' && 'toggle_on'}
+                  {activeViewTab === 'email_settings' && 'mail'}
                   {activeViewTab === 'tests' && 'science'}
                   {activeViewTab === 'audit' && 'history'}
                   {activeViewTab === 'security' && 'shield_person'}
@@ -1005,6 +1191,7 @@ export const AdminConsole: React.FC = () => {
                   {activeViewTab === 'disputes' && 'Centre de Résolution des Litiges'}
                   {activeViewTab === 'pricing' && 'Configuration Tarifs & Commissions'}
                   {activeViewTab === 'features' && 'Directeur des Fonctionnalités (Pages Vendeurs & Livreurs)'}
+                  {activeViewTab === 'email_settings' && 'Centre de Gestion des E-mails & Configuration Gmail SMTP'}
                   {activeViewTab === 'tests' && 'Suite de Tests & Validations'}
                   {activeViewTab === 'audit' && 'Journal d\'Audit Système'}
                   {activeViewTab === 'security' && 'Sécurité & Whitelist Super-Admin'}
@@ -3712,6 +3899,487 @@ export const AdminConsole: React.FC = () => {
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* =========================================================================
+              TAB 13: PARAMÈTRES E-MAIL (Gmail SMTP & Diagnostic & Outbox)
+             ========================================================================= */}
+          {activeViewTab === 'email_settings' && (
+            <div className="space-y-6 animate-in fade-in duration-300">
+              {/* Banner */}
+              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-3xl p-6 sm:p-8 border border-slate-800 shadow-xl relative overflow-hidden">
+                <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-gradient-to-l from-emerald-500/10 to-transparent pointer-events-none" />
+                <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div className="space-y-2 max-w-2xl">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>PASSERELLE GMAIL SMTP (PROD)</span>
+                    </div>
+                    <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
+                      Centre de Gestion E-mails &amp; Configuration SMTP
+                    </h2>
+                    <p className="text-slate-300 text-xs sm:text-sm leading-relaxed">
+                      Configurez l'adresse expéditrice, le port relais, les identifiants Gmail SMTP sécurisés et testez la connexion en direct avec votre boîte mail.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleRunSmtpTest}
+                      disabled={isTestingSmtp}
+                      className="px-5 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95 cursor-pointer disabled:opacity-50"
+                    >
+                      <span className={`material-symbols-outlined text-lg ${isTestingSmtp ? 'animate-spin' : ''}`}>
+                        {isTestingSmtp ? 'sync' : 'bolt'}
+                      </span>
+                      <span>{isTestingSmtp ? 'Vérification SSL...' : 'Tester Connexion SMTP'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={openEmailCenter}
+                      className="px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all border border-slate-700 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-lg text-blue-400">mark_email_read</span>
+                      <span>Ouvrir Boîte d'Envoi</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Grid 2 Columns: Left = Form Parameters, Right = Test & Diagnostics */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* Left Column: Form Settings (7 cols) */}
+                <div className="lg:col-span-7 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-6">
+                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2.5 rounded-2xl bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400">
+                        <span className="material-symbols-outlined text-xl">settings_suggest</span>
+                      </div>
+                      <div>
+                        <h3 className="font-extrabold text-base text-slate-900 dark:text-white">
+                          Paramètres E-mail (Gmail SMTP)
+                        </h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          Gestion des paramètres de transmission Nodemailer
+                        </p>
+                      </div>
+                    </div>
+
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-extrabold flex items-center gap-1 ${
+                      isSmtpConfigured
+                        ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
+                        : 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800'
+                    }`}>
+                      <span className={`w-2 h-2 rounded-full ${isSmtpConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                      <span>{isSmtpConfigured ? 'SMTP CONFIGURÉ' : 'CONFIG INCOMPLÈTE'}</span>
+                    </span>
+                  </div>
+
+                  <form onSubmit={handleSaveSmtpSettings} className="space-y-4">
+                    {/* Adresse Expéditrice (From) */}
+                    <div>
+                      <label className="block text-xs font-extrabold text-slate-700 dark:text-slate-300 mb-1.5">
+                        Adresse Expéditrice (SMTP_FROM)
+                      </label>
+                      <input
+                        type="text"
+                        value={smtpFrom}
+                        onChange={(e) => setSmtpFrom(e.target.value)}
+                        placeholder="LivraLink Sécurité <Pamphile.gbede@gmail.com>"
+                        className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
+                        required
+                      />
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Nom d'expéditeur affiché dans la boîte de réception du client.
+                      </p>
+                    </div>
+
+                    {/* Hôte & Port */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-extrabold text-slate-700 dark:text-slate-300 mb-1.5">
+                          Hôte SMTP (SMTP_HOST)
+                        </label>
+                        <input
+                          type="text"
+                          value={smtpHost}
+                          onChange={(e) => setSmtpHost(e.target.value)}
+                          placeholder="smtp.gmail.com"
+                          className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
+                          required
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-extrabold text-slate-700 dark:text-slate-300 mb-1.5">
+                          Port (SMTP_PORT)
+                        </label>
+                        <input
+                          type="number"
+                          value={smtpPort}
+                          onChange={(e) => setSmtpPort(e.target.value)}
+                          placeholder="587"
+                          className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
+                          required
+                        />
+                        <p className="text-[10px] text-slate-400 mt-1">587 (STARTTLS) ou 465 (SSL)</p>
+                      </div>
+                    </div>
+
+                    {/* Authentication: User & Pass */}
+                    <div>
+                      <label className="block text-xs font-extrabold text-slate-700 dark:text-slate-300 mb-1.5">
+                        Utilisateur Gmail SMTP (SMTP_USER)
+                      </label>
+                      <input
+                        type="email"
+                        value={smtpUser}
+                        onChange={(e) => setSmtpUser(e.target.value)}
+                        placeholder="Pamphile.gbede@gmail.com"
+                        className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-xs font-extrabold text-slate-700 dark:text-slate-300">
+                          Mot de passe d'application Google (App Password)
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setShowSmtpPass(!showSmtpPass)}
+                          className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                        >
+                          {showSmtpPass ? 'Masquer' : 'Afficher'}
+                        </button>
+                      </div>
+                      <input
+                        type={showSmtpPass ? 'text' : 'password'}
+                        value={smtpPass}
+                        onChange={(e) => setSmtpPass(e.target.value)}
+                        placeholder="•••• •••• •••• •••• (16 caractères Google App Password)"
+                        className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
+                      />
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Utilisez un mot de passe d'application généré dans votre compte Google (Sécurité › Mots de passe d'application).
+                      </p>
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                      <div className="text-xs text-slate-500 flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-base text-emerald-500">lock</span>
+                        <span>Identifiants exclusivement stockés côté serveur</span>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isSavingSmtpConfig}
+                        className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs flex items-center gap-2 shadow-sm transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                      >
+                        <span className="material-symbols-outlined text-sm">save</span>
+                        <span>{isSavingSmtpConfig ? 'Enregistrement...' : 'Enregistrer la Configuration'}</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                {/* Right Column: Diagnostic Test & Real-time Live Result (5 cols) */}
+                <div className="lg:col-span-5 space-y-6">
+                  {/* Diagnostic Test Box */}
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2.5 rounded-2xl bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400">
+                        <span className="material-symbols-outlined text-xl">network_check</span>
+                      </div>
+                      <div>
+                        <h3 className="font-extrabold text-base text-slate-900 dark:text-white">
+                          Test de Connexion SMTP
+                        </h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          Vérification handshake socket &amp; TLS Nodemailer
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          E-mail de destination du test
+                        </label>
+                        <input
+                          type="email"
+                          value={testTargetEmail}
+                          onChange={(e) => setTestTargetEmail(e.target.value)}
+                          placeholder="Pamphile.gbede@gmail.com"
+                          className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none font-mono"
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleRunSmtpTest}
+                        disabled={isTestingSmtp}
+                        className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                      >
+                        <span className={`material-symbols-outlined text-base ${isTestingSmtp ? 'animate-spin' : ''}`}>
+                          {isTestingSmtp ? 'sync' : 'send'}
+                        </span>
+                        <span>{isTestingSmtp ? 'Vérification Nodemailer...' : '⚡ Exécuter le Test SMTP'}</span>
+                      </button>
+                    </div>
+
+                    {/* Diagnostic Result Output */}
+                    {smtpTestResult ? (
+                      <div className={`p-4 rounded-2xl border space-y-2 text-xs font-mono animate-in fade-in ${
+                        smtpTestResult.success && smtpTestResult.verified
+                          ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-300 dark:border-emerald-800 text-emerald-950 dark:text-emerald-200'
+                          : 'bg-red-50 dark:bg-red-950/50 border-red-300 dark:border-red-800 text-red-950 dark:text-red-200'
+                      }`}>
+                        <div className="flex items-center justify-between border-b border-emerald-200/50 dark:border-emerald-800/50 pb-2">
+                          <span className="font-extrabold flex items-center gap-1">
+                            <span className="material-symbols-outlined text-sm">
+                              {smtpTestResult.success && smtpTestResult.verified ? 'check_circle' : 'error'}
+                            </span>
+                            <span>{smtpTestResult.success && smtpTestResult.verified ? 'HANDSHAKE RÉUSSI' : 'ÉCHEC TEST SMTP'}</span>
+                          </span>
+                          {smtpTestResult.latencyMs && (
+                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-200 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-200">
+                              {smtpTestResult.latencyMs} ms
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-[11px] leading-relaxed font-sans font-medium">
+                          {smtpTestResult.message || smtpTestResult.error}
+                        </p>
+
+                        {smtpTestResult.recipient && (
+                          <p className="text-[10px] text-slate-600 dark:text-slate-400">
+                            <strong>Destinataire :</strong> {smtpTestResult.recipient}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 text-slate-500 text-xs text-center space-y-1">
+                        <span className="material-symbols-outlined text-2xl text-slate-400">speed</span>
+                        <p className="font-medium text-slate-600 dark:text-slate-400">Aucun test récent</p>
+                        <p className="text-[11px] text-slate-400">
+                          Cliquez sur le bouton pour vérifier la réponse du serveur Gmail SMTP.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* System Architecture Guarantees */}
+                  <div className="bg-slate-900 text-slate-200 p-5 rounded-3xl border border-slate-800 space-y-3">
+                    <h4 className="font-bold text-xs text-amber-300 flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-sm">verified</span>
+                      <span>Intégrité &amp; Sécurité OTP</span>
+                    </h4>
+                    <ul className="text-[11px] text-slate-300 space-y-2">
+                      <li className="flex items-start gap-2">
+                        <span className="text-emerald-400 font-bold">✓</span>
+                        <span><strong>Système OTP Intact</strong> : Hachage HMAC-SHA256, expiration 10 minutes et limite de 3 essais conservés à 100%.</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-emerald-400 font-bold">✓</span>
+                        <span><strong>Firebase Admin SDK Synchronisé</strong> : Mise à jour directe du compte Firebase Authentication à la validation.</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-emerald-400 font-bold">✓</span>
+                        <span><strong>Relais Gmail SMTP Officiel</strong> : Brevo est totalement remplacé par Nodemailer sur port 587 (smtp.gmail.com).</span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bottom Section: Outbox History */}
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2.5 rounded-2xl bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400">
+                      <span className="material-symbols-outlined text-xl">outbox</span>
+                    </div>
+                    <div>
+                      <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-2">
+                        <span>Historique de la Boîte d'Envoi (Outbox)</span>
+                        <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                          {outboxEmails.length}
+                        </span>
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Liste de tous les e-mails transmis via la passerelle Gmail SMTP
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Action buttons & Filter Pills */}
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={handleProcessEmailQueue}
+                      disabled={isProcessingQueue}
+                      className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold transition-all flex items-center gap-1.5 shadow-2xs active:scale-95 cursor-pointer disabled:opacity-50"
+                      title="Purger et re-tenter l'envoi de la file d'attente des e-mails en attente"
+                    >
+                      <span className={`material-symbols-outlined text-sm ${isProcessingQueue ? 'animate-spin' : ''}`}>
+                        {isProcessingQueue ? 'sync' : 'published_with_changes'}
+                      </span>
+                      <span>{isProcessingQueue ? 'Traitement...' : 'Ré-essayer File d\'Attente'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setOutboxFilter('all')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                        outboxFilter === 'all'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      Tous ({outboxEmails.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOutboxFilter('welcome')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                        outboxFilter === 'welcome'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      Bienvenue
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOutboxFilter('password_reset_request')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                        outboxFilter === 'password_reset_request'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      OTP Réinit
+                    </button>
+                  </div>
+                </div>
+
+                {/* Table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 uppercase text-[10px] tracking-wider font-extrabold bg-slate-50 dark:bg-slate-800/50">
+                        <th className="py-3 px-4">Date &amp; Heure</th>
+                        <th className="py-3 px-4">Type</th>
+                        <th className="py-3 px-4">Destinataire</th>
+                        <th className="py-3 px-4">Objet</th>
+                        <th className="py-3 px-4 text-center">Transmission &amp; File</th>
+                        <th className="py-3 px-4 text-right">Aperçu</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
+                      {outboxEmails.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-8 text-center text-slate-400">
+                            Aucun e-mail enregistré dans la boîte d'envoi.
+                          </td>
+                        </tr>
+                      ) : (
+                        outboxEmails
+                          .filter((e) => outboxFilter === 'all' || e.type === outboxFilter)
+                          .map((item) => (
+                            <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                              <td className="py-3 px-4 whitespace-nowrap text-slate-500 font-mono text-[11px]">
+                                {new Date(item.sentAt).toLocaleString('fr-FR')}
+                              </td>
+                              <td className="py-3 px-4 whitespace-nowrap">
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 uppercase">
+                                  {item.type}
+                                </span>
+                              </td>
+                              <td className="py-3 px-4 whitespace-nowrap font-bold text-slate-900 dark:text-slate-100 font-mono">
+                                {item.to}
+                              </td>
+                              <td className="py-3 px-4 truncate max-w-[240px] text-slate-700 dark:text-slate-300">
+                                {item.subject}
+                              </td>
+                              <td className="py-3 px-4 text-center whitespace-nowrap">
+                                <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                  item.deliveredViaSmtp || item.status === 'sent'
+                                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                                    : item.status === 'queued'
+                                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                                    : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
+                                }`}>
+                                  <span className="material-symbols-outlined text-xs">
+                                    {item.deliveredViaSmtp || item.status === 'sent' ? 'cloud_done' : item.status === 'queued' ? 'pending' : 'error'}
+                                  </span>
+                                  <span>
+                                    {item.deliveredViaSmtp || item.status === 'sent'
+                                      ? 'Gmail SMTP'
+                                      : item.status === 'queued'
+                                      ? `En File (${item.retryCount || 1}/3)`
+                                      : 'Échec'}
+                                  </span>
+                                </span>
+                              </td>
+                              <td className="py-3 px-4 text-right whitespace-nowrap">
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewModalEmail(item)}
+                                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-[11px] cursor-pointer"
+                                >
+                                  Voir HTML
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Preview Modal for selected email */}
+              {previewModalEmail && (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in"
+                  onClick={() => setPreviewModalEmail(null)}
+                >
+                  <div
+                    className="bg-white dark:bg-slate-900 w-full max-w-2xl max-h-[85vh] rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-900">
+                      <div>
+                        <h4 className="font-extrabold text-sm text-slate-900 dark:text-white">
+                          Aperçu du Modèle HTML
+                        </h4>
+                        <p className="text-xs text-slate-500 font-mono">À: {previewModalEmail.to}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewModalEmail(null)}
+                        className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                      >
+                        <span className="material-symbols-outlined text-xl">close</span>
+                      </button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-100 dark:bg-slate-950">
+                      <div
+                        className="bg-white p-4 rounded-xl shadow-xs"
+                        dangerouslySetInnerHTML={{ __html: previewModalEmail.htmlContent }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </main>

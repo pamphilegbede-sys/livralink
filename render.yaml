@@ -27,14 +27,15 @@ services:
         sync: false
       - key: VITE_FIREBASE_APP_ID
         sync: false
-      # Configuration SMTP Brevo pour l'envoi d'emails OTP réels
-      - key: BREVO_SMTP_HOST
-        value: smtp-relay.brevo.com
-      - key: BREVO_SMTP_PORT
-        value: 587
-      - key: BREVO_SMTP_USER
+      # Configuration SMTP Gmail pour l'envoi d'emails OTP réels
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: GMAIL_SMTP_USER
         sync: false
-      - key: BREVO_SMTP_KEY
+      - key: GMAIL_SMTP_PASS
         sync: false
-      - key: BREVO_SMTP_FROM
+      - key: SMTP_FROM
         sync: false
+

@@ -20,7 +20,11 @@ export const Sidebar: React.FC = () => {
     merchants,
     kycRequests,
     openLivreurSearchModal,
+    userProfile,
+    isEmailAuthorizedAdmin,
   } = useApp();
+
+  const isUserSuperAdmin = Boolean(userProfile?.email && isEmailAuthorizedAdmin(userProfile.email));
 
   const handleLogout = async () => {
     await logout();
@@ -141,6 +145,34 @@ export const Sidebar: React.FC = () => {
                 <span>Paramètres Vendeur</span>
               </button>
 
+              {/* Super-Admin Dashboard Button for pamphile.gbede@gmail.com */}
+              {isUserSuperAdmin && (
+                <div className="pt-2 mt-2 border-t border-amber-200 dark:border-amber-900/40">
+                  <p className="px-3 text-[10px] font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-1.5">Privilège Super-Admin</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (currentView === 'admin_console') {
+                        setCurrentView('vendeur_dashboard');
+                      } else {
+                        setCurrentView('admin_console');
+                      }
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all ${
+                      currentView === 'admin_console'
+                        ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                        : 'bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-300 hover:bg-amber-100 border border-amber-300/60 dark:border-amber-700/50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-base">👑</span>
+                      <span>{currentView === 'admin_console' ? 'Quitter Admin' : 'Dashboard Admin'}</span>
+                    </div>
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+                  </button>
+                </div>
+              )}
+
               {/* Bouton Déconnexion dans la barre latérale Vendeur */}
               <div className="pt-2 mt-2 border-t border-slate-100 dark:border-slate-800">
                 <button
@@ -213,6 +245,34 @@ export const Sidebar: React.FC = () => {
                 <span className="material-symbols-outlined text-xl">settings</span>
                 <span>Paramètres Livreur</span>
               </button>
+
+              {/* Super-Admin Dashboard Button for pamphile.gbede@gmail.com */}
+              {isUserSuperAdmin && (
+                <div className="pt-2 mt-2 border-t border-amber-200 dark:border-amber-900/40">
+                  <p className="px-3 text-[10px] font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-1.5">Privilège Super-Admin</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (currentView === 'admin_console') {
+                        setCurrentView('livreur_dashboard');
+                      } else {
+                        setCurrentView('admin_console');
+                      }
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all ${
+                      currentView === 'admin_console'
+                        ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                        : 'bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-300 hover:bg-amber-100 border border-amber-300/60 dark:border-amber-700/50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-base">👑</span>
+                      <span>{currentView === 'admin_console' ? 'Quitter Admin' : 'Dashboard Admin'}</span>
+                    </div>
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+                  </button>
+                </div>
+              )}
 
               {/* Bouton Déconnexion dans la barre latérale Livreur */}
               <div className="pt-2 mt-2 border-t border-slate-100 dark:border-slate-800">

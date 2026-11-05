@@ -273,7 +273,7 @@ export const EmailNotificationCenterModal: React.FC<EmailNotificationCenterModal
                         <span className="material-symbols-outlined text-xs">
                           {item.deliveredViaSmtp ? 'cloud_done' : 'history_toggle_off'}
                         </span>
-                        <span>{item.deliveredViaSmtp ? 'Brevo SMTP' : 'Archivé'}</span>
+                        <span>{item.deliveredViaSmtp ? 'Gmail SMTP' : 'Archivé'}</span>
                       </span>
                     </div>
                   </button>
@@ -333,7 +333,7 @@ export const EmailNotificationCenterModal: React.FC<EmailNotificationCenterModal
         <footer className="p-3 sm:p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex items-center justify-between text-xs">
           <div className="flex items-center gap-2 text-slate-500">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Passerelle Brevo SMTP &amp; Outbox LivraLink en service</span>
+            <span>Passerelle Gmail SMTP &amp; Outbox LivraLink en service</span>
           </div>
 
           <button

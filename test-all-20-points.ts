@@ -49,12 +49,12 @@ async function runAll20PointsVerification() {
   try {
     const res = await fetch(`${BASE_URL}/api/security/budget`);
     const data = await res.json();
-    const hasQuotas = data?.quotas?.brevoEmails?.cap === 100 && data?.quotas?.mapsApiCalls?.cap === 500;
+    const hasQuotas = data?.quotas?.gmailEmails?.cap === 500 && data?.quotas?.mapsApiCalls?.cap === 500;
     record(
       '02',
       'Plafonne tes appels d\'API (Token Bucket / Circuit Breaker)',
       hasQuotas && data.status === 'ACTIVE_GUARD',
-      `Plafonds stricts actifs : Brevo (100/j), Maps (500/j), Gemini (200/j)`
+      `Plafonds stricts actifs : Gmail SMTP (${data?.quotas?.gmailEmails?.cap}/j), Maps (500/j), Gemini (200/j)`
     );
   } catch (e: any) {
     record('02', 'Plafonne tes appels d\'API', false, e.message);
@@ -294,10 +294,13 @@ async function runAll20PointsVerification() {
     const payload = { testSnapshotKey: 'snap_val_42', count: 99 };
     const bRes = await fetch(`${BASE_URL}/api/system/backup`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-admin-secret': 'livralink_super_admin_2026_key' },
       body: JSON.stringify({ data: payload })
     });
-    const rRes = await fetch(`${BASE_URL}/api/system/restore`, { method: 'POST' });
+    const rRes = await fetch(`${BASE_URL}/api/system/restore`, {
+      method: 'POST',
+      headers: { 'x-admin-secret': 'livralink_super_admin_2026_key' }
+    });
     const rData = await rRes.json();
     record(
       '20',

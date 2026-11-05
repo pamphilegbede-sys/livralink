@@ -161,7 +161,7 @@ export const RegisterPage: React.FC = () => {
         showToast(`Compte Livreur créé avec succès ! Bienvenue ${profile.fullName}.`, 'success');
       }
 
-      // Automatically send official Welcome Email (brevo SMTP / logged to Outbox)
+      // Automatically send official Welcome Email (Gmail SMTP / logged to Outbox)
       sendWelcomeEmail({
         email: email.trim(),
         fullName: fullName.trim(),

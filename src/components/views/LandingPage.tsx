@@ -49,19 +49,6 @@ export const LandingPage: React.FC = () => {
 
           {/* Right Actions */}
           <div className="flex items-center gap-1.5 sm:gap-3">
-            {/* Direct Admin Access Button */}
-            <button
-              onClick={() => {
-                setCurrentRole('admin');
-                setCurrentView('admin_console');
-              }}
-              className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 bg-gradient-to-r from-purple-700 via-indigo-700 to-blue-700 hover:from-purple-800 hover:to-blue-800 text-amber-200 border border-amber-400/40 rounded-xl text-[11px] sm:text-xs font-bold shadow-sm active:scale-95 transition-all flex items-center gap-1"
-              title="Accéder au panneau d'administration"
-            >
-              <span>👑</span>
-              <span className="hidden sm:inline">Console </span>
-              <span>Admin</span>
-            </button>
 
             <button
               onClick={() => {
@@ -133,16 +120,6 @@ export const LandingPage: React.FC = () => {
               >
                 <span className="material-symbols-outlined text-lg text-emerald-600">two_wheeler</span>
                 <span>Espace Livreur</span>
-              </button>
-              <button
-                onClick={() => {
-                  setCurrentRole('admin');
-                  setCurrentView('admin_console');
-                }}
-                className="py-3.5 px-5 bg-gradient-to-r from-slate-900 to-indigo-950 hover:from-slate-800 hover:to-indigo-900 text-amber-300 border border-amber-400/40 rounded-xl font-bold text-sm shadow-md active:scale-95 transition-all flex items-center justify-center gap-2"
-              >
-                <span>👑</span>
-                <span>Superviseur Admin</span>
               </button>
             </div>
 
@@ -601,15 +578,6 @@ export const LandingPage: React.FC = () => {
             <span>© 2025 LivraLink Technologies Inc. Tous droits réservés. Données sécurisées et cryptées bout-en-bout.</span>
           </div>
           <div className="flex flex-wrap items-center gap-4">
-            <button
-              onClick={() => {
-                setCurrentRole('admin');
-                setCurrentView('admin_console');
-              }}
-              className="text-amber-700 hover:text-amber-900 font-bold flex items-center gap-1 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200"
-            >
-              <span>👑 Console Admin</span>
-            </button>
             <a href="#confidentialite" className="hover:text-blue-600">Politique de confidentialité</a>
             <a href="#cgu" className="hover:text-blue-600">Conditions d'utilisation</a>
             <a href="#support" className="hover:text-blue-600">Support technique</a>

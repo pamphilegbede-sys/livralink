@@ -192,7 +192,7 @@ async function runSecurityTests() {
 
   // 6. Test Cryptographique HMAC-SHA256 OTP
   try {
-    const salt = 'livralink-brevo-otp-secret-salt-2026';
+    const salt = 'livralink-gmail-otp-secret-salt-2026';
     const email = 'client@example.com';
     const code = '123456';
     const hash = crypto.createHmac('sha256', salt).update(`${email}:${code}`).digest('hex');
