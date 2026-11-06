@@ -1,15 +1,13 @@
-// Source: Google Maps Platform Code Assist
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
-import { MobileBottomNav } from '../common/MobileBottomNav';
 import { BackButton } from '../common/BackButton';
 import { GoogleMapDelivery } from '../maps/GoogleMapDelivery';
 import { getLocationForCommune, calculateDistanceKm, calculateDeliveryPrice } from '../../config/maps';
 import { DeliveryOrder } from '../../types';
+
 import { OnboardingGuideModal } from '../modals/OnboardingGuideModal';
-import { LivreurDeliveryHistory } from './LivreurDeliveryHistory';
 
 export const LivreurDashboard: React.FC = () => {
   const {
@@ -30,25 +28,15 @@ export const LivreurDashboard: React.FC = () => {
     createDelivery,
     setCurrentView,
     featureFlags,
-    simulateNewPriorityMission,
     openEmailCenter,
     openKYCModal,
     kycRequests,
   } = useApp();
 
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [expandedMapOrderId, setExpandedMapOrderId] = useState<string | null>(null);
 
-  // Onboarding Guide Auto-Display on first load
-  const [isOnboardingOpen, setIsOnboardingOpen] = useState(() => {
-    try {
-      const completed = localStorage.getItem('livralink_onboarding_completed_livreur');
-      return completed !== 'true';
-    } catch {
-      return false;
-    }
-  });
-
-  // Livraisons en attente d'acceptation par les livreurs (créées par les vendeurs, ouvertes à tous)
+  // Livraisons en attente d'acceptation par les livreurs
   const pendingDeliveries = deliveries.filter(
     (d) => d.status === 'en_attente' || !d.courier
   );
@@ -63,7 +51,7 @@ export const LivreurDashboard: React.FC = () => {
   const activeCourierPhone = (userProfile?.role === 'livreur' && userProfile.phone) || courierSettings.phone || selectedCourier?.phone || '';
   const activeCourierVehicle = courierSettings.vehicleType || selectedCourier?.vehicle || 'Moto';
 
-  // KYC status evaluation: courier must be approved before activity is authorized
+  // KYC status evaluation
   const isKycApproved =
     selectedCourier?.isKycVerified ||
     userProfile?.isKycVerified ||
@@ -86,7 +74,7 @@ export const LivreurDashboard: React.FC = () => {
     ? 'valide'
     : (existingKyc?.status as any) || 'non_soumis';
 
-  // Mission active en cours spécifiquement attribuée à ce livreur
+  // Mission active en cours attribuée à ce livreur
   const activeOrder = deliveries.find((d) => {
     const isOngoing = d.status === 'acceptee' || d.status === 'colis_recupere' || d.status === 'en_cours';
     if (!isOngoing) return false;
@@ -102,7 +90,7 @@ export const LivreurDashboard: React.FC = () => {
     return d.courier?.id === selectedCourier?.id || (selectedCourier && d.courier?.name === selectedCourier.name);
   });
 
-  // Coordonnées GPS pour la carte Google Maps de la mission active
+  // GPS coordinates for map
   const activeOriginCoords = activeOrder?.pickupLocation?.coordinates
     ? {
         lat: activeOrder.pickupLocation.coordinates[0],
@@ -126,15 +114,6 @@ export const LivreurDashboard: React.FC = () => {
     setIsPODModalOpen(true);
   };
 
-  const handleWhatsApp = (order: DeliveryOrder) => {
-    if (!featureFlags.allowDirectCallClient) {
-      showToast("Le contact direct avec le client a été restreint par l'administrateur.", 'error');
-      return;
-    }
-    const msg = `Bonjour ${order.clientName}, je suis votre livreur LivraLink pour votre commande ${order.id}. Je suis en route pour la livraison. Êtes-vous bien disponible ?`;
-    openWhatsAppModal(order.clientPhone, order.clientName, msg);
-  };
-
   const handleAcceptOrder = (order: DeliveryOrder) => {
     if (!featureFlags.livreurSpaceEnabled) {
       showToast("L'espace livreur est actuellement verrouillé par l'administrateur.", 'error');
@@ -145,7 +124,7 @@ export const LivreurDashboard: React.FC = () => {
 
   const handleRefuseOrder = (orderId: string) => {
     if (!featureFlags.allowMissionRefusal) {
-      showToast("Le refus de mission a été désactivé par l'administrateur. Toutes les courses doivent être prises en charge.", 'error');
+      showToast("Le refus de mission a été désactivé par l'administrateur.", 'error');
       return;
     }
     refuseDelivery(orderId);
@@ -153,10 +132,9 @@ export const LivreurDashboard: React.FC = () => {
 
   const handleValidatePickup = (orderId: string) => {
     updateDeliveryStatus(orderId, 'colis_recupere', 'Colis récupéré chez le marchand • En route vers le destinataire');
-    showToast(`📦 Colis récupéré pour la course ${orderId} ! En route vers le destinataire.`, 'success');
+    showToast(`Colis récupéré pour la course ${orderId}`, 'success');
   };
 
-  // Création instantanée d'une livraison test vendeur pour valider le flux
   const handleCreateTestOrder = () => {
     const testOrder = createDelivery({
       clientName: 'Marius Dossou',
@@ -182,361 +160,174 @@ export const LivreurDashboard: React.FC = () => {
       itemValueCOD: 25000,
       deliveryFee: calculateDeliveryPrice(calculateDistanceKm({ lat: 6.3571, lng: 2.4175 }, { lat: 6.4485, lng: 2.3556 })),
       status: 'en_attente',
-      statusNote: 'Nouvelle course créée par le vendeur • En attente de validation livreur',
+      statusNote: 'Nouvelle course créée par le vendeur',
     });
-    showToast(`Nouvelle course ${testOrder.id} créée ! Elle est désormais disponible ci-dessous.`, 'success');
+    showToast(`Nouvelle course ${testOrder.id} créée !`, 'success');
   };
 
   return (
-    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans']">
-      {/* Sidebar Desktop */}
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans'] transition-colors duration-200">
       <Sidebar />
 
-      {/* Main Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff] dark:bg-slate-950">
-        {/* Top Header */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-slate-50 dark:bg-slate-950 transition-colors duration-200">
         <Header
           title="Tableau de bord Livreur"
-          subtitle="Tournée en cours • Cotonou, Calavi & Grand Nokoué (Bénin)"
+          subtitle="Aperçu des missions et tournées en cours"
         />
 
-        {/* Scrollable Container */}
-        <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-28 md:pb-8">
-          {/* 1. Courier Greeting & Availability Toggle */}
-          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-start gap-3 sm:gap-4">
+        <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-28 md:pb-8 max-w-7xl w-full mx-auto">
+          {/* Top Profile Header & Availability Bar */}
+          <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
               <BackButton />
-              <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-                <span className="material-symbols-outlined text-2xl">two_wheeler</span>
-              </div>
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white">
-                    Bonjour, {displayName} !
+                  <h1 className="text-xl font-bold text-slate-900 dark:text-white">
+                    Bonjour, {displayName}
                   </h1>
                   <button
                     type="button"
                     onClick={toggleCourierAvailability}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all shadow-2xs ${
+                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${
                       courierSettings.isAvailable
-                        ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
-                        : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
                     }`}
                   >
-                    <span
-                      className={`w-2 h-2 rounded-full ${
-                        courierSettings.isAvailable
-                          ? 'bg-emerald-600 animate-ping'
-                          : 'bg-slate-500'
-                      }`}
-                    ></span>
-                    <span>
-                      {courierSettings.isAvailable
-                        ? 'Statut : En ligne 🟢'
-                        : 'Statut : En pause ⏸️'}
-                    </span>
+                    <span className={`w-2 h-2 rounded-full ${courierSettings.isAvailable ? 'bg-emerald-500' : 'bg-slate-400'}`}></span>
+                    <span>{courierSettings.isAvailable ? 'En ligne' : 'En pause'}</span>
                   </button>
                 </div>
-                <div className="flex items-center gap-2 mt-2 flex-wrap">
-                  <div className="flex items-center gap-1.5 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-800/60 px-2.5 py-1 rounded-xl text-xs">
-                    <span className="material-symbols-outlined text-sm text-blue-600 dark:text-blue-400">badge</span>
-                    <span className="text-[11px] font-bold text-blue-800 dark:text-blue-300">Compte coursier :</span>
-                    <select
-                      value={selectedCourier?.name || activeCourierName}
-                      onChange={(e) => selectActiveCourier(e.target.value)}
-                      className="bg-transparent font-extrabold text-slate-900 dark:text-white focus:outline-none cursor-pointer text-xs"
-                      title="Changer de coursier pour tester les attributions et acceptations"
-                    >
-                      {couriers.map((c) => (
-                        <option key={c.id} value={c.name} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                          {c.name} ({c.vehicle})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                    {activeCourierVehicle} • {activeCourierPhone}
-                  </span>
+                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
+                  <span>{activeCourierVehicle} · {activeCourierPhone}</span>
+                  <select
+                    value={selectedCourier?.name || activeCourierName}
+                    onChange={(e) => selectActiveCourier(e.target.value)}
+                    className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md px-2 py-0.5 text-xs text-slate-700 dark:text-slate-200 focus:outline-none"
+                    title="Changer de coursier"
+                  >
+                    {couriers.map((c) => (
+                      <option key={c.id} value={c.name} className="bg-white dark:bg-slate-900">
+                        {c.name} ({c.vehicle})
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Courses instantanées avec tarification Google Maps à 100 FCFA/km • Vous avez le choix d'accepter ou de refuser chaque livraison.
-                </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
-                onClick={openEmailCenter}
-                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
-                title="Consulter les e-mails envoyés (Bienvenue, Codes, Sécurité)"
+                onClick={openKYCModal}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border cursor-pointer ${
+                  isKycApproved
+                    ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                    : 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                }`}
               >
-                <span className="material-symbols-outlined text-base text-blue-600 dark:text-blue-400">mail</span>
-                <span>Boîte E-mails</span>
+                {isKycApproved ? 'KYC Validé' : 'Vérification KYC'}
               </button>
               <button
                 type="button"
                 onClick={() => setIsOnboardingOpen(true)}
-                className="px-3.5 py-2 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 rounded-xl text-xs font-bold border border-indigo-200/80 dark:border-indigo-800 flex items-center gap-1.5 transition-all active:scale-95 shadow-2xs cursor-pointer"
-                title="Consulter le guide de prise en main coursier"
+                className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 text-xs font-medium hover:bg-slate-50"
               >
-                <span className="material-symbols-outlined text-base text-indigo-600 dark:text-indigo-400">help_outline</span>
-                <span>Guide coursier</span>
+                Guide
               </button>
               <button
                 type="button"
-                onClick={openKYCModal}
-                className={`px-3 py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-all cursor-pointer ${
-                  isKycApproved
-                    ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
-                    : 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-xs'
-                }`}
-                title="Consulter ou soumettre votre dossier KYC pour autoriser l'activité de coursier"
+                onClick={openEmailCenter}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 text-xs font-medium hover:bg-slate-50"
               >
-                <span className="material-symbols-outlined text-base">verified_user</span>
-                <span>{isKycApproved ? 'KYC Validé ✓' : 'Contrôle KYC Requis !'}</span>
+                E-mails
               </button>
             </div>
           </div>
 
-          {/* Contrôle KYC Obligatoire Avant Démarrage d'Activité */}
-          {!isKycApproved ? (
-            <div className="p-4 sm:p-5 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 text-amber-950 dark:text-amber-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm mb-6 animate-in fade-in">
-              <div className="flex items-start gap-3.5 min-w-0">
-                <div className="w-11 h-11 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md">
-                  <span className="material-symbols-outlined text-2xl">verified_user</span>
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="font-extrabold text-sm sm:text-base text-amber-950 dark:text-amber-100">
-                      Contrôle KYC Obligatoire : Activité de Livraison Verrouillée
-                    </h3>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 font-bold uppercase tracking-wider">
-                      {kycStatus === 'en_attente' ? 'Examen en cours' : kycStatus === 'refuse' ? 'Dossier Refusé' : 'Non Soumis'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-amber-900/90 dark:text-amber-200/90 mt-1 leading-relaxed">
-                    {kycStatus === 'en_attente'
-                      ? "Votre dossier d'identification est en cours d'examen par l'administration. Dès validation, votre statut « En ligne » et l'acceptation de courses seront automatiquement débloqués."
-                      : kycStatus === 'refuse'
-                      ? `Votre dossier KYC a été rejeté (${existingKyc?.rejectionReason || 'documents non conformes'}). Veuillez corriger vos pièces pour autoriser votre activité.`
-                      : "Avant de démarrer votre activité de coursier et de recevoir des courses, vous devez obligatoirement soumettre votre pièce d'identité (CIP, CNI ou permis) pour contrôle et accréditation."}
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={openKYCModal}
-                className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-md transition-all active:scale-95 shrink-0 flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-base">badge</span>
-                <span>{kycStatus === 'en_attente' ? 'Vérifier mon statut KYC' : 'Déposer mon dossier KYC'}</span>
-              </button>
-            </div>
-          ) : (
-            <div className="p-3 px-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-center justify-between gap-3 text-xs mb-4">
+          {/* KYC Alert if not approved */}
+          {!isKycApproved && (
+            <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-emerald-600 dark:text-emerald-400 text-lg">verified</span>
-                <span className="text-emerald-900 dark:text-emerald-200 font-bold">
-                  Compte Coursier Accrédité KYC • Activité Pleinement Autorisée
-                </span>
+                <span className="material-symbols-outlined text-lg text-amber-600 shrink-0">verified_user</span>
+                <span>Votre dossier KYC est en attente ou non soumis. Veuillez déposer votre pièce pour débloquer toutes vos missions.</span>
               </div>
               <button
-                type="button"
                 onClick={openKYCModal}
-                className="text-emerald-700 dark:text-emerald-400 font-bold hover:underline cursor-pointer"
+                className="px-3 py-1.5 rounded-lg bg-amber-600 text-white font-medium text-xs hover:bg-amber-700 shrink-0"
               >
-                Voir accréditation
+                Déposer pièce
               </button>
             </div>
           )}
 
-          {/* Admin Space Maintenance Alert if disabled */}
-          {!featureFlags.livreurSpaceEnabled && (
-            <div className="p-4 sm:p-5 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 text-amber-950 dark:text-amber-200 flex items-start gap-4 shadow-sm animate-pulse mb-6">
-              <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md">
-                <span className="material-symbols-outlined text-2xl">admin_panel_settings</span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="font-extrabold text-sm sm:text-base text-amber-950 dark:text-amber-100">
-                    Espace Livreur Sous Contrôle Administrateur (Maintenance Active)
-                  </h3>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 font-bold uppercase tracking-wider">
-                    Verrouillage Admin
-                  </span>
-                </div>
-                <p className="text-xs sm:text-sm text-amber-900/90 dark:text-amber-300/90 mt-1">
-                  {featureFlags.livreurMaintenanceNotice || "L'espace coursier est temporairement suspendu pour maintenance par l'administrateur général LivraLink. L'acceptation de missions et les opérations financières sont suspendues."}
-                </p>
+          {/* Key Stats Strip */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Courses du jour</span>
+              <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-slate-900 dark:text-white">
+                {deliveries.filter((d) => d.status === 'livree').length}
               </div>
             </div>
-          )}
 
-          {/* Interactive Onboarding Welcome Banner for Couriers */}
-          <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-teal-600 via-emerald-600 to-indigo-600 text-white shadow-lg shadow-emerald-600/15 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-              <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-white/20 backdrop-blur-md text-white flex items-center justify-center shrink-0 shadow-inner">
-                <span className="material-symbols-outlined text-2xl">two_wheeler</span>
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Revenus estimés</span>
+              <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                {(
+                  deliveries
+                    .filter((d) => d.status === 'livree')
+                    .reduce((sum, d) => sum + (d.deliveryFee || 2500), 0) + 12500
+                ).toLocaleString('fr-FR')} <span className="text-xs text-slate-400 font-normal">FCFA</span>
               </div>
-              <div className="min-w-0">
-                <h2 className="text-sm sm:text-base font-extrabold flex items-center gap-2 flex-wrap">
-                  <span>Nouveau coursier ? Maîtrisez vos missions et vos retraits</span>
-                  <span className="px-2 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-bold">Guide Pas-à-Pas</span>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Validation POD</span>
+              <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-blue-600 dark:text-blue-400">
+                {deliveries.filter((d) => d.status === 'livree').length}
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Disponibles</span>
+              <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-amber-600 dark:text-amber-400">
+                {pendingDeliveries.length}
+              </div>
+            </div>
+          </div>
+
+          {/* Available Vendor Missions */}
+          <section className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                  Missions Vendeurs Disponibles ({pendingDeliveries.length})
                 </h2>
-                <p className="text-xs text-teal-100 mt-0.5">
-                  Découvrez comment accepter une course, naviguer avec Google Maps, valider la preuve POD et retirer vos gains via MoMo.
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Choisissez vos courses à exécuter à 100 FCFA/km
                 </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsOnboardingOpen(true)}
-              className="px-4 py-2.5 rounded-xl bg-white hover:bg-teal-50 text-teal-800 font-bold text-xs shadow-md transition-all active:scale-95 shrink-0 flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-base">play_circle</span>
-              <span>Lancer le guide</span>
-            </button>
-          </div>
-
-          {/* 2. Key Stats Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-            {/* Courses Jour */}
-            <div className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs space-y-2">
-              <div className="flex items-center justify-between text-xs text-slate-500 font-semibold">
-                <span>COURSES JOUR</span>
-                <span className="material-symbols-outlined text-blue-600">calendar_today</span>
-              </div>
-              <div className="flex items-baseline gap-1.5 flex-wrap">
-                <span className="text-2xl sm:text-3xl font-black text-slate-900">
-                  {deliveries.filter((d) => d.status === 'livree').length}
-                </span>
-                <span className="text-xs text-slate-400 font-bold">/ 10 courses</span>
-              </div>
-              <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                <div className="bg-blue-600 h-full rounded-full" style={{ width: '70%' }}></div>
-              </div>
-              <span className="text-[10px] text-slate-400 block">Objectif journalier</span>
-            </div>
-
-            {/* Revenus Jour */}
-            <div className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs space-y-2">
-              <div className="flex items-center justify-between text-xs text-slate-500 font-semibold">
-                <span>REVENUS JOUR</span>
-                <button
-                  type="button"
-                  onClick={() => setCurrentView('livreur_wallet')}
-                  className="text-xs font-bold text-blue-600 hover:underline"
-                >
-                  Retrait ›
-                </button>
-              </div>
-              <div className="flex items-baseline gap-1 flex-wrap">
-                <span className="text-2xl sm:text-3xl font-black text-slate-900">
-                  {(
-                    deliveries
-                      .filter((d) => d.status === 'livree')
-                      .reduce((sum, d) => sum + (d.deliveryFee || 2500), 0) + 12500
-                  ).toLocaleString('fr-FR')}
-                </span>
-                <span className="text-xs font-bold text-slate-400">FCFA</span>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] pt-1">
-                <span className="text-emerald-600 font-bold">100 F/km net</span>
-                <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                  MoMo / Celtiis
-                </span>
-              </div>
-            </div>
-
-            {/* Livrées (POD) */}
-            <div className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs space-y-2">
-              <div className="flex items-center justify-between text-xs text-slate-500 font-semibold">
-                <span>LIVRÉES (POD)</span>
-                <span className="material-symbols-outlined text-emerald-600">check_circle</span>
-              </div>
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-2xl sm:text-3xl font-black text-emerald-700">
-                  {deliveries.filter((d) => d.status === 'livree').length}
-                </span>
-                <span className="text-xs font-bold text-emerald-600">100% Validées</span>
-              </div>
-              <p className="text-[11px] text-slate-500">Preuves POD sécurisées sans litige</p>
-            </div>
-
-            {/* En attente d'acceptation */}
-            <div className="bg-amber-50/80 border-2 border-amber-300 p-4 sm:p-5 rounded-3xl shadow-xs space-y-2">
-              <div className="flex items-center justify-between text-xs text-amber-800 font-bold">
-                <span>EN ATTENTE</span>
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-ping"></span>
-              </div>
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-2xl sm:text-3xl font-black text-amber-950">
-                  {pendingDeliveries.length}
-                </span>
-                <span className="text-xs font-bold text-amber-700">à accepter</span>
-              </div>
-              <p className="text-[11px] text-amber-900 font-medium">Courses vendeurs prêtes</p>
-            </div>
-          </div>
-
-          {/* 3. Section Clé : COURSES CRÉÉES PAR LES VENDEURS DISPONIBLES À ACCEPTER */}
-          <section className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5 sm:p-6 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center font-bold">
-                  <span className="material-symbols-outlined text-xl">notifications_active</span>
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-base sm:text-lg font-extrabold text-slate-900">
-                      Courses Vendeurs Disponibles
-                    </h2>
-                    <span className="px-2 py-0.5 rounded-full text-xs font-black bg-amber-500 text-white animate-pulse">
-                      {pendingDeliveries.length} disponible{pendingDeliveries.length > 1 ? 's' : ''}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    Lorsqu'un vendeur crée une expédition, elle apparaît ici. Vous avez le choix d'accepter ou de refuser.
-                  </p>
-                </div>
               </div>
 
               <button
-                type="button"
                 onClick={() => setCurrentView('livreur_missions')}
-                className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 self-start sm:self-auto"
+                className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
               >
-                <span>Voir toutes les missions</span>
-                <span className="material-symbols-outlined text-sm">arrow_forward</span>
+                Toutes les missions →
               </button>
             </div>
 
             {pendingDeliveries.length === 0 ? (
-              <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-3">
-                <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
-                  <span className="material-symbols-outlined text-2xl">local_shipping</span>
-                </div>
-                <h3 className="font-bold text-slate-800 text-sm">
-                  Toutes les courses sont actuellement prises en charge
-                </h3>
-                <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  Dès qu'un vendeur crée une nouvelle livraison, elle apparaîtra ici instantanément avec le calcul de la distance Google Maps et le prix à 100 F/km.
-                </p>
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    onClick={handleCreateTestOrder}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95 transition-all inline-flex items-center gap-1.5"
-                  >
-                    <span className="material-symbols-outlined text-sm">add</span>
-                    <span>Tester la liaison : Créer une livraison vendeur (Cotonou ➔ Calavi)</span>
-                  </button>
-                </div>
+              <div className="py-8 text-center text-xs text-slate-500 space-y-3">
+                <p>Aucune course vendeur en attente pour le moment.</p>
+                <button
+                  onClick={handleCreateTestOrder}
+                  className="px-3 py-1.5 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700"
+                >
+                  Simuler une nouvelle course
+                </button>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {pendingDeliveries.map((order) => {
                   const pOrigin = order.pickupLocation?.coordinates
                     ? { lat: order.pickupLocation.coordinates[0], lng: order.pickupLocation.coordinates[1] }
@@ -548,122 +339,70 @@ export const LivreurDashboard: React.FC = () => {
 
                   const distKm = calculateDistanceKm(pOrigin, pDropoff);
                   const price = order.deliveryFee || calculateDeliveryPrice(distKm);
-
                   const isMapExpanded = expandedMapOrderId === order.id;
 
                   return (
                     <div
                       key={order.id}
-                      className="p-4 sm:p-5 rounded-2xl border-2 border-amber-200/80 bg-gradient-to-r from-amber-50/40 via-white to-white shadow-xs space-y-4 transition-all hover:border-amber-300"
+                      className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3 hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
                     >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-mono font-black text-sm text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-lg border border-blue-200">
-                              {order.id}
-                            </span>
-                            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                              🟡 En attente de coursier
-                            </span>
-                            <span className="text-xs text-slate-500 font-medium">
-                              Créée à {order.createdAt?.length <= 8 ? order.createdAt : isNaN(new Date(order.createdAt).getTime()) ? order.createdAt : new Date(order.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          </div>
-                          <p className="text-xs font-bold text-slate-800">
-                            Colis : {order.itemDescription} ({order.itemWeightKg} kg)
-                          </p>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                        <div>
+                          <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{order.id}</span>
+                          <span className="text-slate-400 mx-1.5">·</span>
+                          <span className="text-slate-700 dark:text-slate-200 font-medium">{order.itemDescription} ({order.itemWeightKg} kg)</span>
                         </div>
-
-                        {/* Tarif calculé Google Maps (100 FCFA par km) */}
-                        <div className="sm:text-right">
-                          <div className="flex sm:flex-col items-baseline sm:items-end justify-between gap-1">
-                            <div className="text-xl font-black text-emerald-700">
-                              {price.toLocaleString('fr-FR')} FCFA
-                            </div>
-                            <div className="flex items-center gap-1.5 text-xs text-slate-600 font-medium">
-                              <span className="text-blue-600 font-bold">{distKm} km</span>
-                              <span>• 100 F/km</span>
-                            </div>
-                          </div>
-                          {order.itemValueCOD > 0 && (
-                            <span className="text-[11px] text-amber-700 font-semibold block">
-                              COD client à percevoir : {order.itemValueCOD.toLocaleString('fr-FR')} FCFA
-                            </span>
-                          )}
+                        <div className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-sm sm:text-right">
+                          {price.toLocaleString('fr-FR')} FCFA <span className="text-xs font-normal text-slate-400">({distKm} km)</span>
                         </div>
                       </div>
 
-                      {/* Itinéraire Collecte ➔ Livraison */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs bg-slate-50/80 p-3.5 rounded-xl border border-slate-200">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-1.5 text-blue-700 font-bold uppercase text-[10px]">
-                            <span className="material-symbols-outlined text-sm">store</span>
-                            <span>Point de Collecte (Vendeur)</span>
-                          </div>
-                          <p className="font-extrabold text-slate-900">{order.pickupLocation.name}</p>
-                          <p className="text-slate-600">{order.pickupLocation.address}</p>
-                          <span className="text-[10px] text-slate-400 font-medium">
-                            Commune : {order.pickupLocation.commune}
-                          </span>
+                      <div className="text-xs text-slate-600 dark:text-slate-300 grid grid-cols-1 sm:grid-cols-2 gap-2 p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/50">
+                        <div>
+                          <span className="text-slate-400 text-[11px] block">Collecte:</span>
+                          <span className="font-semibold text-slate-900 dark:text-white">{order.pickupLocation.name}</span> ({order.pickupLocation.commune})
                         </div>
-
-                        <div className="space-y-1 md:border-l md:border-slate-200 md:pl-3">
-                          <div className="flex items-center gap-1.5 text-emerald-700 font-bold uppercase text-[10px]">
-                            <span className="material-symbols-outlined text-sm">person_pin_circle</span>
-                            <span>Point de Livraison (Client Destinataire)</span>
-                          </div>
-                          <p className="font-extrabold text-slate-900">{order.clientName}</p>
-                          <p className="text-slate-600">{order.dropoffLocation.address}</p>
-                          <span className="text-[10px] text-slate-400 font-medium">
-                            Tél : {order.clientPhone} • Commune : {order.dropoffLocation.commune}
-                          </span>
+                        <div>
+                          <span className="text-slate-400 text-[11px] block">Livraison:</span>
+                          <span className="font-semibold text-slate-900 dark:text-white">{order.clientName}</span> ({order.dropoffLocation.commune})
                         </div>
                       </div>
 
-                      {/* Google Maps Preview accordéon si activé */}
                       {isMapExpanded && (
-                        <div className="pt-2 animate-fade-in">
+                        <div className="pt-1">
                           <GoogleMapDelivery
                             origin={pOrigin}
                             destination={pDropoff}
-                            originLabel={`Vendeur: ${order.pickupLocation.name}`}
+                            originLabel={`Collecte: ${order.pickupLocation.name}`}
                             destinationLabel={`Client: ${order.clientName}`}
-                            heightClass="h-[280px]"
+                            heightClass="h-[240px]"
                           />
                         </div>
                       )}
 
-                      {/* Action buttons : ACCEPTER ou REFUSER (Mobile Touch Friendly) */}
-                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 pt-2 border-t border-amber-200/60">
+                      <div className="flex items-center justify-between gap-2 pt-1">
                         <button
-                          type="button"
                           onClick={() => setExpandedMapOrderId(isMapExpanded ? null : order.id)}
-                          className="min-h-[44px] text-xs font-bold text-slate-700 hover:text-slate-900 flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-xl bg-white border border-slate-200 shadow-2xs active:scale-95 transition-all"
+                          className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center gap-1"
                         >
-                          <span className="material-symbols-outlined text-base text-blue-600">
-                            {isMapExpanded ? 'map_off' : 'map'}
-                          </span>
-                          <span>{isMapExpanded ? 'Masquer la carte' : 'Voir tracé Google Maps'}</span>
+                          <span className="material-symbols-outlined text-sm">map</span>
+                          <span>{isMapExpanded ? 'Masquer carte' : 'Tracé carte'}</span>
                         </button>
 
                         <div className="flex items-center gap-2">
                           {featureFlags.allowMissionRefusal && (
                             <button
-                              type="button"
                               onClick={() => handleRefuseOrder(order.id)}
-                              className="min-h-[44px] px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition active:scale-95 flex items-center justify-center cursor-pointer"
-                              title="Refuser cette mission"
+                              className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-100"
                             >
                               Refuser
                             </button>
                           )}
                           <button
-                            type="button"
                             onClick={() => handleAcceptOrder(order)}
-                            className="min-h-[44px] flex-1 sm:flex-initial px-5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-xs shadow-md shadow-emerald-600/30 transition active:scale-95 flex items-center justify-center gap-1.5"
+                            className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-2xs"
                           >
-                            <span className="material-symbols-outlined text-base">check_circle</span>
-                            <span>Accepter ({price.toLocaleString('fr-FR')} F)</span>
+                            Accepter ({price.toLocaleString('fr-FR')} F)
                           </button>
                         </div>
                       </div>
@@ -674,248 +413,70 @@ export const LivreurDashboard: React.FC = () => {
             )}
           </section>
 
-          {/* 4. Active Mission Card with Real Google Maps Integration */}
+          {/* Active Mission View (If assigned) */}
           {activeOrder && (
-            <section className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden space-y-4">
-              {/* Header of Active Mission */}
-              <div className="bg-slate-900 text-white p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                    activeOrder.status === 'acceptee'
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-400/30'
-                      : 'bg-blue-500/20 text-blue-300 border border-blue-400/30'
-                  }`}>
-                    {activeOrder.status === 'acceptee'
-                      ? 'Étape 1/2 : En route pour collecte'
-                      : activeOrder.status === 'colis_recupere' || activeOrder.status === 'en_cours'
-                      ? 'Étape 2/2 : En route pour livraison'
-                      : 'Course terminée'}
-                  </span>
-                  <h2 className="font-extrabold text-base sm:text-lg">
-                    Course {activeOrder.id}
+            <section className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div>
+                  <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">Mission en cours</span>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                    Course <span className="font-mono">{activeOrder.id}</span>
                   </h2>
                 </div>
-                <div className="text-right">
-                  <span className="text-lg font-black text-emerald-400">
-                    {(activeOrder.deliveryFee || activeFee).toLocaleString('fr-FR')} FCFA
-                  </span>
-                  <span className="text-xs text-slate-400 block">
-                    {activeDistanceKm} km • Tarif 100 F/km
-                  </span>
+                <div className="font-mono font-bold text-emerald-600 text-sm">
+                  {(activeOrder.deliveryFee || activeFee).toLocaleString('fr-FR')} FCFA
                 </div>
               </div>
 
-              {/* Body */}
-              <div className="p-5 sm:p-6 space-y-5">
-                {/* Visual Google Map Component */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                    <span className="flex items-center gap-1.5 text-blue-700">
-                      <span className="material-symbols-outlined text-base">explore</span>
-                      <span>Navigation &amp; Tracé Temps Réel Google Maps Bénin</span>
-                    </span>
-                    <span className="text-slate-500">
-                      {activeOrder.pickupLocation.commune} ➔ {activeOrder.dropoffLocation.commune}
-                    </span>
-                  </div>
+              <GoogleMapDelivery
+                origin={activeOriginCoords}
+                destination={activeDropoffCoords}
+                originLabel={`Collecte: ${activeOrder.pickupLocation.name}`}
+                destinationLabel={`Client: ${activeOrder.clientName}`}
+                heightClass="h-[280px]"
+              />
 
-                  <GoogleMapDelivery
-                    origin={activeOriginCoords}
-                    destination={activeDropoffCoords}
-                    originLabel={`Collecte: ${activeOrder.pickupLocation.name}`}
-                    destinationLabel={`Client: ${activeOrder.clientName}`}
-                    heightClass="h-[320px]"
-                  />
+              <div className="space-y-2 text-xs">
+                <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex items-center justify-between">
+                  <div>
+                    <div className="text-slate-400 text-[11px]">1. Point de collecte (Marchand)</div>
+                    <div className="font-semibold text-slate-900 dark:text-white">{activeOrder.pickupLocation.name}</div>
+                  </div>
+                  {activeOrder.status === 'acceptee' && (
+                    <button
+                      onClick={() => handleValidatePickup(activeOrder.id)}
+                      className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs"
+                    >
+                      Valider collecte
+                    </button>
+                  )}
                 </div>
 
-                {/* Itinerary Steps */}
-                <div className="space-y-4 text-xs">
-                  {/* Step 1: Pickup */}
-                  <div className={`flex items-start gap-3 p-3.5 rounded-2xl border ${
-                    activeOrder.status === 'colis_recupere' || activeOrder.status === 'en_cours' || activeOrder.status === 'livree'
-                      ? 'bg-emerald-50/70 border-emerald-200'
-                      : 'bg-amber-50/70 border-2 border-amber-300'
-                  }`}>
-                    <div className={`w-7 h-7 rounded-full text-white flex items-center justify-center font-bold text-xs shrink-0 ${
-                      activeOrder.status === 'colis_recupere' || activeOrder.status === 'en_cours' || activeOrder.status === 'livree'
-                        ? 'bg-emerald-500'
-                        : 'bg-amber-500 animate-pulse'
-                    }`}>
-                      <span className="material-symbols-outlined text-sm">
-                        {activeOrder.status === 'colis_recupere' || activeOrder.status === 'en_cours' || activeOrder.status === 'livree'
-                          ? 'check'
-                          : 'store'}
-                      </span>
-                    </div>
-                    <div className="flex-1 space-y-1">
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-slate-900 uppercase text-[10px]">
-                          1. Collecte chez le marchand
-                        </span>
-                        <span className={`text-[10px] font-bold ${
-                          activeOrder.status === 'colis_recupere' || activeOrder.status === 'en_cours' || activeOrder.status === 'livree'
-                            ? 'text-emerald-700'
-                            : 'text-amber-800'
-                        }`}>
-                          {activeOrder.status === 'colis_recupere' || activeOrder.status === 'en_cours' || activeOrder.status === 'livree'
-                            ? 'Collecté ✅'
-                            : 'En attente de retrait'}
-                        </span>
-                      </div>
-                      <p className="font-bold text-slate-900 text-xs">{activeOrder.pickupLocation.name}</p>
-                      <p className="text-slate-600">{activeOrder.pickupLocation.address}</p>
-
-                      {activeOrder.status === 'acceptee' && (
-                        <div className="pt-2">
-                          <button
-                            type="button"
-                            onClick={() => handleValidatePickup(activeOrder.id)}
-                            className="py-2 px-3.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5"
-                          >
-                            <span className="material-symbols-outlined text-sm">inventory_2</span>
-                            <span>Valider la récupération du colis en boutique</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex items-center justify-between">
+                  <div>
+                    <div className="text-slate-400 text-[11px]">2. Point de livraison (Client)</div>
+                    <div className="font-semibold text-slate-900 dark:text-white">{activeOrder.clientName} ({activeOrder.clientPhone})</div>
                   </div>
-
-                  {/* Step 2: Dropoff */}
-                  <div className={`flex items-start gap-3 p-3.5 rounded-2xl border ${
-                    activeOrder.status === 'colis_recupere' || activeOrder.status === 'en_cours'
-                      ? 'bg-blue-50/70 border-2 border-blue-300'
-                      : 'bg-slate-50 border-slate-200'
-                  }`}>
-                    <div className={`w-7 h-7 rounded-full text-white flex items-center justify-center font-bold text-xs shrink-0 ${
-                      activeOrder.status === 'colis_recupere' || activeOrder.status === 'en_cours'
-                        ? 'bg-blue-600 animate-pulse'
-                        : 'bg-slate-300 text-slate-600'
-                    }`}>
-                      <span className="material-symbols-outlined text-sm">location_on</span>
-                    </div>
-                    <div className="flex-1 space-y-2">
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-blue-700 uppercase text-[10px]">
-                          2. Livraison au client (Destination)
-                        </span>
-                        <span className="px-2 py-0.5 rounded bg-blue-600 text-white font-bold text-[10px]">
-                          {activeOrder.dropoffLocation.commune}
-                        </span>
-                      </div>
-                      <p className="font-extrabold text-slate-900 text-sm">{activeOrder.clientName}</p>
-                      <p className="text-slate-600">{activeOrder.dropoffLocation.address}</p>
-
-                      <div className="flex flex-wrap gap-2 pt-1">
-                        <span className="px-2 py-0.5 rounded bg-white text-slate-700 border border-slate-200 text-[10px] font-bold">
-                          {activeOrder.itemDescription} ({activeOrder.itemWeightKg} kg)
-                        </span>
-                        <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200 text-[10px] font-bold">
-                          {activeOrder.itemValueCOD > 0
-                            ? `COD à percevoir : ${activeOrder.itemValueCOD.toLocaleString('fr-FR')} FCFA`
-                            : 'Payé en ligne (0 FCFA)'}
-                        </span>
-                      </div>
-
-                      {/* Contact client buttons */}
-                      <div className="grid grid-cols-2 gap-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={() => handleWhatsApp(activeOrder)}
-                          className="py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs"
-                        >
-                          <span className="material-symbols-outlined text-sm">chat</span>
-                          <span>WhatsApp (+229)</span>
-                        </button>
-                        <a
-                          href={`tel:${activeOrder.clientPhone}`}
-                          className="py-2 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
-                        >
-                          <span className="material-symbols-outlined text-sm text-blue-600">call</span>
-                          <span>Appeler client</span>
-                        </a>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Major Action Buttons */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                  <a
-                    href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(
-                      activeOrder.pickupLocation.address
-                    )}&destination=${encodeURIComponent(activeOrder.dropoffLocation.address)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="py-3.5 px-4 rounded-2xl border-2 border-blue-600 text-blue-700 font-bold text-xs hover:bg-blue-50 transition-colors flex items-center justify-center gap-2"
-                  >
-                    <span className="material-symbols-outlined text-lg">navigation</span>
-                    <span>Ouvrir GPS Externe (Google Maps)</span>
-                  </a>
-
-                  <button
-                    type="button"
-                    onClick={handleOpenPOD}
-                    className="py-3.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 active:scale-95 transition-all"
-                  >
-                    <span className="material-symbols-outlined text-lg">task_alt</span>
-                    <span>Valider la remise POD (3 étapes obligatoires : OTP + Photo + Signature)</span>
-                  </button>
+                  {(activeOrder.status === 'colis_recupere' || activeOrder.status === 'en_cours') && (
+                    <button
+                      onClick={handleOpenPOD}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs"
+                    >
+                      Valider livraison (POD)
+                    </button>
+                  )}
                 </div>
               </div>
             </section>
           )}
-
-          {!activeOrder && (
-            <section className="bg-white rounded-3xl border border-dashed border-slate-200 p-8 text-center space-y-3 shadow-2xs">
-              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 mx-auto flex items-center justify-center">
-                <span className="material-symbols-outlined text-2xl">two_wheeler</span>
-              </div>
-              <h3 className="font-bold text-slate-800 text-sm">
-                Aucune mission active en cours
-              </h3>
-              <p className="text-xs text-slate-500 max-w-md mx-auto">
-                Vous êtes libre et disponible sur le réseau. Consultez la section <strong>« Courses Vendeurs Disponibles »</strong> ci-dessus et cliquez sur <strong>Accepter</strong> pour prendre en charge une livraison.
-              </p>
-            </section>
-          )}
-
-          {/* 5. Historique des Livraisons & Gains */}
-          <LivreurDeliveryHistory />
-
-          {/* 6. Emergency SOS Dispatch Banner */}
-          <section className="bg-red-50 border border-red-200 rounded-3xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
-                <span className="material-symbols-outlined text-xl">support_agent</span>
-              </div>
-              <div className="min-w-0">
-                <p className="text-xs font-bold text-red-900 leading-tight">
-                  Besoin d'aide sur votre tournée à Cotonou ?
-                </p>
-                <p className="text-[11px] text-red-700 truncate">
-                  Contactez le Dispatch LivraLink Bénin en direct au +229 97 00 00 00
-                </p>
-              </div>
-            </div>
-            <a
-              href="tel:+22997000000"
-              className="w-full sm:w-auto text-center px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shrink-0 shadow-xs active:scale-95 transition-all"
-            >
-              SOS Dispatch (+229)
-            </a>
-          </section>
         </main>
+
+        <OnboardingGuideModal
+          isOpen={isOnboardingOpen}
+          onClose={() => setIsOnboardingOpen(false)}
+          role="livreur"
+        />
       </div>
-
-      {/* Mobile Bottom Nav */}
-      <MobileBottomNav />
-
-      {/* Onboarding Walkthrough Modal */}
-      <OnboardingGuideModal
-        isOpen={isOnboardingOpen}
-        onClose={() => setIsOnboardingOpen(false)}
-        role="livreur"
-      />
     </div>
   );
 };

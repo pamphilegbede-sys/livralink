@@ -2,11 +2,11 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
-import { MobileBottomNav } from '../common/MobileBottomNav';
 import { BackButton } from '../common/BackButton';
 import { DeliveryOrder } from '../../types';
 import { EmptyState } from '../common/EmptyState';
 import { PaginationControls } from '../common/PaginationControls';
+
 import { OnboardingGuideModal } from '../modals/OnboardingGuideModal';
 
 export const VendeurDashboard: React.FC = () => {
@@ -28,22 +28,14 @@ export const VendeurDashboard: React.FC = () => {
     openRateLivreurModal,
   } = useApp();
 
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+
   const greetingName = userProfile?.fullName || merchantSettings.managerName || merchantSettings.storeName || 'Commerçant';
 
   const [activeFilter, setActiveFilter] = useState<'all' | 'en_attente' | 'en_cours' | 'livree' | 'echec'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 5;
-
-  // Onboarding Guide Auto-Display on first load
-  const [isOnboardingOpen, setIsOnboardingOpen] = useState(() => {
-    try {
-      const completed = localStorage.getItem('livralink_onboarding_completed_vendeur');
-      return completed !== 'true';
-    } catch {
-      return false;
-    }
-  });
+  const itemsPerPage = 6;
 
   // Isolation stricte des livraisons : chaque compte marchand voit exclusivement ses propres commandes
   const merchantDeliveries = deliveries.filter((d) => {
@@ -80,13 +72,11 @@ export const VendeurDashboard: React.FC = () => {
 
   // Filtered deliveries
   const filteredDeliveries = merchantDeliveries.filter((order) => {
-    // Tab filter
     if (activeFilter === 'en_attente' && !(order.status === 'en_attente' || order.status === 'assignee')) return false;
     if (activeFilter === 'en_cours' && !(order.status === 'en_cours' || order.status === 'acceptee' || order.status === 'colis_recupere')) return false;
     if (activeFilter === 'livree' && order.status !== 'livree') return false;
     if (activeFilter === 'echec' && order.status !== 'echec') return false;
 
-    // Search filter
     if (searchTerm.trim()) {
       const q = searchTerm.toLowerCase();
       const matchId = order.id.toLowerCase().includes(q);
@@ -128,7 +118,7 @@ export const VendeurDashboard: React.FC = () => {
       showToast("L'assistance WhatsApp client a été suspendue par l'administrateur.", 'error');
       return;
     }
-    const msg = `Bonjour ${order.clientName}, votre commande chez Boutique Glam Chic (${order.id}) est suivie sur LivraLink. Votre coursier est en route !`;
+    const msg = `Bonjour ${order.clientName}, votre commande chez ${merchantSettings.storeName || 'Boutique'} (${order.id}) est suivie sur LivraLink. Votre coursier est en route !`;
     openWhatsAppModal(order.clientPhone, order.clientName, msg);
   };
 
@@ -156,304 +146,162 @@ export const VendeurDashboard: React.FC = () => {
 
   return (
     <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans'] transition-colors duration-200">
-      {/* Sidebar Desktop */}
       <Sidebar />
 
-      {/* Main Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff] dark:bg-slate-950 transition-colors duration-200">
-        {/* Header */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-slate-50 dark:bg-slate-950 transition-colors duration-200">
         <Header
-          title={`Bonjour, ${greetingName} 👋`}
-          subtitle="Voici la situation de vos expéditions aujourd'hui"
+          title={`Bonjour, ${greetingName}`}
+          subtitle="Aperçu et suivi synthétique de vos expéditions"
         />
 
-        {/* Scrollable Canvas */}
-        <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-24 md:pb-8">
-          {/* Quick Header and Search for Mobile */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-24 md:pb-8 max-w-7xl w-full mx-auto">
+          {/* Top Page Header & Primary Actions Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2">
             <div className="flex items-center gap-3">
               <BackButton />
               <div>
-                <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-                  Tableau de bord Vendeur
+                <h1 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
+                  Gestion des Livraisons
                 </h1>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Supervision directe de votre flotte et vos colis</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Supervision en direct de vos expéditions et livreurs
+                </p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={openEmailCenter}
-                className="py-2.5 sm:py-3 px-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
-                title="Consulter les e-mails envoyés (Bienvenue, Codes, Sécurité)"
-              >
-                <span className="material-symbols-outlined text-base text-blue-600 dark:text-blue-400">mail</span>
-                <span className="hidden sm:inline">Boîte E-mails</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsOnboardingOpen(true)}
-                className="py-2.5 sm:py-3 px-3.5 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
-                title="Consulter le guide de démarrage interactif"
-              >
-                <span className="material-symbols-outlined text-lg text-indigo-600 dark:text-indigo-400">help_outline</span>
-                <span>Guide de démarrage</span>
-              </button>
+
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
                 onClick={() => openLivreurSearchModal()}
-                className="py-2.5 sm:py-3 px-3.5 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/15 cursor-pointer"
-                title="Rechercher des livreurs vérifiés par zone, véhicule et note"
+                className="px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                title="Trouver un livreur accrédité"
               >
-                <span className="material-symbols-outlined text-base">person_search</span>
+                <span className="material-symbols-outlined text-base text-blue-600 dark:text-blue-400">person_search</span>
                 <span>Trouver un Livreur</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => setIsOnboardingOpen(true)}
+                className="px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer"
+                title="Guide interactif"
+              >
+                <span className="material-symbols-outlined text-base text-slate-500">help_outline</span>
+                <span className="hidden md:inline">Guide</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={openEmailCenter}
+                className="px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer"
+                title="Centre e-mail"
+              >
+                <span className="material-symbols-outlined text-base text-slate-500">mail</span>
+                <span className="hidden md:inline">E-mails</span>
+              </button>
+
               <button
                 type="button"
                 onClick={handleNewDeliveryClick}
-                className={`py-2.5 sm:py-3 px-4 rounded-xl text-xs font-bold shadow-md active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-sm active:scale-95 ${
                   !featureFlags.vendeurSpaceEnabled || !featureFlags.allowExpressCreation
-                    ? 'bg-slate-300 dark:bg-slate-700 text-slate-500 dark:text-slate-400 cursor-not-allowed shadow-none'
-                    : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-600/20'
+                    ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed shadow-none'
+                    : 'bg-blue-600 hover:bg-blue-700 text-white'
                 }`}
-                title={
-                  !featureFlags.vendeurSpaceEnabled
-                    ? "Espace vendeur verrouillé par l'administrateur"
-                    : !featureFlags.allowExpressCreation
-                    ? "Création de course désactivée par l'administrateur"
-                    : "Créer une nouvelle course"
-                }
               >
-                <span className="material-symbols-outlined text-lg">
-                  {!featureFlags.vendeurSpaceEnabled || !featureFlags.allowExpressCreation ? 'lock' : 'add'}
-                </span>
-                <span>+ Nouvelle livraison</span>
+                <span className="material-symbols-outlined text-lg">add</span>
+                <span>Nouvelle livraison</span>
               </button>
             </div>
           </div>
 
-          {/* Admin Space Maintenance Alert if disabled */}
+          {/* Maintenance Notice if space disabled */}
           {!featureFlags.vendeurSpaceEnabled && (
-            <div className="p-4 sm:p-5 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 text-amber-950 dark:text-amber-200 flex items-start gap-4 shadow-sm animate-pulse">
-              <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md">
-                <span className="material-symbols-outlined text-2xl">admin_panel_settings</span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="font-extrabold text-sm sm:text-base text-amber-950 dark:text-amber-100">
-                    Espace Vendeur Sous Contrôle Administrateur (Maintenance Active)
-                  </h3>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 font-bold uppercase tracking-wider">
-                    Verrouillage Admin
-                  </span>
-                </div>
-                <p className="text-xs sm:text-sm text-amber-900/90 dark:text-amber-300/90 mt-1">
-                  {featureFlags.vendeurMaintenanceNotice || "L'espace commerçant est temporairement suspendu pour maintenance par l'administrateur général LivraLink. La création et l'envoi de nouvelles courses sont verrouillés."}
-                </p>
-              </div>
+            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200 flex items-center gap-3 text-xs">
+              <span className="material-symbols-outlined text-xl text-amber-600 shrink-0">admin_panel_settings</span>
+              <span>L'espace vendeur est temporairement en maintenance par l'administrateur.</span>
             </div>
           )}
 
-          {/* Interactive Onboarding Welcome Banner */}
-          <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-600/15 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-              <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-white/20 backdrop-blur-md text-white flex items-center justify-center shrink-0 shadow-inner">
-                <span className="material-symbols-outlined text-2xl">rocket_launch</span>
-              </div>
-              <div className="min-w-0">
-                <h2 className="text-sm sm:text-base font-extrabold flex items-center gap-2 flex-wrap">
-                  <span>Nouveau sur LivraLink ? Maîtrisez la plateforme en 2 min</span>
-                  <span className="px-2 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-bold">Guide Pas-à-Pas</span>
-                </h2>
-                <p className="text-xs text-blue-100 mt-0.5">
-                  Découvrez comment créer une course en 30s, partager le suivi WhatsApp au client et encaisser vos paiements.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsOnboardingOpen(true)}
-              className="px-4 py-2.5 rounded-xl bg-white hover:bg-blue-50 text-blue-700 font-bold text-xs shadow-md transition-all active:scale-95 shrink-0 flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-base">play_circle</span>
-              <span>Lancer le guide</span>
-            </button>
-          </div>
-
-          {/* 1. 5 KPI Metric Cards */}
-          <section aria-label="Compteurs d'activité">
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3.5">
-              {/* Total Livraisons */}
-              <div className="col-span-2 sm:col-span-1 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between transition-colors">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Livraisons aujourd'hui</span>
-                  <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400">
-                    <span className="material-symbols-outlined text-lg">local_shipping</span>
-                  </div>
-                </div>
-                <div className="mt-3">
-                  <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">{totalCount}</div>
-                  <div className="mt-1 flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-bold">
-                    <span className="material-symbols-outlined text-sm">trending_up</span>
-                    <span>+12% vs hier</span>
-                  </div>
+          {/* 1. Key Activity Metrics (Airy Single-Elevation Cards) */}
+          <section aria-label="Statistiques d'activité">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between">
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Total aujourd'hui</span>
+                <div className="mt-2 flex items-baseline justify-between">
+                  <span className="text-2xl font-bold font-mono tabular-nums text-slate-900 dark:text-white">{totalCount}</span>
+                  <span className="text-xs text-slate-400">courses</span>
                 </div>
               </div>
 
-              {/* En attente */}
-              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between transition-colors">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">En attente</span>
-                  <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400">
-                    <span className="material-symbols-outlined text-lg">hourglass_top</span>
-                  </div>
-                </div>
-                <div className="mt-3">
-                  <div className="text-2xl sm:text-3xl font-extrabold text-amber-700 dark:text-amber-400">{pendingCount}</div>
-                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 dark:text-amber-300">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-                    Recherche de coursier
-                  </span>
+              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between">
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">En attente</span>
+                <div className="mt-2 flex items-baseline justify-between">
+                  <span className="text-2xl font-bold font-mono tabular-nums text-amber-600 dark:text-amber-400">{pendingCount}</span>
+                  <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">Recherche livreur</span>
                 </div>
               </div>
 
-              {/* En cours */}
-              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between transition-colors">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">En cours</span>
-                  <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400">
-                    <span className="material-symbols-outlined text-lg">two_wheeler</span>
-                  </div>
-                </div>
-                <div className="mt-3">
-                  <div className="text-2xl sm:text-3xl font-extrabold text-blue-700 dark:text-blue-400">{inProgressCount}</div>
-                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 dark:text-blue-300">
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
-                    En transit / prise en charge
-                  </span>
+              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between">
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">En cours</span>
+                <div className="mt-2 flex items-baseline justify-between">
+                  <span className="text-2xl font-bold font-mono tabular-nums text-blue-600 dark:text-blue-400">{inProgressCount}</span>
+                  <span className="text-[11px] text-blue-600 dark:text-blue-400 font-medium">En transit</span>
                 </div>
               </div>
 
-              {/* Livrées */}
-              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between transition-colors">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Livrées</span>
-                  <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400">
-                    <span className="material-symbols-outlined text-lg">check_circle</span>
-                  </div>
-                </div>
-                <div className="mt-3">
-                  <div className="text-2xl sm:text-3xl font-extrabold text-emerald-700 dark:text-emerald-400">{deliveredCount}</div>
-                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
-                    <span className="material-symbols-outlined text-xs">done_all</span>
-                    Validées avec POD
-                  </span>
-                </div>
-              </div>
-
-              {/* Échecs */}
-              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between transition-colors">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Échecs</span>
-                  <div className="p-2 rounded-xl bg-red-50 dark:bg-red-950/80 text-red-600 dark:text-red-400">
-                    <span className="material-symbols-outlined text-lg">warning</span>
-                  </div>
-                </div>
-                <div className="mt-3">
-                  <div className="text-2xl sm:text-3xl font-extrabold text-red-700 dark:text-red-400">{failedCount}</div>
-                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-red-700 dark:text-red-300">
-                    <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
-                    À reprogrammer
-                  </span>
+              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between">
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Livrées (POD)</span>
+                <div className="mt-2 flex items-baseline justify-between">
+                  <span className="text-2xl font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">{deliveredCount}</span>
+                  <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">Certifiées</span>
                 </div>
               </div>
             </div>
           </section>
 
-          {/* 2. Live Operational Alert Banner */}
-          {liveOrder ? (
-            <section className="rounded-2xl border border-blue-200/80 dark:border-blue-800 bg-gradient-to-r from-blue-50/90 via-white to-white dark:from-blue-950/60 dark:via-slate-900 dark:to-slate-900 p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3.5">
-                <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs shrink-0">
-                  <span className="material-symbols-outlined text-xl">radar</span>
-                </div>
+          {/* 2. Live Order Bar (If active) */}
+          {liveOrder && (
+            <section className="p-4 rounded-2xl border border-blue-200 dark:border-blue-900 bg-blue-50/50 dark:bg-blue-950/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-3">
+                <span className="material-symbols-outlined text-blue-600 dark:text-blue-400 text-xl shrink-0">radar</span>
                 <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-bold text-slate-900 dark:text-white">
-                      Activité directe : Course {liveOrder.id} ({liveOrder.status === 'acceptee' ? 'Course acceptée' : liveOrder.status === 'colis_recupere' ? 'Colis récupéré' : 'En acheminement'})
-                    </span>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
-                      {liveOrder.courier ? `Livreur : ${liveOrder.courier.name}` : 'En attente de coursier'}
-                    </span>
+                  <div className="font-semibold text-slate-900 dark:text-white">
+                    Course active <span className="font-mono text-blue-600 dark:text-blue-400">{liveOrder.id}</span> · {liveOrder.dropoffLocation.commune}
                   </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    {liveOrder.courier
-                      ? `Livreur ${liveOrder.courier.name} (${liveOrder.courier.vehicle}) • Destination : ${liveOrder.dropoffLocation.commune} • ${liveOrder.statusNote}`
-                      : `En attente d'acceptation par les livreurs de la zone (${liveOrder.dropoffLocation.commune})`}
-                  </p>
+                  <div className="text-slate-500 dark:text-slate-400 mt-0.5">
+                    {liveOrder.courier ? `Livreur : ${liveOrder.courier.name} (${liveOrder.courier.vehicle})` : 'En attente de prise en charge par un coursier'}
+                  </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+              <div className="flex items-center gap-2 shrink-0">
                 <button
-                  onClick={() => {
-                    setSelectedDelivery(liveOrder);
-                    setCurrentView('vendeur_tracking');
-                  }}
-                  className="px-3.5 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 bg-white dark:bg-slate-800 border border-blue-200 dark:border-blue-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                  onClick={() => handleInspectDelivery(liveOrder)}
+                  className="px-3 py-1.5 rounded-lg border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-300 font-medium text-xs hover:bg-blue-50 dark:hover:bg-slate-800"
                 >
-                  Voir sur la carte
+                  Suivi carte
                 </button>
                 <button
                   onClick={() => handleWhatsAppAction(liveOrder)}
-                  className="px-3.5 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                  className="px-3 py-1.5 rounded-lg bg-blue-600 text-white font-medium text-xs hover:bg-blue-700"
                 >
-                  Aviser la cliente
-                </button>
-              </div>
-            </section>
-          ) : (
-            <section className="rounded-2xl border border-emerald-200/80 dark:border-emerald-800 bg-gradient-to-r from-emerald-50/70 via-white to-white dark:from-emerald-950/60 dark:via-slate-900 dark:to-slate-900 p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3.5">
-                <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs shrink-0">
-                  <span className="material-symbols-outlined text-xl">electric_moped</span>
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-bold text-slate-900 dark:text-white">
-                      Flotte LivraLink Bénin prête &amp; connectée
-                    </span>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
-                      Tarif 100 F/km
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Toutes vos expéditions sont diffusées instantanément aux coursiers dès validation.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
-                <button
-                  onClick={() => setCurrentView('vendeur_new_delivery')}
-                  className="px-3.5 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
-                >
-                  + Nouvelle livraison
+                  Aviser le client
                 </button>
               </div>
             </section>
           )}
 
-          {/* 3. Deliveries Table and Filter Tabs */}
-          <section className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col transition-colors">
-            {/* Toolbar */}
+          {/* 3. Deliveries Table & Controls */}
+          <section className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col">
+            {/* Toolbar: Segmented Controls + Search */}
             <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
               {/* Filter Tabs */}
-              <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 overflow-x-auto no-scrollbar">
+              <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 overflow-x-auto no-scrollbar">
                 <button
                   onClick={() => handleFilterChange('all')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
-                    activeFilter === 'all' ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
+                    activeFilter === 'all' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-bold shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
                   Toutes ({totalCount})
@@ -461,7 +309,7 @@ export const VendeurDashboard: React.FC = () => {
                 <button
                   onClick={() => handleFilterChange('en_attente')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
-                    activeFilter === 'en_attente' ? 'bg-white dark:bg-slate-900 text-amber-700 dark:text-amber-400 shadow-xs font-bold' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                    activeFilter === 'en_attente' ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 font-bold shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
                   En attente ({pendingCount})
@@ -469,7 +317,7 @@ export const VendeurDashboard: React.FC = () => {
                 <button
                   onClick={() => handleFilterChange('en_cours')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
-                    activeFilter === 'en_cours' ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-xs font-bold' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                    activeFilter === 'en_cours' ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 font-bold shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
                   En cours ({inProgressCount})
@@ -477,7 +325,7 @@ export const VendeurDashboard: React.FC = () => {
                 <button
                   onClick={() => handleFilterChange('livree')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
-                    activeFilter === 'livree' ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-xs font-bold' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                    activeFilter === 'livree' ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 font-bold shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
                   Livrées ({deliveredCount})
@@ -485,7 +333,7 @@ export const VendeurDashboard: React.FC = () => {
                 <button
                   onClick={() => handleFilterChange('echec')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
-                    activeFilter === 'echec' ? 'bg-white dark:bg-slate-900 text-red-700 dark:text-red-400 shadow-xs font-bold' : 'text-slate-600 dark:text-slate-400 hover:text-red-700 dark:hover:text-red-300'
+                    activeFilter === 'echec' ? 'bg-white dark:bg-slate-900 text-red-600 dark:text-red-400 font-bold shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400'
                   }`}
                 >
                   Échecs ({failedCount})
@@ -494,7 +342,7 @@ export const VendeurDashboard: React.FC = () => {
 
               {/* Search & Export */}
               <div className="flex items-center gap-2">
-                <div className="relative flex-1 sm:w-64">
+                <div className="relative flex-1 sm:w-56">
                   <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
                     search
                   </span>
@@ -502,21 +350,22 @@ export const VendeurDashboard: React.FC = () => {
                     type="text"
                     value={searchTerm}
                     onChange={(e) => handleSearchChange(e.target.value)}
-                    placeholder="Filtrer client, ID..."
+                    placeholder="Rechercher client, ID..."
                     className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-lg outline-none focus:ring-2 focus:ring-blue-600"
                   />
                 </div>
                 <button
                   onClick={() => showToast('Export CSV généré avec succès !', 'success')}
-                  className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1 shrink-0 cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1 shrink-0 cursor-pointer"
+                  title="Exporter au format CSV"
                 >
                   <span className="material-symbols-outlined text-sm">file_download</span>
-                  <span>Export CSV</span>
+                  <span className="hidden sm:inline">Export</span>
                 </button>
               </div>
             </div>
 
-            {/* Deliveries Content: Empty State vs Tables */}
+            {/* Content: Empty State or Table */}
             {filteredDeliveries.length === 0 ? (
               <div className="p-6">
                 <EmptyState
@@ -527,11 +376,11 @@ export const VendeurDashboard: React.FC = () => {
                       ? `Aucune course ne correspond à "${searchTerm}".`
                       : activeFilter !== 'all'
                       ? `Aucune livraison avec le statut sélectionné (${activeFilter}).`
-                      : "Vous n'avez pas encore créé de livraison. Démarrez en quelques secondes."
+                      : "Vous n'avez pas encore créé de livraison."
                   }
                   actionLabel="Nouvelle livraison"
                   onAction={() => setCurrentView('vendeur_new_delivery')}
-                  secondaryActionLabel={searchTerm ? 'Effacer recherche' : activeFilter !== 'all' ? 'Toutes les courses' : undefined}
+                  secondaryActionLabel={searchTerm ? 'Effacer la recherche' : activeFilter !== 'all' ? 'Toutes les courses' : undefined}
                   onSecondaryAction={
                     searchTerm
                       ? () => handleSearchChange('')
@@ -543,368 +392,232 @@ export const VendeurDashboard: React.FC = () => {
               </div>
             ) : (
               <>
-                {/* Desktop Table View */}
+                {/* Desktop Data Table */}
                 <div className="hidden md:block overflow-x-auto">
                   <table className="w-full text-left border-collapse min-w-[700px]">
                     <thead>
-                      <tr className="bg-slate-50 dark:bg-slate-800/80 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
-                    <th className="py-3 px-4">ID</th>
-                    <th className="py-3 px-4">Client</th>
-                    <th className="py-3 px-4">Destination</th>
-                    <th className="py-3 px-4">Livreur</th>
-                    <th className="py-3 px-4">Statut</th>
-                    <th className="py-3 px-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-                  {paginatedDeliveries.map((order) => (
-                    <tr key={order.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition-colors">
-                      <td className="py-3.5 px-4 font-mono font-bold text-blue-700 dark:text-blue-400">
-                        {order.id}
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <div className="font-bold text-slate-900 dark:text-white">{order.clientName}</div>
-                        <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1 mt-0.5">
-                          <span className="material-symbols-outlined text-xs text-emerald-600 dark:text-emerald-400">chat</span>
-                          <span>{order.clientPhone}</span>
-                        </div>
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <div className="font-medium text-slate-800 dark:text-slate-200">{order.dropoffLocation.commune}</div>
-                        <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate max-w-xs">{order.dropoffLocation.address}</div>
-                      </td>
-                      <td className="py-3.5 px-4">
-                        {order.courier ? (
-                          <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold text-xs flex items-center justify-center">
-                              {order.courier.avatarInitials}
+                      <tr className="bg-slate-50/80 dark:bg-slate-800/50 text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
+                        <th className="py-3 px-4">ID Course</th>
+                        <th className="py-3 px-4">Client</th>
+                        <th className="py-3 px-4">Destination</th>
+                        <th className="py-3 px-4">Livreur</th>
+                        <th className="py-3 px-4">Statut</th>
+                        <th className="py-3 px-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                      {paginatedDeliveries.map((order) => (
+                        <tr key={order.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                          <td className="py-3 px-4 font-mono font-bold text-blue-600 dark:text-blue-400">
+                            {order.id}
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="font-semibold text-slate-900 dark:text-white">{order.clientName}</div>
+                            <div className="text-[11px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">
+                              {order.clientPhone}
                             </div>
-                            <div>
-                              <div className="font-bold text-slate-900 dark:text-white">{order.courier.name}</div>
-                              <div className="text-[10px] text-amber-600 dark:text-amber-400 font-bold flex items-center gap-0.5">
-                                <span className="material-symbols-outlined text-xs">star</span>
-                                <span>{order.courier.rating}</span>
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="text-slate-800 dark:text-slate-200 font-medium">{order.dropoffLocation.commune}</div>
+                            <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate max-w-xs">{order.dropoffLocation.address}</div>
+                          </td>
+                          <td className="py-3 px-4 text-slate-600 dark:text-slate-300">
+                            {order.courier ? (
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-medium text-slate-900 dark:text-white">{order.courier.name}</span>
+                                <span className="text-slate-400">·</span>
+                                <span className="text-amber-600 dark:text-amber-400 font-mono text-[11px]">★ {order.courier.rating}</span>
                               </div>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="inline-flex items-center gap-1.5 text-xs text-slate-400 italic">
-                            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
-                            <span>Non assigné</span>
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4">
-                        {order.status === 'en_cours' && (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                            <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse"></span>
-                            🚚 En cours
-                          </span>
-                        )}
-                        {order.status === 'acceptee' && (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-purple-50 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
-                            <span className="w-1.5 h-1.5 rounded-full bg-purple-600"></span>
-                            🟣 Course acceptée
-                          </span>
-                        )}
-                        {order.status === 'assignee' && (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                            <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
-                            🔵 Assignée
-                          </span>
-                        )}
-                        {order.status === 'en_attente' && (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-                            🟡 En attente
-                          </span>
-                        )}
-                        {order.status === 'livree' && (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
-                            <span className="material-symbols-outlined text-xs">check_circle</span>
-                            🟢 Livrée (POD)
-                          </span>
-                        )}
-                        {order.status === 'echec' && (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-red-50 dark:bg-red-950/80 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800">
-                            <span className="material-symbols-outlined text-xs">error</span>
-                            🔴 Échec (Client injoignable)
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4 text-right">
-                        <div className="inline-flex items-center gap-1.5 justify-end">
-                          <button
-                            onClick={() => handleWhatsAppAction(order)}
-                            className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
-                            title="Contacter sur WhatsApp"
-                          >
-                            <span className="material-symbols-outlined text-base">chat</span>
-                          </button>
-
-                          {order.status === 'en_cours' && (
-                            <button
-                              onClick={() => handleInspectDelivery(order)}
-                              className="px-2.5 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/80 hover:bg-blue-100 text-blue-700 dark:text-blue-300 font-bold transition-colors"
-                            >
-                              Suivi direct
-                            </button>
-                          )}
-
-                          {order.status === 'acceptee' && (
-                            <button
-                              onClick={() => handleInspectDelivery(order)}
-                              className="px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold transition-colors"
-                            >
-                              Voir détails
-                            </button>
-                          )}
-
-                          {order.status === 'en_attente' && (
-                            <>
+                            ) : (
+                              <span className="text-slate-400 italic">Non assigné</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            {order.status === 'en_cours' && (
+                              <span className="text-blue-600 dark:text-blue-400 font-medium flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
+                                En cours
+                              </span>
+                            )}
+                            {order.status === 'acceptee' && (
+                              <span className="text-purple-600 dark:text-purple-400 font-medium flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-purple-600"></span>
+                                Course acceptée
+                              </span>
+                            )}
+                            {order.status === 'assignee' && (
+                              <span className="text-blue-600 dark:text-blue-400 font-medium flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
+                                Assignée
+                              </span>
+                            )}
+                            {order.status === 'en_attente' && (
+                              <span className="text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                                En attente
+                              </span>
+                            )}
+                            {order.status === 'livree' && (
+                              <span className="text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                                <span className="material-symbols-outlined text-sm">check_circle</span>
+                                Livrée (POD)
+                              </span>
+                            )}
+                            {order.status === 'echec' && (
+                              <span className="text-red-600 dark:text-red-400 font-medium flex items-center gap-1">
+                                <span className="material-symbols-outlined text-sm">error</span>
+                                Échec
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <div className="inline-flex items-center gap-1.5 justify-end">
                               <button
-                                onClick={() => openLivreurSearchModal(order.id)}
-                                className="px-2.5 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold transition-colors flex items-center gap-1 cursor-pointer"
-                                title="Rechercher et assigner un livreur de la zone"
+                                onClick={() => handleWhatsAppAction(order)}
+                                className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 transition-colors"
+                                title="Contacter le client sur WhatsApp"
                               >
-                                <span className="material-symbols-outlined text-xs">person_search</span>
-                                <span>Assigner</span>
+                                <span className="material-symbols-outlined text-base">chat</span>
                               </button>
-                              <button
-                                onClick={() => handleRelaunchSearch(order.id)}
-                                className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold transition-colors"
-                              >
-                                Relancer
-                              </button>
-                            </>
-                          )}
 
-                          {order.status === 'livree' && (
-                            <>
-                              <button
-                                onClick={() => handleOpenPOD(order)}
-                                className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold transition-colors flex items-center gap-1"
-                              >
-                                <span className="material-symbols-outlined text-xs">receipt_long</span>
-                                <span>Preuve POD</span>
-                              </button>
-                              {order.courier && (
+                              {(order.status === 'en_cours' || order.status === 'acceptee') && (
                                 <button
-                                  onClick={() => openRateLivreurModal(order)}
-                                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
-                                    order.courierRating
-                                      ? 'bg-amber-50 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 hover:bg-amber-100'
-                                      : 'bg-amber-500 hover:bg-amber-600 text-white shadow-2xs'
-                                  }`}
-                                  title={order.courierRating ? `Avis : ${order.courierRating.rating}/5` : 'Noter la prestation du livreur'}
+                                  onClick={() => handleInspectDelivery(order)}
+                                  className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium text-xs transition-colors"
                                 >
-                                  <span className="material-symbols-outlined text-xs">star</span>
-                                  <span>{order.courierRating ? `★ ${order.courierRating.rating}/5` : 'Noter livreur'}</span>
+                                  Suivi
                                 </button>
                               )}
-                            </>
-                          )}
 
-                          {order.status === 'echec' && (
-                            <button
-                              onClick={() => handleReschedule(order.id)}
-                              className="px-2.5 py-1.5 rounded-lg bg-red-100 dark:bg-red-950/80 hover:bg-red-200 text-red-800 dark:text-red-300 font-bold transition-colors"
-                            >
-                              Reprogrammer
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                              {order.status === 'en_attente' && (
+                                <>
+                                  <button
+                                    onClick={() => openLivreurSearchModal(order.id)}
+                                    className="px-2 py-1 rounded-md bg-blue-50 dark:bg-blue-950 hover:bg-blue-100 text-blue-700 dark:text-blue-300 font-medium text-xs transition-colors"
+                                  >
+                                    Assigner
+                                  </button>
+                                  <button
+                                    onClick={() => handleRelaunchSearch(order.id)}
+                                    className="px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-medium text-xs transition-colors"
+                                  >
+                                    Relancer
+                                  </button>
+                                </>
+                              )}
 
-            {/* Mobile Card Architecture */}
-            <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800 p-3 space-y-3.5">
-              {paginatedDeliveries.map((order) => (
-                <article key={order.id} className="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-2xs space-y-3 hover:border-slate-300 dark:hover:border-slate-700 transition-all">
-                  {/* Header: ID + Status Badge */}
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono font-black text-sm text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/80 px-2 py-0.5 rounded-lg border border-blue-100 dark:border-blue-900">
-                      {order.id}
-                    </span>
-                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
-                      order.status === 'livree' ? 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800' :
-                      order.status === 'en_cours' ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 animate-pulse' :
-                      order.status === 'acceptee' ? 'bg-purple-50 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800' :
-                      order.status === 'assignee' ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800' :
-                      order.status === 'echec' ? 'bg-red-50 dark:bg-red-950/80 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800' :
-                      'bg-amber-50 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
-                    }`}>
-                      {order.status === 'en_cours' && '🚚 En cours'}
-                      {order.status === 'acceptee' && '🟣 Course acceptée'}
-                      {order.status === 'assignee' && '🔵 Assignée'}
-                      {order.status === 'en_attente' && '🟡 En attente'}
-                      {order.status === 'livree' && '🟢 Livrée (POD)'}
-                      {order.status === 'echec' && '🔴 Échec'}
-                    </span>
-                  </div>
+                              {order.status === 'livree' && (
+                                <>
+                                  <button
+                                    onClick={() => handleOpenPOD(order)}
+                                    className="px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-medium text-xs hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                                  >
+                                    Preuve POD
+                                  </button>
+                                  {order.courier && (
+                                    <button
+                                      onClick={() => openRateLivreurModal(order)}
+                                      className="px-2 py-1 rounded-md text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 font-medium text-xs hover:bg-amber-100 transition-colors"
+                                    >
+                                      ★ {order.courierRating ? `${order.courierRating.rating}/5` : 'Noter'}
+                                    </button>
+                                  )}
+                                </>
+                              )}
 
-                  {/* Destination & Client details */}
-                  <div className="space-y-1.5 text-xs">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="font-extrabold text-slate-900 dark:text-white truncate">{order.clientName}</p>
-                        <p className="text-slate-500 dark:text-slate-400 font-mono text-[11px] flex items-center gap-1 mt-0.5">
-                          <span className="material-symbols-outlined text-xs text-emerald-600 dark:text-emerald-400">call</span>
-                          <span>{order.clientPhone}</span>
-                        </p>
+                              {order.status === 'echec' && (
+                                <button
+                                  onClick={() => handleReschedule(order.id)}
+                                  className="px-2 py-1 rounded-md bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 font-medium text-xs hover:bg-red-100 transition-colors"
+                                >
+                                  Reprogrammer
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Mobile Cards Architecture */}
+                <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800 p-3 space-y-3">
+                  {paginatedDeliveries.map((order) => (
+                    <article key={order.id} className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-mono font-bold text-blue-600 dark:text-blue-400">
+                          {order.id}
+                        </span>
+                        <span className="text-[11px] font-medium text-slate-500">
+                          {order.status === 'livree' ? 'Livrée (POD)' : order.status === 'en_cours' ? 'En cours' : order.status === 'en_attente' ? 'En attente' : 'Échec'}
+                        </span>
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className="font-black text-emerald-700 dark:text-emerald-400 font-mono">{(order.itemValueCOD || 0).toLocaleString('fr-FR')} F</p>
-                        <span className="text-[10px] text-slate-400 font-medium">COD à encaisser</span>
+
+                      <div className="text-xs">
+                        <div className="font-semibold text-slate-900 dark:text-white">{order.clientName}</div>
+                        <div className="text-slate-500 dark:text-slate-400 text-[11px]">{order.dropoffLocation.commune} · {order.dropoffLocation.address}</div>
                       </div>
-                    </div>
 
-                    <div className="flex items-start gap-1.5 text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 p-2 rounded-xl">
-                      <span className="material-symbols-outlined text-sm text-blue-600 dark:text-blue-400 shrink-0 mt-0.5">location_on</span>
-                      <div className="min-w-0">
-                        <p className="font-bold text-slate-800 dark:text-slate-200 text-[11px]">{order.dropoffLocation.commune}</p>
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{order.dropoffLocation.address}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Courier & Fees Info */}
-                  <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100 dark:border-slate-800">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="material-symbols-outlined text-sm text-slate-400">two_wheeler</span>
-                      <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 truncate">
-                        {order.courier ? `${order.courier.name} (${order.courier.rating}★)` : 'En attente de coursier'}
-                      </span>
-                    </div>
-                    <span className="text-[11px] text-blue-700 dark:text-blue-400 font-bold shrink-0">
-                      Frais : {order.deliveryFee.toLocaleString('fr-FR')} F
-                    </span>
-                  </div>
-
-                  {/* Mobile Action Buttons */}
-                  <div className="flex items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={() => handleWhatsAppAction(order)}
-                      className="min-h-[44px] px-3 bg-emerald-50 dark:bg-emerald-950/80 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 rounded-xl border border-emerald-200/80 dark:border-emerald-800 font-bold text-xs flex items-center gap-1.5 transition-colors active:scale-95"
-                      title="Contacter le client sur WhatsApp"
-                    >
-                      <span className="material-symbols-outlined text-base">chat</span>
-                      <span>WhatsApp</span>
-                    </button>
-
-                    {order.status === 'en_cours' && (
-                      <button
-                        type="button"
-                        onClick={() => handleInspectDelivery(order)}
-                        className="min-h-[44px] flex-1 px-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
-                      >
-                        <span className="material-symbols-outlined text-base">near_me</span>
-                        <span>Suivi direct</span>
-                      </button>
-                    )}
-
-                    {order.status === 'acceptee' && (
-                      <button
-                        type="button"
-                        onClick={() => handleInspectDelivery(order)}
-                        className="min-h-[44px] flex-1 px-3.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 active:scale-95"
-                      >
-                        <span className="material-symbols-outlined text-base">visibility</span>
-                        <span>Détails course</span>
-                      </button>
-                    )}
-
-                    {order.status === 'en_attente' && (
-                      <>
+                      <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
                         <button
-                          type="button"
-                          onClick={() => openLivreurSearchModal(order.id)}
-                          className="min-h-[44px] flex-1 px-3 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
-                          title="Assigner un livreur de la zone"
+                          onClick={() => handleWhatsAppAction(order)}
+                          className="px-2.5 py-1 rounded-md text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 text-xs font-medium"
                         >
-                          <span className="material-symbols-outlined text-base">person_search</span>
-                          <span>Assigner</span>
+                          WhatsApp
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRelaunchSearch(order.id)}
-                          className="min-h-[44px] px-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
-                        >
-                          <span className="material-symbols-outlined text-base">radar</span>
-                          <span>Relancer</span>
-                        </button>
-                      </>
-                    )}
 
-                    {order.status === 'livree' && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenPOD(order)}
-                          className="min-h-[44px] px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
-                        >
-                          <span className="material-symbols-outlined text-base">verified</span>
-                          <span>POD</span>
-                        </button>
-                        {order.courier && (
+                        {(order.status === 'en_cours' || order.status === 'acceptee') && (
                           <button
-                            type="button"
-                            onClick={() => openRateLivreurModal(order)}
-                            className={`min-h-[44px] flex-1 px-3 rounded-xl font-bold text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95 ${
-                              order.courierRating
-                                ? 'bg-amber-50 text-amber-900 border border-amber-300'
-                                : 'bg-amber-500 hover:bg-amber-600 text-white'
-                            }`}
+                            onClick={() => handleInspectDelivery(order)}
+                            className="px-3 py-1 rounded-md bg-blue-600 text-white text-xs font-medium"
                           >
-                            <span className="material-symbols-outlined text-base">star</span>
-                            <span>{order.courierRating ? `★ ${order.courierRating.rating}/5` : 'Noter livreur'}</span>
+                            Suivi
                           </button>
                         )}
-                      </>
-                    )}
 
-                    {order.status === 'echec' && (
-                      <button
-                        type="button"
-                        onClick={() => handleReschedule(order.id)}
-                        className="min-h-[44px] flex-1 px-3.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
-                      >
-                        <span className="material-symbols-outlined text-base">replay</span>
-                        <span>Reprogrammer</span>
-                      </button>
-                    )}
-                  </div>
-                </article>
-              ))}
-            </div>
+                        {order.status === 'en_attente' && (
+                          <button
+                            onClick={() => openLivreurSearchModal(order.id)}
+                            className="px-3 py-1 rounded-md bg-blue-600 text-white text-xs font-medium"
+                          >
+                            Assigner
+                          </button>
+                        )}
 
-                {/* Pagination Controls */}
-                <PaginationControls
-                  currentPage={currentPage}
-                  totalItems={filteredDeliveries.length}
-                  itemsPerPage={itemsPerPage}
-                  onPageChange={setCurrentPage}
-                />
+                        {order.status === 'livree' && (
+                          <button
+                            onClick={() => handleOpenPOD(order)}
+                            className="px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-medium"
+                          >
+                            Preuve POD
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+
+                {/* Pagination */}
+                <div className="p-4 border-t border-slate-100 dark:border-slate-800">
+                  <PaginationControls
+                    currentPage={currentPage}
+                    totalItems={filteredDeliveries.length}
+                    itemsPerPage={itemsPerPage}
+                    onPageChange={(page) => setCurrentPage(page)}
+                  />
+                </div>
               </>
             )}
           </section>
         </main>
+
+        <OnboardingGuideModal
+          isOpen={isOnboardingOpen}
+          onClose={() => setIsOnboardingOpen(false)}
+          role="vendeur"
+        />
       </div>
-
-      {/* Mobile Bottom Navigation Bar */}
-      <MobileBottomNav />
-
-      {/* Onboarding Walkthrough Modal */}
-      <OnboardingGuideModal
-        isOpen={isOnboardingOpen}
-        onClose={() => setIsOnboardingOpen(false)}
-        role="vendeur"
-      />
     </div>
   );
 };
