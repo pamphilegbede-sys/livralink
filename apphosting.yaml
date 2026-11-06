@@ -16,13 +16,9 @@ env:
   - variable: SMTP_PORT
     value: "587"
   - variable: GMAIL_SMTP_USER
-    secret: GMAIL_SMTP_USER
-    availability:
-      - RUNTIME
+    value: "Pamphile.gbede@gmail.com"
   - variable: GMAIL_SMTP_PASS
-    secret: GMAIL_SMTP_PASS
-    availability:
-      - RUNTIME
+    value: ""
   - variable: SMTP_FROM
     value: "LivraLink <Pamphile.gbede@gmail.com>"
 
