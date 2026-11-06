@@ -1,12 +1,9 @@
-# Firebase App Hosting Configuration
-# Documentation: https://firebase.google.com/docs/app-hosting/configure
-
 runConfig:
+  cpu: 1
+  memoryMiB: 512
   minInstances: 0
   maxInstances: 5
   concurrency: 80
-  cpu: 1
-  memoryMiB: 512
 
 env:
   - variable: NODE_ENV
@@ -15,10 +12,5 @@ env:
     value: smtp.gmail.com
   - variable: SMTP_PORT
     value: "587"
-  - variable: GMAIL_SMTP_USER
-    value: "Pamphile.gbede@gmail.com"
-  - variable: GMAIL_SMTP_PASS
-    value: ""
   - variable: SMTP_FROM
-    value: "LivraLink <Pamphile.gbede@gmail.com>"
-
+    value: LivraLink <Pamphile.gbede@gmail.com>
