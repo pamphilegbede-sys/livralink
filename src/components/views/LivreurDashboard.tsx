@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
-import { BackButton } from '../common/BackButton';
+import { MobileBottomNav } from '../common/MobileBottomNav';
 import { GoogleMapDelivery } from '../maps/GoogleMapDelivery';
 import { getLocationForCommune, calculateDistanceKm, calculateDeliveryPrice } from '../../config/maps';
 import { DeliveryOrder } from '../../types';
@@ -165,6 +165,27 @@ export const LivreurDashboard: React.FC = () => {
     showToast(`Nouvelle course ${testOrder.id} créée !`, 'success');
   };
 
+  // Livraisons terminées attribuées spécifiquement à ce livreur
+  const myCompletedDeliveries = deliveries.filter((d) => {
+    if (d.status !== 'livree') return false;
+    if (userProfile?.role === 'livreur') {
+      return (
+        d.courier?.id === userProfile.uid ||
+        (d.courier?.email && userProfile.email && d.courier.email.toLowerCase() === userProfile.email.toLowerCase()) ||
+        (d.courier?.name && d.courier.name.toLowerCase() === activeCourierName.toLowerCase())
+      );
+    }
+    return (
+      (selectedCourier?.id && d.courier?.id === selectedCourier.id) ||
+      (selectedCourier?.name && d.courier?.name === selectedCourier.name)
+    );
+  });
+
+  const myEstimatedEarnings = myCompletedDeliveries.reduce(
+    (sum, d) => sum + (d.deliveryFee || 2500),
+    0
+  );
+
   return (
     <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans'] transition-colors duration-200">
       <Sidebar />
@@ -179,7 +200,6 @@ export const LivreurDashboard: React.FC = () => {
           {/* Top Profile Header & Availability Bar */}
           <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <BackButton />
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <h1 className="text-xl font-bold text-slate-900 dark:text-white">
@@ -266,25 +286,21 @@ export const LivreurDashboard: React.FC = () => {
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
               <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Courses du jour</span>
               <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-slate-900 dark:text-white">
-                {deliveries.filter((d) => d.status === 'livree').length}
+                {myCompletedDeliveries.length}
               </div>
             </div>
 
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
               <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Revenus estimés</span>
               <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
-                {(
-                  deliveries
-                    .filter((d) => d.status === 'livree')
-                    .reduce((sum, d) => sum + (d.deliveryFee || 2500), 0) + 12500
-                ).toLocaleString('fr-FR')} <span className="text-xs text-slate-400 font-normal">FCFA</span>
+                {myEstimatedEarnings.toLocaleString('fr-FR')} <span className="text-xs text-slate-400 font-normal">FCFA</span>
               </div>
             </div>
 
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
               <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Validation POD</span>
               <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-blue-600 dark:text-blue-400">
-                {deliveries.filter((d) => d.status === 'livree').length}
+                {myCompletedDeliveries.length}
               </div>
             </div>
 
@@ -476,6 +492,8 @@ export const LivreurDashboard: React.FC = () => {
           onClose={() => setIsOnboardingOpen(false)}
           role="livreur"
         />
+
+        <MobileBottomNav />
       </div>
     </div>
   );

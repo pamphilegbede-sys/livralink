@@ -137,7 +137,7 @@ export const VendeurTracking: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col min-h-[100dvh] w-full overflow-x-hidden bg-[#faf8ff] dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans']">
+    <div className="flex flex-col min-h-[100dvh] w-full overflow-x-clip bg-[#faf8ff] dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans']">
       {/* Top Header */}
       <Header
         title="Mes Livraisons"
@@ -150,7 +150,6 @@ export const VendeurTracking: React.FC = () => {
           {/* Header Action Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs">
             <div className="flex items-center gap-3">
-              <BackButton />
               <div className="flex items-center gap-2">
                 <span className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400">
                   <span className="material-symbols-outlined text-xl">local_shipping</span>

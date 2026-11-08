@@ -6,6 +6,7 @@ import { MobileBottomNav } from '../common/MobileBottomNav';
 import { BackButton } from '../common/BackButton';
 import { BeninZoneSelector } from '../common/BeninZoneSelector';
 import { DarkModeToggle } from '../common/DarkModeToggle';
+import { WorkingHoursScheduler } from '../common/WorkingHoursScheduler';
 
 interface ValidationResult {
   id: string;
@@ -205,7 +206,6 @@ export const LivreurSettings: React.FC = () => {
           {/* Header Action Bar */}
           <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <BackButton />
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 dark:text-white">
@@ -226,17 +226,6 @@ export const LivreurSettings: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              <button
-                type="button"
-                onClick={runValidationTestSuite}
-                disabled={isRunningTests}
-                className="px-3.5 py-2 rounded-xl bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 text-xs font-bold transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                title="Exécuter la suite de tests de validation pour cette page"
-              >
-                <span className="material-symbols-outlined text-base">science</span>
-                <span>{isRunningTests ? 'Test en cours...' : '🧪 Tester la page'}</span>
-              </button>
-
               <button
                 type="button"
                 onClick={handleSave}
@@ -497,18 +486,11 @@ export const LivreurSettings: React.FC = () => {
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">
-                    Horaires habituels
-                  </label>
-                  <input
-                    type="text"
-                    value={workingHours}
-                    onChange={(e) => setWorkingHours(e.target.value)}
-                    placeholder="Ex: 08:00 - 20:00"
-                    className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-600"
-                  />
-                </div>
+                <WorkingHoursScheduler
+                  value={workingHours}
+                  onChange={setWorkingHours}
+                  label="Horaires habituels & Disponibilités"
+                />
               </div>
 
               {/* Active Zones Selector */}
@@ -555,19 +537,20 @@ export const LivreurSettings: React.FC = () => {
                 </span>
               </div>
 
-              {/* Solde Card */}
-              <div className="p-4 rounded-2xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 flex items-center justify-between text-xs">
+              {/* Solde & Statut MVP Card */}
+              <div className="p-4 rounded-2xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                 <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Solde disponible</span>
-                  <div className="text-2xl font-black text-blue-700 dark:text-blue-400 font-mono">25 500 FCFA</div>
+                  <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Total Revenus Cumulés (Rapport)</span>
+                  <div className="text-2xl font-black text-blue-700 dark:text-blue-400 font-mono">
+                    {(selectedCourier?.walletBalanceFCFA || 0).toLocaleString('fr-FR')} FCFA
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => showToast('Demande de retrait Mobile Money soumise !', 'success')}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-xs active:scale-95 transition-all cursor-pointer"
-                >
-                  Demander retrait
-                </button>
+                <div className="flex items-center gap-2">
+                  <span className="px-3 py-1.5 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold text-xs border border-emerald-200 dark:border-emerald-800 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-sm">handshake</span>
+                    <span>Règlement Direct entre Parties</span>
+                  </span>
+                </div>
               </div>
             </div>
           )}

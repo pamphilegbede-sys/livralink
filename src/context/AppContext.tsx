@@ -293,10 +293,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentViewState(nextView);
   };
 
+  // Real Firebase Auth state
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+
   const navigateBack = () => {
-    if (viewHistory.length > 0) {
-      const prevView = viewHistory[viewHistory.length - 1];
-      setViewHistory((prev) => prev.slice(0, -1));
+    // Defense: If user is authenticated, ignore unauthenticated entry screens in back stack
+    let historyStack = [...viewHistory];
+    if (userProfile || firebaseUser) {
+      historyStack = historyStack.filter(
+        (v) => v !== 'login_vendeur' && v !== 'login_livreur' && v !== 'landing' && v !== 'register'
+      );
+    }
+
+    if (historyStack.length > 0) {
+      const prevView = historyStack[historyStack.length - 1];
+      setViewHistory(historyStack.slice(0, -1));
 
       // Auto-synchroniser le rôle avec la vue de destination si nécessaire
       if ((prevView.startsWith('vendeur_') || prevView === 'login_vendeur') && currentRole !== 'vendeur') {
@@ -309,43 +322,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setCurrentViewState(prevView);
     } else {
-      // Repli contextuel logique si l'historique direct est vide
-      if (
-        currentView === 'vendeur_new_delivery' ||
-        currentView === 'vendeur_tracking' ||
-        currentView === 'vendeur_reports' ||
-        currentView === 'vendeur_settings'
-      ) {
-        if (currentRole !== 'vendeur') setCurrentRole('vendeur');
+      // Repli contextuel logique selon le rôle connecté (interdiction de retour écran de connexion)
+      if (currentRole === 'vendeur' && currentView !== 'vendeur_dashboard') {
         setCurrentViewState('vendeur_dashboard');
-      } else if (
-        currentView === 'livreur_missions' ||
-        currentView === 'livreur_wallet' ||
-        currentView === 'livreur_settings'
-      ) {
-        if (currentRole !== 'livreur') setCurrentRole('livreur');
+      } else if (currentRole === 'livreur' && currentView !== 'livreur_dashboard') {
         setCurrentViewState('livreur_dashboard');
-      } else if (
-        currentView === 'vendeur_dashboard' ||
-        currentView === 'livreur_dashboard' ||
-        currentView === 'admin_console' ||
-        currentView === 'login_vendeur' ||
-        currentView === 'login_livreur' ||
-        currentView === 'register'
-      ) {
-        setCurrentViewState('landing');
-      } else {
+      } else if (currentRole === 'admin' && currentView !== 'admin_console') {
+        setCurrentViewState('admin_console');
+      } else if (!userProfile && !firebaseUser) {
         setCurrentViewState('landing');
       }
     }
   };
 
-  const canGoBack = viewHistory.length > 0 || currentView !== 'landing';
-
-  // Real Firebase Auth state
-  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+  const canGoBack = (userProfile || firebaseUser)
+    ? (currentView !== 'vendeur_dashboard' && currentView !== 'livreur_dashboard' && currentView !== 'admin_console')
+    : (viewHistory.length > 0 || currentView !== 'landing');
 
   const [deliveries, setDeliveries] = useState<DeliveryOrder[]>(() => {
     try {

@@ -26,12 +26,6 @@ export const VendeurReports: React.FC = () => {
       );
     }
     if (userProfile?.role === 'vendeur') {
-      const isDemoAccount =
-        userProfile.email?.toLowerCase() === 'contact@glamchic-cotonou.bj' ||
-        userProfile.fullName === 'Sarah Kouamé';
-      if (isDemoAccount) {
-        return !d.merchantId || d.merchantId === userProfile.uid || d.pickupLocation.name.includes('Glam Chic');
-      }
       return (
         (d.merchantId && d.merchantId === userProfile.uid) ||
         (d.merchantEmail && userProfile.email && d.merchantEmail.toLowerCase() === userProfile.email.toLowerCase()) ||
@@ -44,12 +38,32 @@ export const VendeurReports: React.FC = () => {
 
   const totalOrders = merchantDeliveries.length;
   const deliveredOrders = merchantDeliveries.filter((d) => d.status === 'livree').length;
-  const deliverySuccessRate = Math.round((deliveredOrders / (totalOrders || 1)) * 100);
+  const deliverySuccessRate = totalOrders > 0 ? Math.round((deliveredOrders / totalOrders) * 100) : 0;
   const totalCODCollected = merchantDeliveries
     .filter((d) => d.status === 'livree')
     .reduce((sum, d) => sum + (d.itemValueCOD || 0), 0);
   const totalDeliveryFees = merchantDeliveries
     .reduce((sum, d) => sum + (d.deliveryFee || 0), 0);
+
+  // Calcul dynamique des canaux d'acquisition
+  const channelCounts = merchantDeliveries.reduce((acc, d) => {
+    const channel = d.channel || 'WhatsApp';
+    acc[channel] = (acc[channel] || 0) + (d.itemValueCOD || d.deliveryFee || 2000);
+    return acc;
+  }, {} as Record<string, number>);
+
+  const totalChannelVolume = Object.values(channelCounts).reduce((a, b) => a + b, 0);
+
+  // Calcul dynamique des communes de destination
+  const communeCounts = merchantDeliveries.reduce((acc, d) => {
+    const commune = d.dropoffLocation?.commune || 'Cotonou';
+    acc[commune] = (acc[commune] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  const sortedCommunes = Object.entries(communeCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
 
   const handleExportPDF = () => {
     showToast('Export du rapport consolidé PDF en cours...', 'info');
@@ -83,7 +97,6 @@ export const VendeurReports: React.FC = () => {
           {/* Header Controls */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs">
             <div className="flex items-center gap-3">
-              <BackButton />
               <div className="flex items-center gap-2">
                 <span className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400">
                   <span className="material-symbols-outlined text-xl">insights</span>
@@ -226,44 +239,33 @@ export const VendeurReports: React.FC = () => {
               </div>
 
               <div className="space-y-3.5 pt-2">
-                <div>
-                  <div className="flex items-center justify-between text-xs font-semibold text-slate-700 mb-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                      <span>WhatsApp Business (58%)</span>
-                    </span>
-                    <span className="font-bold text-slate-900">32 500 FCFA</span>
+                {Object.keys(channelCounts).length === 0 ? (
+                  <div className="py-6 text-center text-xs text-slate-400">
+                    <p className="font-semibold text-slate-700 dark:text-slate-300">Aucune expédition pour le moment</p>
+                    <p>Vos ventes par canal s'afficheront au fur et à mesure.</p>
                   </div>
-                  <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                    <div className="bg-emerald-500 h-full rounded-full" style={{ width: '58%' }}></div>
-                  </div>
-                </div>
+                ) : (
+                  Object.entries(channelCounts).map(([ch, vol], idx) => {
+                    const pct = totalChannelVolume > 0 ? Math.round((vol / totalChannelVolume) * 100) : 0;
+                    const colors = ['bg-emerald-500', 'bg-pink-500', 'bg-slate-900', 'bg-blue-500'];
+                    const color = colors[idx % colors.length];
 
-                <div>
-                  <div className="flex items-center justify-between text-xs font-semibold text-slate-700 mb-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-pink-500"></span>
-                      <span>Instagram Direct (27%)</span>
-                    </span>
-                    <span className="font-bold text-slate-900">18 000 FCFA</span>
-                  </div>
-                  <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                    <div className="bg-pink-500 h-full rounded-full" style={{ width: '27%' }}></div>
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between text-xs font-semibold text-slate-700 mb-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-slate-900"></span>
-                      <span>TikTok Shop &amp; Live (15%)</span>
-                    </span>
-                    <span className="font-bold text-slate-900">9 500 FCFA</span>
-                  </div>
-                  <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                    <div className="bg-slate-900 h-full rounded-full" style={{ width: '15%' }}></div>
-                  </div>
-                </div>
+                    return (
+                      <div key={ch}>
+                        <div className="flex items-center justify-between text-xs font-semibold text-slate-700 mb-1">
+                          <span className="flex items-center gap-1.5">
+                            <span className={`w-2.5 h-2.5 rounded-full ${color}`}></span>
+                            <span>{ch} ({pct}%)</span>
+                          </span>
+                          <span className="font-bold text-slate-900">{vol.toLocaleString('fr-FR')} FCFA</span>
+                        </div>
+                        <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                          <div className={`${color} h-full rounded-full`} style={{ width: `${pct}%` }}></div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
 
@@ -280,44 +282,30 @@ export const VendeurReports: React.FC = () => {
               </div>
 
               <div className="space-y-3 pt-2">
-                <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-100">
-                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                    <span className="w-7 h-7 rounded-xl bg-blue-100 text-blue-700 font-extrabold text-xs flex items-center justify-center shrink-0">
-                      1
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs font-bold text-slate-900 truncate">Cotonou (Haie Vive, Cadjehoun, Fidjrossè)</div>
-                      <div className="text-[10px] text-slate-500">Délai moyen : 28 min</div>
-                    </div>
+                {sortedCommunes.length === 0 ? (
+                  <div className="py-6 text-center text-xs text-slate-400">
+                    <p className="font-semibold text-slate-700 dark:text-slate-300">Aucune zone enregistrée</p>
+                    <p>Vos top communes de livraison apparaîtront après vos premières ventes.</p>
                   </div>
-                  <span className="text-xs font-black text-blue-700 shrink-0 bg-blue-50 px-2 py-1 rounded-lg border border-blue-100">48% des colis</span>
-                </div>
-
-                <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-100">
-                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                    <span className="w-7 h-7 rounded-xl bg-slate-200 text-slate-700 font-extrabold text-xs flex items-center justify-center shrink-0">
-                      2
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs font-bold text-slate-900 truncate">Abomey-Calavi &amp; Godomey</div>
-                      <div className="text-[10px] text-slate-500">Délai moyen : 35 min</div>
-                    </div>
-                  </div>
-                  <span className="text-xs font-black text-slate-700 shrink-0 bg-slate-100 px-2 py-1 rounded-lg border border-slate-200">32% des colis</span>
-                </div>
-
-                <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-100">
-                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                    <span className="w-7 h-7 rounded-xl bg-slate-200 text-slate-700 font-extrabold text-xs flex items-center justify-center shrink-0">
-                      3
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs font-bold text-slate-900 truncate">Cotonou Akpakpa &amp; Dantokpa</div>
-                      <div className="text-[10px] text-slate-500">Délai moyen : 38 min</div>
-                    </div>
-                  </div>
-                  <span className="text-xs font-black text-slate-700 shrink-0 bg-slate-100 px-2 py-1 rounded-lg border border-slate-200">20% des colis</span>
-                </div>
+                ) : (
+                  sortedCommunes.map(([commune, count], idx) => {
+                    const pct = totalOrders > 0 ? Math.round((count / totalOrders) * 100) : 0;
+                    return (
+                      <div key={commune} className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-100">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <span className="w-7 h-7 rounded-xl bg-blue-100 text-blue-700 font-extrabold text-xs flex items-center justify-center shrink-0">
+                            {idx + 1}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-bold text-slate-900 truncate">{commune}</div>
+                            <div className="text-[10px] text-slate-500">{count} commande{count > 1 ? 's' : ''}</div>
+                          </div>
+                        </div>
+                        <span className="text-xs font-black text-blue-700 shrink-0 bg-blue-50 px-2 py-1 rounded-lg border border-blue-100">{pct}% des colis</span>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           </div>

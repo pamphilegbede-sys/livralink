@@ -22,20 +22,31 @@ export const LivreurWallet: React.FC = () => {
   // Pour un nouveau livreur fraîchement inscrit : solde initial = 0 FCFA (aucune fuite de données d'un autre utilisateur)
   const availableBalance = matchingCourier?.walletBalanceFCFA ?? 0;
 
-  // Calcul dynamique des fonds COD des livraisons de ce livreur
-  const myDeliveries = deliveries.filter(
-    (d) =>
-      (d.courier && matchingCourier && (d.courier.id === matchingCourier.id || d.courier.name === matchingCourier.name)) ||
-      (d.courier && userProfile && (d.courier.id === userProfile.uid || d.courier.name === userProfile.fullName))
+  // Calcul dynamique des livraisons de ce livreur
+  const myDeliveries = deliveries.filter((d) => {
+    if (userProfile?.role === 'livreur') {
+      return (
+        (d.courier && d.courier.id === userProfile.uid) ||
+        (d.courier && userProfile.email && d.courier.email?.toLowerCase() === userProfile.email.toLowerCase()) ||
+        (d.courier && userProfile.fullName && d.courier.name?.toLowerCase() === userProfile.fullName.toLowerCase())
+      );
+    }
+    return matchingCourier
+      ? (d.courier?.id === matchingCourier.id || d.courier?.name === matchingCourier.name)
+      : false;
+  });
+
+  const myCompletedDeliveries = myDeliveries.filter((d) => d.status === 'livree');
+
+  const pendingCODToReturn = myCompletedDeliveries.reduce(
+    (sum, d) => sum + (d.itemValueCOD || 0),
+    0
   );
 
-  const pendingCODToReturn = myDeliveries
-    .filter((d) => d.status === 'livree')
-    .reduce((sum, d) => sum + (d.itemValueCOD || 0), 0);
-
-  const totalEarnedMonth = myDeliveries
-    .filter((d) => d.status === 'livree')
-    .reduce((sum, d) => sum + (d.deliveryFee || 0), availableBalance);
+  const totalEarnedMonth = myCompletedDeliveries.reduce(
+    (sum, d) => sum + (d.deliveryFee || 0),
+    0
+  );
 
   const handleRequestPayout = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,12 +114,6 @@ export const LivreurWallet: React.FC = () => {
 
         {/* Scrollable Canvas */}
         <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-28 md:pb-8">
-          {/* Quick Return Bar */}
-          <div className="flex items-center gap-2">
-            <BackButton />
-            <span className="text-xs font-semibold text-slate-500">Portefeuille & Revenus Livreur</span>
-          </div>
-
           {/* Header Balance Banner */}
           <div className="bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
             <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -131,54 +136,35 @@ export const LivreurWallet: React.FC = () => {
                 </p>
               </div>
 
-              {/* Fast Payout Trigger */}
+              {/* Fast Payout Trigger - Updated for MVP Direct Settlement */}
               <div className="bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/15 max-w-sm w-full space-y-3">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-white">Retrait Instantané Mobile Money</span>
-                  <span className="text-emerald-400 font-bold">Sans frais (0 F)</span>
+                  <span className="font-bold text-white flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-base text-emerald-400">handshake</span>
+                    <span>Règlement Direct (Main à main / MoMo)</span>
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-emerald-500/30 text-emerald-300 font-bold text-[10px]">
+                    Modèle MVP
+                  </span>
                 </div>
-                <form onSubmit={handleRequestPayout} className="space-y-3">
-                  {/* Quick Select Amount Chips */}
-                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-                    {[5000, 10000, 25000, availableBalance].map((amt) => (
-                      <button
-                        key={amt}
-                        type="button"
-                        onClick={() => setPayoutAmount(amt.toString())}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all whitespace-nowrap active:scale-95 ${
-                          payoutAmount === amt.toString()
-                            ? 'bg-emerald-500 text-slate-950 font-black'
-                            : 'bg-white/15 text-white hover:bg-white/25'
-                        }`}
-                      >
-                        {amt === availableBalance ? 'Tout' : `${amt.toLocaleString('fr-FR')} F`}
-                      </button>
-                    ))}
-                  </div>
+                
+                <p className="text-xs text-slate-200 leading-relaxed">
+                  Pour ce MVP, tous les encaisserments et règlements s'effectuent directement entre vendeurs, livreurs et clients. Ce portefeuille sert d'outil de comptabilité et de rapport statistique.
+                </p>
 
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      value={payoutAmount}
-                      onChange={(e) => setPayoutAmount(e.target.value)}
-                      max={availableBalance}
-                      min={1000}
-                      className="min-h-[44px] flex-1 px-3 py-2 bg-white/20 border border-white/30 rounded-xl text-xs font-bold text-white placeholder-white/60 outline-none focus:ring-2 focus:ring-blue-400"
-                      placeholder="Montant FCFA"
-                    />
-                    <button
-                      type="submit"
-                      disabled={isRequesting}
-                      className="min-h-[44px] px-5 py-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-extrabold text-xs rounded-xl shadow-md transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center shrink-0"
-                    >
-                      {isRequesting ? 'Envoi...' : 'Retirer'}
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-between text-[11px] text-slate-300">
-                    <span>Vers : {courierSettings.payoutPhone || courierSettings.phone}</span>
-                    <span className="font-bold uppercase text-white">{courierSettings.defaultPayoutMethod || 'Wave / MoMo'}</span>
-                  </div>
-                </form>
+                <div className="pt-1 flex items-center justify-between text-[11px] text-slate-300 border-t border-white/15">
+                  <span className="flex items-center gap-1">
+                    <span className="material-symbols-outlined text-sm text-blue-300">insights</span>
+                    <span>Suivi analytique 100% actif</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => showToast("En mode MVP, les transactions d'argent sont réglées en direct entre les parties. Le portefeuille comptabilise vos statistiques et revenus.", "info")}
+                    className="text-blue-300 hover:text-white font-bold underline cursor-pointer"
+                  >
+                    Information MVP
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -192,8 +178,12 @@ export const LivreurWallet: React.FC = () => {
                   two_wheeler
                 </span>
               </div>
-              <div className="text-2xl font-black text-slate-900">18 500 <span className="text-xs text-slate-400">FCFA</span></div>
-              <p className="text-[11px] text-emerald-600 font-bold">+2 500 FCFA pourboires directs</p>
+              <div className="text-2xl font-black text-slate-900">
+                {totalEarnedMonth.toLocaleString('fr-FR')} <span className="text-xs text-slate-400">FCFA</span>
+              </div>
+              <p className="text-[11px] text-emerald-600 font-bold">
+                {myCompletedDeliveries.length > 0 ? '+100% revenus conservés' : '0 FCFA pour le moment'}
+              </p>
             </div>
 
             <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-1">
@@ -203,7 +193,9 @@ export const LivreurWallet: React.FC = () => {
                   payments
                 </span>
               </div>
-              <div className="text-2xl font-black text-amber-700">84 000 <span className="text-xs text-slate-400">FCFA</span></div>
+              <div className="text-2xl font-black text-amber-700">
+                {pendingCODToReturn.toLocaleString('fr-FR')} <span className="text-xs text-slate-400">FCFA</span>
+              </div>
               <p className="text-[11px] text-slate-500 font-medium">À reverser aux commerçants partenaires</p>
             </div>
 
@@ -227,37 +219,45 @@ export const LivreurWallet: React.FC = () => {
                 <p className="text-xs text-slate-500">Revenus de courses et virements Mobile Money</p>
               </div>
               <span className="px-3 py-1 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold shrink-0">
-                Dernières 48h
+                {myDeliveries.length} transaction{myDeliveries.length > 1 ? 's' : ''}
               </span>
             </div>
 
             <div className="space-y-3">
-              {[
-                { id: 'TR-892', title: 'Course #LL-4192 - Cotonou Haie Vive', amount: '+2 500 FCFA', type: 'earning', time: 'Aujourd\'hui 11:45', status: 'Encaissé' },
-                { id: 'TR-891', title: 'Course #LL-4191 - Abomey-Calavi', amount: '+3 000 FCFA', type: 'earning', time: 'Aujourd\'hui 10:20', status: 'Encaissé' },
-                { id: 'TR-890', title: 'Virement MTN Mobile Money Bénin', amount: '-20 000 FCFA', type: 'payout', time: 'Hier 18:30', status: 'Validé' },
-                { id: 'TR-889', title: 'Course #LL-4188 - Cotonou Fidjrossè', amount: '+2 000 FCFA', type: 'earning', time: 'Hier 16:15', status: 'Encaissé' },
-              ].map((tx) => (
-                <div key={tx.id} className="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors">
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <span className={`w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0 ${tx.type === 'earning' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
-                      <span className="material-symbols-outlined text-lg">
-                        {tx.type === 'earning' ? 'arrow_downward' : 'arrow_upward'}
-                      </span>
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs font-bold text-slate-900 truncate">{tx.title}</div>
-                      <div className="text-[10px] text-slate-500 font-mono mt-0.5">{tx.time} • Réf : {tx.id}</div>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className={`text-xs sm:text-sm font-black font-mono ${tx.type === 'earning' ? 'text-emerald-700' : 'text-slate-900'}`}>
-                      {tx.amount}
-                    </div>
-                    <span className="text-[10px] font-bold text-slate-400 block">{tx.status}</span>
-                  </div>
+              {myDeliveries.length === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-400 space-y-1">
+                  <p className="font-semibold text-slate-700 dark:text-slate-300">Aucune transaction pour ce livreur</p>
+                  <p>Vos revenus de courses réelles apparaîtront ici au fur et à mesure.</p>
                 </div>
-              ))}
+              ) : (
+                myDeliveries.map((d) => {
+                  const txId = `TR-${d.id.replace('LL-', '')}`;
+                  const isEarning = d.status === 'livree' || d.status === 'en_cours';
+                  const amountText = `+${(d.deliveryFee || 2000).toLocaleString('fr-FR')} FCFA`;
+
+                  return (
+                    <div key={d.id} className="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <span className={`w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0 ${isEarning ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                          <span className="material-symbols-outlined text-lg">
+                            {isEarning ? 'arrow_downward' : 'arrow_upward'}
+                          </span>
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-bold text-slate-900 truncate">Course #{d.id} - {d.pickupLocation?.commune || 'Cotonou'}</div>
+                          <div className="text-[10px] text-slate-500 font-mono mt-0.5">{d.createdAt || 'Récemment'} • Réf : {txId}</div>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className={`text-xs sm:text-sm font-black font-mono ${isEarning ? 'text-emerald-700' : 'text-slate-900'}`}>
+                          {amountText}
+                        </div>
+                        <span className="text-[10px] font-bold text-slate-400 block">{d.status === 'livree' ? 'Encaissé' : 'En cours'}</span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
         </main>

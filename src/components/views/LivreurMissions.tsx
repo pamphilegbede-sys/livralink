@@ -114,7 +114,6 @@ export const LivreurMissions: React.FC = () => {
           {/* Header Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs">
             <div className="flex items-center gap-3">
-              <BackButton />
               <div className="flex items-center gap-2">
                 <span className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400">
                   <span className="material-symbols-outlined text-xl">two_wheeler</span>

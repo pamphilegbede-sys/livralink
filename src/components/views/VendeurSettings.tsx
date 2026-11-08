@@ -216,7 +216,6 @@ export const VendeurSettings: React.FC = () => {
           {/* Header Action Bar */}
           <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <BackButton />
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 dark:text-white">
@@ -233,17 +232,6 @@ export const VendeurSettings: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              <button
-                type="button"
-                onClick={runValidationTestSuite}
-                disabled={isRunningTests}
-                className="px-3.5 py-2 rounded-xl bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 text-xs font-bold transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                title="Exécuter les tests automatiques de validation sur cette page"
-              >
-                <span className="material-symbols-outlined text-base">science</span>
-                <span>{isRunningTests ? 'Test en cours...' : '🧪 Tester la page'}</span>
-              </button>
-
               <button
                 type="button"
                 onClick={handleSave}

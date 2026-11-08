@@ -34,16 +34,16 @@ export const Header: React.FC<{
 
   return (
     <>
-      <header className="h-16 md:h-[72px] bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-3 md:px-8 flex justify-between items-center shrink-0 z-20 shadow-xs transition-colors">
+      <header className="sticky top-0 z-50 w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 shadow-md transition-all h-16 md:h-[72px] px-3 md:px-8 flex justify-between items-center shrink-0">
         {/* Left Cluster: Mobile Drawer Trigger + Breadcrumbs / Title */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 md:gap-3 min-w-0">
 
           <button
             type="button"
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="md:hidden p-1.5 rounded-xl text-slate-600 hover:bg-slate-100 active:scale-95 shrink-0"
-            title="Menu de navigation"
-            aria-label="Menu de navigation"
+            className="md:hidden p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-95 shrink-0 cursor-pointer shadow-2xs"
+            title="Ouvrir le menu de navigation"
+            aria-label="Ouvrir le menu de navigation"
           >
             <span className="material-symbols-outlined text-xl">menu</span>
           </button>
@@ -80,56 +80,21 @@ export const Header: React.FC<{
           )}
         </div>
 
-        {/* Right Cluster: Store / Driver Status, Icons, New Delivery CTA */}
+        {/* Right Cluster: Store / Driver Status, Notifications, Email Center & New Delivery CTA */}
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-          {/* Status Badge */}
-          {currentRole === 'vendeur' && (
-            <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-600">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>Brouillon synchronisé</span>
-            </div>
-          )}
-
           {/* Store badge for Vendor */}
           {currentRole === 'vendeur' && (
-            <div className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-blue-50 text-blue-800 border border-blue-100 text-[11px] sm:text-xs font-bold shadow-xs">
-              <span className="material-symbols-outlined text-sm sm:text-base text-blue-600">storefront</span>
-              <span className="truncate max-w-[100px] sm:max-w-none">{merchantSettings.storeName}</span>
+            <div className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-100 dark:border-blue-900 text-[11px] sm:text-xs font-bold shadow-2xs">
+              <span className="material-symbols-outlined text-sm sm:text-base text-blue-600 dark:text-blue-400">storefront</span>
+              <span className="truncate max-w-[120px] sm:max-w-none">{merchantSettings.storeName}</span>
             </div>
           )}
 
-          {/* Courier Online Toggle for Courier */}
-          {currentRole === 'livreur' && (
-            <button
-              onClick={toggleCourierAvailability}
-              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full text-xs font-bold transition-all shadow-xs active:scale-95 ${
-                courierSettings.isAvailable
-                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200'
-                  : 'bg-slate-200 text-slate-700 border border-slate-300 hover:bg-slate-300'
-              }`}
-            >
-              <span className={`w-2 h-2 rounded-full ${courierSettings.isAvailable ? 'bg-emerald-600 animate-ping' : 'bg-slate-500'}`}></span>
-              <span>{courierSettings.isAvailable ? 'En ligne' : 'En pause'}</span>
-            </button>
-          )}
-
-          {/* Action icons */}
+          {/* Action icons (Essential Notifications & Email Center) */}
           <div className="flex items-center gap-0.5">
-            {/* Quick Dark Mode Toggle */}
-            <button
-              type="button"
-              onClick={toggleDarkMode}
-              className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-              title={isDarkMode ? 'Basculer en mode clair' : 'Basculer en mode sombre'}
-              aria-label="Basculer le thème visuel"
-            >
-              <span className="material-symbols-outlined text-lg sm:text-xl">
-                {isDarkMode ? 'light_mode' : 'dark_mode'}
-              </span>
-            </button>
             <button
               onClick={openEmailCenter}
-              className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 transition-colors relative"
+              className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 transition-colors relative cursor-pointer"
               title="Centre des e-mails envoyés (Bienvenue, Codes, Sécurité)"
               aria-label="Centre d'e-mails"
             >
@@ -149,35 +114,7 @@ export const Header: React.FC<{
                 </span>
               ) : null}
             </button>
-            <button
-              onClick={() => setCurrentView(currentRole === 'vendeur' ? 'vendeur_settings' : 'livreur_settings')}
-              className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
-              title="Paramètres"
-            >
-              <span className="material-symbols-outlined text-lg sm:text-xl">tune</span>
-            </button>
           </div>
-
-          {/* Super-Admin Direct Console Access for pamphile.gbede@gmail.com */}
-          {isUserSuperAdmin && (
-            <button
-              type="button"
-              onClick={() => {
-                if (currentView === 'admin_console') {
-                  setCurrentView(currentRole === 'livreur' ? 'livreur_dashboard' : 'vendeur_dashboard');
-                } else {
-                  setCurrentView('admin_console');
-                }
-              }}
-              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-extrabold text-xs shadow-md flex items-center gap-1.5 active:scale-95 transition-all border border-amber-300/80 cursor-pointer shrink-0"
-              title="Dashboard Administrateur Direct (Pamphile Gbede)"
-            >
-              <span className="text-sm">👑</span>
-              <span className="hidden xs:inline">
-                {currentView === 'admin_console' ? 'Espace Normal' : 'Console Admin'}
-              </span>
-            </button>
-          )}
 
           {/* New Delivery CTA for Vendor */}
           {currentRole === 'vendeur' && currentView !== 'vendeur_new_delivery' && (

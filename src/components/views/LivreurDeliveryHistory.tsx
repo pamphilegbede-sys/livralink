@@ -31,15 +31,16 @@ export const LivreurDeliveryHistory: React.FC<{
       if (d.status !== 'livree') return false;
 
       if (userProfile?.role === 'livreur') {
-        const isDemo = userProfile.fullName === 'Awa Véloce Livraisons' || !userProfile.uid;
-        if (isDemo) return true;
         return (
           d.courier?.id === userProfile.uid ||
           (d.courier?.email && userProfile.email && d.courier.email.toLowerCase() === userProfile.email.toLowerCase()) ||
           (d.courier?.name && d.courier.name.toLowerCase() === userProfile.fullName.toLowerCase())
         );
       }
-      return d.courier?.id === selectedCourier?.id || (selectedCourier && d.courier?.name === selectedCourier.name) || true;
+      return (
+        (selectedCourier?.id && d.courier?.id === selectedCourier.id) ||
+        (selectedCourier?.name && d.courier?.name === selectedCourier.name)
+      );
     });
   }, [deliveries, userProfile, courierSettings, selectedCourier]);
 

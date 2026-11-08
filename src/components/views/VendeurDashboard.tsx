@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
-import { BackButton } from '../common/BackButton';
+import { MobileBottomNav } from '../common/MobileBottomNav';
 import { DeliveryOrder } from '../../types';
 import { EmptyState } from '../common/EmptyState';
 import { PaginationControls } from '../common/PaginationControls';
@@ -46,12 +46,6 @@ export const VendeurDashboard: React.FC = () => {
       );
     }
     if (userProfile?.role === 'vendeur') {
-      const isDemoAccount =
-        userProfile.email?.toLowerCase() === 'contact@glamchic-cotonou.bj' ||
-        userProfile.fullName === 'Sarah Kouamé';
-      if (isDemoAccount) {
-        return !d.merchantId || d.merchantId === userProfile.uid || d.pickupLocation.name.includes('Glam Chic');
-      }
       return (
         (d.merchantId && d.merchantId === userProfile.uid) ||
         (d.merchantEmail && userProfile.email && d.merchantEmail.toLowerCase() === userProfile.email.toLowerCase()) ||
@@ -157,16 +151,13 @@ export const VendeurDashboard: React.FC = () => {
         <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-6 pb-24 md:pb-8 max-w-7xl w-full mx-auto">
           {/* Top Page Header & Primary Actions Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2">
-            <div className="flex items-center gap-3">
-              <BackButton />
-              <div>
-                <h1 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
-                  Gestion des Livraisons
-                </h1>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Supervision en direct de vos expéditions et livreurs
-                </p>
-              </div>
+            <div>
+              <h1 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
+                Gestion des Livraisons
+              </h1>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Supervision en direct de vos expéditions et livreurs
+              </p>
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
@@ -629,6 +620,8 @@ export const VendeurDashboard: React.FC = () => {
           onClose={() => setIsOnboardingOpen(false)}
           role="vendeur"
         />
+
+        <MobileBottomNav />
       </div>
     </div>
   );
