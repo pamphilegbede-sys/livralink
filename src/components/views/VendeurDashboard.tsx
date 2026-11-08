@@ -203,13 +203,13 @@ export const VendeurDashboard: React.FC = () => {
               <button
                 type="button"
                 onClick={handleNewDeliveryClick}
-                className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-sm active:scale-95 ${
+                className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
                   !featureFlags.vendeurSpaceEnabled || !featureFlags.allowExpressCreation
                     ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed shadow-none'
-                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+                    : 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/20 ring-2 ring-blue-500/20'
                 }`}
               >
-                <span className="material-symbols-outlined text-lg">add</span>
+                <span className="material-symbols-outlined text-lg">add_circle</span>
                 <span>Nouvelle livraison</span>
               </button>
             </div>
@@ -223,36 +223,48 @@ export const VendeurDashboard: React.FC = () => {
             </div>
           )}
 
-          {/* 1. Key Activity Metrics (Airy Single-Elevation Cards) */}
+          {/* 1. Key Activity Metrics (Airy Single-Elevation KPI Grid) */}
           <section aria-label="Statistiques d'activité">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between">
-                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Total aujourd'hui</span>
-                <div className="mt-2 flex items-baseline justify-between">
+              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Total aujourd'hui</span>
+                  <span className="material-symbols-outlined text-slate-400 text-base">local_shipping</span>
+                </div>
+                <div className="mt-3 flex items-baseline justify-between">
                   <span className="text-2xl font-bold font-mono tabular-nums text-slate-900 dark:text-white">{totalCount}</span>
-                  <span className="text-xs text-slate-400">courses</span>
+                  <span className="text-xs text-slate-400">expéditions</span>
                 </div>
               </div>
 
-              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between">
-                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">En attente</span>
-                <div className="mt-2 flex items-baseline justify-between">
+              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">En attente</span>
+                  <span className="material-symbols-outlined text-amber-500 text-base">hourglass_empty</span>
+                </div>
+                <div className="mt-3 flex items-baseline justify-between">
                   <span className="text-2xl font-bold font-mono tabular-nums text-amber-600 dark:text-amber-400">{pendingCount}</span>
                   <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">Recherche livreur</span>
                 </div>
               </div>
 
-              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between">
-                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">En cours</span>
-                <div className="mt-2 flex items-baseline justify-between">
+              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">En transit</span>
+                  <span className="material-symbols-outlined text-blue-500 text-base">near_me</span>
+                </div>
+                <div className="mt-3 flex items-baseline justify-between">
                   <span className="text-2xl font-bold font-mono tabular-nums text-blue-600 dark:text-blue-400">{inProgressCount}</span>
-                  <span className="text-[11px] text-blue-600 dark:text-blue-400 font-medium">En transit</span>
+                  <span className="text-[11px] text-blue-600 dark:text-blue-400 font-medium">En cours</span>
                 </div>
               </div>
 
-              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between">
-                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Livrées (POD)</span>
-                <div className="mt-2 flex items-baseline justify-between">
+              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Livrées (POD)</span>
+                  <span className="material-symbols-outlined text-emerald-500 text-base">verified</span>
+                </div>
+                <div className="mt-3 flex items-baseline justify-between">
                   <span className="text-2xl font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">{deliveredCount}</span>
                   <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">Certifiées</span>
                 </div>
