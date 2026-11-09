@@ -957,14 +957,14 @@ export const AdminConsole: React.FC = () => {
 
       {/* Main Container */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff] dark:bg-slate-950">
-        {/* Top Navbar */}
-        <header className="h-[72px] bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 md:px-8 flex justify-between items-center shrink-0 z-20 shadow-xs">
-          {/* Mobile Drawer Trigger + Back button (PC & Mobile) + Search bar */}
-          <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0 max-w-sm md:w-1/2">
+        {/* Top Navbar - Professional & Non-Overlapping Layout */}
+        <header className="h-[72px] bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 md:px-6 flex items-center justify-between gap-3 shrink-0 z-20 shadow-2xs">
+          {/* Left: Mobile Menu Toggle + Back + Admin Brand Badge */}
+          <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={() => setIsMobileAdminSidebarOpen(!isMobileAdminSidebarOpen)}
-              className="md:hidden p-1.5 rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 active:scale-95 shrink-0 cursor-pointer"
+              className="md:hidden p-2 rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 active:scale-95 shrink-0 cursor-pointer"
               title="Menu Admin Sidebar"
             >
               <span className="material-symbols-outlined text-xl">menu</span>
@@ -973,7 +973,7 @@ export const AdminConsole: React.FC = () => {
             <button
               type="button"
               onClick={navigateBack}
-              className="inline-flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 transition-all text-xs font-bold shadow-2xs shrink-0 active:scale-95 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 transition-all text-xs font-bold shadow-2xs shrink-0 active:scale-95 cursor-pointer"
               title="Retour à la page précédente"
               aria-label="Retour à la page précédente"
             >
@@ -981,105 +981,89 @@ export const AdminConsole: React.FC = () => {
               <span className="font-bold hidden xs:inline">Retour</span>
             </button>
 
-            <div className="relative w-full">
-              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
-                search
-              </span>
-              <input
-                type="text"
-                value={adminSearch}
-                onChange={(e) => setAdminSearch(e.target.value)}
-                placeholder="Recherche globale..."
-                className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
-              />
-              {adminSearch && (
-                <button
-                  onClick={() => setAdminSearch('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  <span className="material-symbols-outlined text-xs">close</span>
-                </button>
-              )}
+            <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300">
+              <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
+              <span>Console Admin</span>
             </div>
           </div>
 
-          {/* Operational Status Ribbon */}
-          <div className="hidden lg:flex items-center gap-3 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200">
-            <span className="flex h-2 w-2 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          {/* Center: Global Search Bar - Strictly Bounded & Non-Overlapping */}
+          <div className="relative w-44 sm:w-56 md:w-64 lg:w-80 shrink-0">
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none">
+              search
             </span>
-            <span className="text-xs font-bold text-emerald-800">Supervision Active</span>
-            <span className="text-slate-300">•</span>
-            <span className="text-xs text-slate-600"><strong>{activeCouriersCount}</strong> coursiers</span>
-            <span className="text-slate-300">•</span>
-            <span className="text-xs text-blue-700 font-bold"><strong>{activeDeliveriesCount}</strong> en direct</span>
+            <input
+              type="text"
+              value={adminSearch}
+              onChange={(e) => setAdminSearch(e.target.value)}
+              placeholder="Rechercher utilisateur, course..."
+              className="w-full pl-9 pr-7 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl focus:ring-2 focus:ring-blue-600 focus:bg-white dark:focus:bg-slate-900 outline-none transition-all"
+            />
+            {adminSearch && (
+              <button
+                onClick={() => setAdminSearch('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <span className="material-symbols-outlined text-xs">close</span>
+              </button>
+            )}
           </div>
 
-          {/* Quick Actions & Super-Admin User Badge */}
-          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-            <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-amber-50 border border-amber-200/80 rounded-xl text-xs">
+          {/* Right: Operational Badge, Super-Admin Profile & Action Controls */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            {/* Operational Status Ribbon */}
+            <div className="hidden xl:flex items-center gap-2.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-xs">
+              <span className="flex h-2 w-2 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <span className="font-bold text-emerald-800 dark:text-emerald-300 text-[11px]">Supervision Active</span>
+              <span className="text-slate-300 dark:text-slate-700">•</span>
+              <span className="text-[11px] text-slate-600 dark:text-slate-400"><strong>{activeCouriersCount}</strong> livreurs</span>
+            </div>
+
+            {/* Super-Admin User Badge (Pamphile Gbede) - Protected & Prominent */}
+            <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 dark:bg-amber-950/60 border border-amber-200/80 dark:border-amber-800/80 rounded-xl text-xs shrink-0 shadow-2xs">
               <span className="text-sm">👑</span>
-              <div className="text-left">
-                <p className="font-bold text-amber-950 truncate max-w-[130px] leading-tight">
-                  {userProfile?.fullName || 'Super-Admin'}
+              <div className="text-left hidden sm:block">
+                <p className="font-extrabold text-amber-950 dark:text-amber-200 truncate max-w-[130px] leading-tight">
+                  {userProfile?.fullName || 'Pamphile Gbede'}
                 </p>
-                <p className="text-[10px] text-amber-700 font-mono truncate max-w-[130px]">
-                  {userProfile?.email || 'pamphile.gbede@gmail.com'}
+                <p className="text-[10px] text-amber-700 dark:text-amber-400 font-mono truncate max-w-[130px]">
+                  {userProfile?.email || 'Pamphile.gbede@gmail.com'}
                 </p>
               </div>
             </div>
 
+            {/* Email Center Button */}
             <button
               onClick={openEmailCenter}
-              className="px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs bg-blue-50 text-blue-800 hover:bg-blue-100 border border-blue-200 cursor-pointer"
-              title="Consulter et tester l'historique des emails Gmail / SMTP (Bienvenue, Réinitialisation, Alertes)"
+              className="p-2 rounded-xl text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 border border-blue-200 dark:border-blue-800 transition-all cursor-pointer shadow-2xs flex items-center gap-1.5"
+              title="Boîte des e-mails envoyés (Bienvenue, OTP, Notifications)"
             >
-              <span className="material-symbols-outlined text-sm text-blue-600">mail</span>
-              <span className="hidden sm:inline">Boîte E-mails</span>
+              <span className="material-symbols-outlined text-lg">mail</span>
+              <span className="hidden lg:inline text-xs font-bold">E-mails</span>
             </button>
 
-            <button
-              onClick={() => simulateNewPriorityMission()}
-              className="px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white cursor-pointer"
-              title="Diffuser une mission prioritaire en direct sur Firestore pour tester la notification des livreurs"
-            >
-              <span className="material-symbols-outlined text-sm">bolt</span>
-              <span className="hidden sm:inline">⚡ Diffuser Mission</span>
-            </button>
-
-            <button
-              onClick={() => setActiveViewTab('security')}
-              className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 sm:gap-1.5 transition-all shadow-xs ${
-                activeViewTab === 'security'
-                  ? 'bg-amber-600 text-white'
-                  : 'bg-gradient-to-r from-slate-900 to-indigo-950 hover:from-slate-800 hover:to-indigo-900 text-amber-300 border border-amber-400/40'
-              }`}
-              title="Gérer la Whitelist Google et les autorisations"
-            >
-              <span>🛡️</span>
-              <span className="hidden sm:inline">Whitelist &amp; Sécurité</span>
-            </button>
-
-            {/* Quick Switch to Merchant or Driver Space */}
+            {/* Return to Merchant/Driver space */}
             <button
               onClick={() => setCurrentView(currentRole === 'livreur' ? 'livreur_dashboard' : 'vendeur_dashboard')}
-              className="px-2.5 sm:px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95 shrink-0"
-              title={`Revenir à votre espace ${currentRole === 'livreur' ? 'Livreur' : 'Vendeur'}`}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95 shrink-0"
+              title={`Basculer vers l'espace ${currentRole === 'livreur' ? 'Livreur' : 'Vendeur'}`}
             >
-              <span className="material-symbols-outlined text-sm">space_dashboard</span>
-              <span className="hidden sm:inline">
+              <span className="material-symbols-outlined text-base">space_dashboard</span>
+              <span className="hidden md:inline">
                 {currentRole === 'livreur' ? 'Espace Livreur' : 'Espace Vendeur'}
               </span>
             </button>
 
+            {/* Admin Logout */}
             <button
               onClick={adminLogout}
-              className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors shrink-0"
-              title="Fermer la session administrateur"
+              className="p-2 rounded-xl text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/60 hover:bg-red-100 dark:hover:bg-red-900/60 border border-red-200 dark:border-red-800 transition-all cursor-pointer shadow-2xs"
+              title="Se déconnecter de la console administration"
             >
-              <span className="material-symbols-outlined text-sm">logout</span>
-              <span className="hidden sm:inline">Déconnexion</span>
+              <span className="material-symbols-outlined text-lg">logout</span>
             </button>
           </div>
         </header>

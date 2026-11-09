@@ -24,6 +24,7 @@ export const LivreurMissions: React.FC = () => {
     userProfile,
     kycRequests,
     openKYCModal,
+    openChatModal,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'all' | 'en_cours' | 'en_attente' | 'livree'>('all');
@@ -330,11 +331,21 @@ export const LivreurMissions: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleWhatsApp(order)}
-                        className="min-h-[44px] px-3.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors active:scale-95"
+                        className="min-h-[44px] px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors active:scale-95"
                         title="Contacter le client sur WhatsApp"
                       >
                         <span className="material-symbols-outlined text-base">chat</span>
                         <span>WhatsApp</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => openChatModal(order)}
+                        className="min-h-[44px] px-3 bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors active:scale-95"
+                        title="Discuter directement avec le vendeur"
+                      >
+                        <span className="material-symbols-outlined text-base">forum</span>
+                        <span>Chat Vendeur</span>
                       </button>
 
                       {(order.status === 'en_attente' || order.status === 'assignee' || !order.courier) && (

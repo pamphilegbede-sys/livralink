@@ -273,19 +273,20 @@ export const MobileBottomNav: React.FC = () => {
           </button>
         )}
 
-        {/* Destination 4: Rapports pour Vendeur / Portefeuille pour Livreur */}
+        {/* Destination 4: Messagerie Directe Chat */}
         <button
-          onClick={() => setCurrentView(currentRole === 'vendeur' ? 'vendeur_reports' : 'livreur_wallet')}
-          className={`flex flex-col items-center justify-center py-1 transition-colors ${
-            currentView === 'vendeur_reports' || currentView === 'livreur_wallet' 
+          onClick={() => setCurrentView(currentRole === 'vendeur' ? 'vendeur_chat' : 'livreur_chat')}
+          className={`flex flex-col items-center justify-center py-1 transition-colors relative ${
+            currentView === 'vendeur_chat' || currentView === 'livreur_chat' 
               ? 'text-blue-600 dark:text-blue-400 font-bold' 
               : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
           }`}
         >
-          <span className="material-symbols-outlined text-[20px]">
-            {currentRole === 'vendeur' ? 'analytics' : 'account_balance_wallet'}
-          </span>
-          <span className="text-[10px] mt-0.5">{currentRole === 'vendeur' ? 'Rapports' : 'Gains'}</span>
+          <div className="relative">
+            <span className="material-symbols-outlined text-[20px]">forum</span>
+            <span className="absolute -top-1 -right-1.5 w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          </div>
+          <span className="text-[10px] mt-0.5">Chat</span>
         </button>
 
         {/* Destination 5: Profil / Réglages */}

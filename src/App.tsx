@@ -22,6 +22,8 @@ const LivreurWallet = React.lazy(() => import('./components/views/LivreurWallet'
 const LivreurSettings = React.lazy(() => import('./components/views/LivreurSettings').then(m => ({ default: m.LivreurSettings })));
 const AdminConsole = React.lazy(() => import('./components/views/AdminConsole').then(m => ({ default: m.AdminConsole })));
 
+const ChatView = React.lazy(() => import('./components/views/ChatView').then(m => ({ default: m.ChatView })));
+
 // Lazy-loaded Modals
 const PODValidationModal = React.lazy(() => import('./components/modals/PODValidationModal').then(m => ({ default: m.PODValidationModal })));
 const WhatsAppPreviewModal = React.lazy(() => import('./components/modals/WhatsAppPreviewModal').then(m => ({ default: m.WhatsAppPreviewModal })));
@@ -32,6 +34,7 @@ const NotificationCenterModal = React.lazy(() => import('./components/modals/Not
 const LivreurSearchModal = React.lazy(() => import('./components/modals/LivreurSearchModal').then(m => ({ default: m.LivreurSearchModal })));
 const KYCSubmissionModal = React.lazy(() => import('./components/modals/KYCSubmissionModal').then(m => ({ default: m.KYCSubmissionModal })));
 const RateLivreurModal = React.lazy(() => import('./components/modals/RateLivreurModal').then(m => ({ default: m.RateLivreurModal })));
+const ChatModal = React.lazy(() => import('./components/modals/ChatModal').then(m => ({ default: m.ChatModal })));
 
 const MainAppRouter: React.FC = () => {
   const { 
@@ -61,6 +64,9 @@ const MainAppRouter: React.FC = () => {
     isRateLivreurModalOpen,
     closeRateLivreurModal,
     rateLivreurTargetOrder,
+    isChatModalOpen,
+    closeChatModal,
+    chatModalOrder,
   } = useApp();
   const [deviceMode, setDeviceMode] = useState<'responsive' | 'mobile-mock'>('responsive');
 
@@ -93,6 +99,8 @@ const MainAppRouter: React.FC = () => {
               return <VendeurReports />;
             case 'vendeur_settings':
               return <VendeurSettings />;
+            case 'vendeur_chat':
+              return <ChatView />;
             case 'livreur_dashboard':
               return <LivreurDashboard />;
             case 'livreur_missions':
@@ -101,6 +109,8 @@ const MainAppRouter: React.FC = () => {
               return <LivreurWallet />;
             case 'livreur_settings':
               return <LivreurSettings />;
+            case 'livreur_chat':
+              return <ChatView />;
             case 'admin_console':
               return <AdminConsole />;
             default:
@@ -196,6 +206,13 @@ const MainAppRouter: React.FC = () => {
             isOpen={isRateLivreurModalOpen}
             onClose={closeRateLivreurModal}
             order={rateLivreurTargetOrder}
+          />
+        )}
+        {isChatModalOpen && (
+          <ChatModal
+            isOpen={isChatModalOpen}
+            onClose={closeChatModal}
+            order={chatModalOrder}
           />
         )}
       </React.Suspense>

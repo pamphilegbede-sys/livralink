@@ -134,6 +134,22 @@ export const Sidebar: React.FC = () => {
 
               <button
                 type="button"
+                onClick={() => setCurrentView('vendeur_chat')}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+                  currentView === 'vendeur_chat'
+                    ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="material-symbols-outlined text-xl">forum</span>
+                  <span>Messagerie Chat</span>
+                </div>
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setCurrentView('vendeur_settings')}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'vendeur_settings'
@@ -231,6 +247,22 @@ export const Sidebar: React.FC = () => {
               >
                 <span className="material-symbols-outlined text-xl">account_balance_wallet</span>
                 <span>Portefeuille (0% MVP)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentView('livreur_chat')}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+                  currentView === 'livreur_chat'
+                    ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="material-symbols-outlined text-xl">forum</span>
+                  <span>Messagerie Chat</span>
+                </div>
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
               </button>
 
               <button

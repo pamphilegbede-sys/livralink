@@ -12,6 +12,7 @@ import {
   createFreshCourierEntity 
 } from '../../utils/userIsolation';
 import { sendWelcomeEmail } from '../../services/emailService';
+import { PrivacyPolicyModal } from '../modals/PrivacyPolicyModal';
 
 export const RegisterPage: React.FC = () => {
   const { 
@@ -36,7 +37,8 @@ export const RegisterPage: React.FC = () => {
   const [storeName, setStoreName] = useState('');
   const [storeCommune, setStoreCommune] = useState('');
   const [storeAddress, setStoreAddress] = useState('');
-  const [acceptTerms, setAcceptTerms] = useState(true);
+  const [acceptTerms, setAcceptTerms] = useState(false);
+  const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -68,8 +70,8 @@ export const RegisterPage: React.FC = () => {
     setErrorMessage(null);
 
     if (!acceptTerms) {
-      setErrorMessage('Veuillez accepter les CGU et la politique de confidentialité pour continuer.');
-      showToast('Veuillez accepter les CGU pour continuer.', 'error');
+      setErrorMessage("Vous devez obligatoirement lire et cocher l'acceptation de la Politique de Confidentialité et des CGU pour continuer.");
+      showToast("Veuillez cocher l'acceptation de la politique de confidentialité.", 'error');
       return;
     }
 
@@ -585,10 +587,33 @@ export const RegisterPage: React.FC = () => {
                       type="checkbox"
                       checked={acceptTerms}
                       onChange={(e) => setAcceptTerms(e.target.checked)}
-                      className="mt-0.5 w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      className="mt-0.5 w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 shrink-0"
                     />
                     <span className="leading-tight">
-                      J'accepte les conditions d'utilisation et la politique de confidentialité.
+                      J'ai lu et j'accepte obligatoirement la{' '}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setIsPrivacyModalOpen(true);
+                        }}
+                        className="text-blue-600 font-bold hover:underline inline-flex items-center gap-0.5"
+                      >
+                        <span>Politique de Confidentialité</span>
+                        <span className="material-symbols-outlined text-xs">open_in_new</span>
+                      </button>{' '}
+                      et les{' '}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setIsPrivacyModalOpen(true);
+                        }}
+                        className="text-blue-600 font-bold hover:underline inline-flex items-center gap-0.5"
+                      >
+                        <span>CGU</span>
+                      </button>
+                      .
                     </span>
                   </label>
                 </div>
@@ -638,6 +663,13 @@ export const RegisterPage: React.FC = () => {
           </div>
         </div>
       </main>
+
+      {/* Privacy Policy & Terms Modal */}
+      <PrivacyPolicyModal
+        isOpen={isPrivacyModalOpen}
+        onClose={() => setIsPrivacyModalOpen(false)}
+        onAccept={() => setAcceptTerms(true)}
+      />
 
       {/* Footer */}
       <footer className="w-full bg-white border-t border-slate-200/80 py-4 px-4 text-center text-xs text-slate-500">

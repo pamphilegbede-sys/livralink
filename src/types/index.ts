@@ -269,3 +269,31 @@ export const DEFAULT_PLATFORM_FEATURE_FLAGS: PlatformFeatureFlags = {
   allowDirectCallClient: true,
   showVendorStoreDetails: true,
 };
+
+export interface ChatMessage {
+  id: string;
+  orderId?: string;
+  senderId: string;
+  senderName: string;
+  senderRole: UserRole;
+  recipientId: string;
+  recipientName: string;
+  recipientRole: UserRole;
+  text: string;
+  timestamp: string;
+  isRead: boolean;
+  quickTag?: 'location' | 'otp' | 'delay' | 'pickup_ready' | 'client_unreachable';
+}
+
+export interface ChatConversation {
+  id: string;
+  orderId?: string;
+  contactId: string;
+  contactName: string;
+  contactRole: UserRole;
+  contactPhone?: string;
+  contactSubtitle?: string;
+  lastMessage: string;
+  lastTimestamp: string;
+  unreadCount: number;
+}

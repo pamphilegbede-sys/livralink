@@ -15,7 +15,8 @@ import {
   PricingRule,
   PlatformFeatureFlags,
   DEFAULT_PLATFORM_FEATURE_FLAGS,
-  AppNotification
+  AppNotification,
+  ChatMessage
 } from '../types';
 import { sendPlatformNotification } from '../services/emailService';
 import {
@@ -56,10 +57,12 @@ export type AppView =
   | 'vendeur_tracking'
   | 'vendeur_reports'
   | 'vendeur_settings'
+  | 'vendeur_chat'
   | 'livreur_dashboard'
   | 'livreur_missions'
   | 'livreur_wallet'
   | 'livreur_settings'
+  | 'livreur_chat'
   | 'admin_console';
 
 export type AdminTab =
@@ -278,6 +281,17 @@ interface AppContextType {
   openRateLivreurModal: (order: DeliveryOrder) => void;
   closeRateLivreurModal: () => void;
   rateCourier: (orderId: string, courierId: string, rating: number, comment?: string, tags?: string[], ratedBy?: string) => void;
+
+  // Messagerie Directe / Chat Vendeur <-> Livreur
+  chatMessages: ChatMessage[];
+  sendChatMessage: (params: { orderId?: string; recipientId: string; recipientName: string; recipientRole: UserRole; text: string; quickTag?: ChatMessage['quickTag'] }) => void;
+  markChatAsRead: (conversationKey: string) => void;
+  isChatModalOpen: boolean;
+  chatModalOrder: DeliveryOrder | null;
+  openChatModal: (order?: DeliveryOrder | null) => void;
+  closeChatModal: () => void;
+  chatActiveTarget: { orderId?: string; contactId?: string; contactName?: string; contactRole?: UserRole } | null;
+  setChatActiveTarget: (target: { orderId?: string; contactId?: string; contactName?: string; contactRole?: UserRole } | null) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -407,25 +421,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
 
-  // Real-time notifications state
+  // Real-time notifications state (Réinitialisé à zéro pour vendeurs, livreurs et admins)
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
     try {
-      const saved = localStorage.getItem('livralink_notifications');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.filter((n: any) => !n.id?.startsWith('notif-'));
-        }
-      }
+      localStorage.removeItem('livralink_notifications');
     } catch {}
-    return INITIAL_NOTIFICATIONS;
+    return [];
   });
 
   const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
 
   useEffect(() => {
     try {
-      localStorage.setItem('livralink_notifications', JSON.stringify(notifications));
+      if (notifications.length === 0) {
+        localStorage.removeItem('livralink_notifications');
+      } else {
+        localStorage.setItem('livralink_notifications', JSON.stringify(notifications));
+      }
     } catch (err) {
       console.warn('Erreur sauvegarde notifications:', err);
     }
@@ -543,6 +555,138 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const closeRateLivreurModal = () => {
     setIsRateLivreurModalOpen(false);
     setRateLivreurTargetOrder(null);
+  };
+
+  // Direct Messagerie / Chat Vendeur <-> Livreur state
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
+    try {
+      const saved = localStorage.getItem('livralink_chat_messages');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [
+      {
+        id: 'msg-seed-1',
+        orderId: '#LL-4192',
+        senderId: 'courier-1',
+        senderName: 'Ibrahim Touré',
+        senderRole: 'livreur',
+        recipientId: 'vendor-1',
+        recipientName: 'Sarah Kouamé',
+        recipientRole: 'vendeur',
+        text: 'Bonjour Sarah ! Je suis en route pour récupérer le colis de la boutique.',
+        timestamp: new Date(Date.now() - 3600000).toISOString(),
+        isRead: true,
+        quickTag: 'location',
+      },
+      {
+        id: 'msg-seed-2',
+        orderId: '#LL-4192',
+        senderId: 'vendor-1',
+        senderName: 'Sarah Kouamé',
+        senderRole: 'vendeur',
+        recipientId: 'courier-1',
+        recipientName: 'Ibrahim Touré',
+        recipientRole: 'livreur',
+        text: 'Parfait Ibrahim ! Le paquet est prêt avec la facture sur le comptoir.',
+        timestamp: new Date(Date.now() - 3000000).toISOString(),
+        isRead: true,
+        quickTag: 'pickup_ready',
+      },
+      {
+        id: 'msg-seed-3',
+        orderId: '#LL-4192',
+        senderId: 'courier-1',
+        senderName: 'Ibrahim Touré',
+        senderRole: 'livreur',
+        recipientId: 'vendor-1',
+        recipientName: 'Sarah Kouamé',
+        recipientRole: 'vendeur',
+        text: 'Bien reçu, je suis arrivé devant l\'avenue. Je prends possession du colis.',
+        timestamp: new Date(Date.now() - 1800000).toISOString(),
+        isRead: true,
+        quickTag: 'location',
+      },
+    ];
+  });
+
+  const sendChatMessage = (params: {
+    orderId?: string;
+    recipientId: string;
+    recipientName: string;
+    recipientRole: UserRole;
+    text: string;
+    quickTag?: ChatMessage['quickTag'];
+  }) => {
+    const senderId = userProfile?.uid || (currentRole === 'vendeur' ? 'vendor-default' : 'courier-default');
+    const senderName = currentRole === 'vendeur'
+      ? (merchantSettings.storeName || userProfile?.fullName || 'Vendeur LivraLink')
+      : (courierSettings.fullName || userProfile?.fullName || 'Livreur Partenaire');
+
+    const newMsg: ChatMessage = {
+      id: `chat_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      orderId: params.orderId,
+      senderId,
+      senderName,
+      senderRole: currentRole,
+      recipientId: params.recipientId,
+      recipientName: params.recipientName,
+      recipientRole: params.recipientRole,
+      text: params.text,
+      timestamp: new Date().toISOString(),
+      isRead: false,
+      quickTag: params.quickTag,
+    };
+
+    setChatMessages((prev) => {
+      const updated = [...prev, newMsg];
+      try {
+        localStorage.setItem('livralink_chat_messages', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    showToast('Message envoyé !', 'success');
+  };
+
+  const markChatAsRead = React.useCallback((conversationKey: string) => {
+    setChatMessages((prev) => {
+      let changed = false;
+      const updated = prev.map((msg) => {
+        const key = msg.orderId ? `order_${msg.orderId}` : `direct_${msg.senderId}`;
+        if (key === conversationKey && !msg.isRead) {
+          changed = true;
+          return { ...msg, isRead: true };
+        }
+        return msg;
+      });
+      if (changed) {
+        try {
+          localStorage.setItem('livralink_chat_messages', JSON.stringify(updated));
+        } catch {}
+      }
+      return changed ? updated : prev;
+    });
+  }, []);
+
+  const [isChatModalOpen, setIsChatModalOpen] = useState(false);
+  const [chatModalOrder, setChatModalOrder] = useState<DeliveryOrder | null>(null);
+  const [chatActiveTarget, setChatActiveTarget] = useState<{
+    orderId?: string;
+    contactId?: string;
+    contactName?: string;
+    contactRole?: UserRole;
+  } | null>(null);
+
+  const openChatModal = (order?: DeliveryOrder | null) => {
+    setChatModalOrder(order || null);
+    setIsChatModalOpen(true);
+  };
+  const closeChatModal = () => {
+    setIsChatModalOpen(false);
+    setChatModalOrder(null);
   };
 
   // Theme Selector State (light | dark | system)
@@ -2913,6 +3057,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         openRateLivreurModal,
         closeRateLivreurModal,
         rateCourier,
+        chatMessages,
+        sendChatMessage,
+        markChatAsRead,
+        isChatModalOpen,
+        chatModalOrder,
+        openChatModal,
+        closeChatModal,
+        chatActiveTarget,
+        setChatActiveTarget,
       }}
     >
       {children}

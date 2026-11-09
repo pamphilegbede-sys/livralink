@@ -82,16 +82,26 @@ export const Header: React.FC<{
 
         {/* Right Cluster: Store / Driver Status, Notifications, Email Center & New Delivery CTA */}
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-          {/* Store badge for Vendor */}
+          {/* Store badge for Vendor - Hidden on mobile screens to avoid title collision */}
           {currentRole === 'vendeur' && (
-            <div className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-100 dark:border-blue-900 text-[11px] sm:text-xs font-bold shadow-2xs">
-              <span className="material-symbols-outlined text-sm sm:text-base text-blue-600 dark:text-blue-400">storefront</span>
-              <span className="truncate max-w-[120px] sm:max-w-none">{merchantSettings.storeName}</span>
+            <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-100 dark:border-blue-900 text-xs font-bold shadow-2xs">
+              <span className="material-symbols-outlined text-base text-blue-600 dark:text-blue-400">storefront</span>
+              <span className="truncate max-w-[160px] lg:max-w-none">{merchantSettings.storeName}</span>
             </div>
           )}
 
-          {/* Action icons (Essential Notifications & Email Center) */}
+          {/* Action icons (Chat, Email Center, Notifications) */}
           <div className="flex items-center gap-0.5">
+            <button
+              onClick={() => setCurrentView(currentRole === 'vendeur' ? 'vendeur_chat' : 'livreur_chat')}
+              className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 transition-colors relative cursor-pointer active:scale-95"
+              title="Messagerie Directe Chat Vendeur-Livreur"
+              aria-label="Messagerie Directe"
+            >
+              <span className="material-symbols-outlined text-lg sm:text-xl">forum</span>
+              <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            </button>
+
             <button
               onClick={openEmailCenter}
               className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 transition-colors relative cursor-pointer"

@@ -8,6 +8,7 @@ import { EmptyState } from '../common/EmptyState';
 import { PaginationControls } from '../common/PaginationControls';
 
 import { OnboardingGuideModal } from '../modals/OnboardingGuideModal';
+import { VendeurFAQSection } from '../vendeur/VendeurFAQSection';
 
 export const VendeurDashboard: React.FC = () => {
   const {
@@ -26,6 +27,7 @@ export const VendeurDashboard: React.FC = () => {
     openEmailCenter,
     openLivreurSearchModal,
     openRateLivreurModal,
+    openChatModal,
   } = useApp();
 
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
@@ -138,6 +140,13 @@ export const VendeurDashboard: React.FC = () => {
     showToast(`Course ${orderId} reprogrammée au statut En attente.`, 'success');
   };
 
+  const scrollToFAQ = () => {
+    const el = document.getElementById('vendeur-faq-section');
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
   return (
     <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans'] transition-colors duration-200">
       <Sidebar />
@@ -152,9 +161,15 @@ export const VendeurDashboard: React.FC = () => {
           {/* Top Page Header & Primary Actions Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2">
             <div>
-              <h1 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
-                Gestion des Livraisons
-              </h1>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
+                  Gestion des Livraisons
+                </h1>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-100 dark:border-blue-900 text-xs font-bold shadow-2xs">
+                  <span className="material-symbols-outlined text-sm text-blue-600 dark:text-blue-400">storefront</span>
+                  <span>{merchantSettings.storeName}</span>
+                </span>
+              </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 Supervision en direct de vos expéditions et livreurs
               </p>
@@ -169,6 +184,16 @@ export const VendeurDashboard: React.FC = () => {
               >
                 <span className="material-symbols-outlined text-base text-blue-600 dark:text-blue-400">person_search</span>
                 <span>Trouver un Livreur</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={scrollToFAQ}
+                className="px-3 py-2.5 rounded-xl border border-blue-200 dark:border-blue-800/80 bg-blue-50/60 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                title="Consulter la Foire Aux Questions Vendeur"
+              >
+                <span className="material-symbols-outlined text-base text-blue-600 dark:text-blue-400">help</span>
+                <span>FAQ &amp; Aide</span>
               </button>
 
               <button
@@ -483,6 +508,16 @@ export const VendeurDashboard: React.FC = () => {
                                 <span className="material-symbols-outlined text-base">chat</span>
                               </button>
 
+                              {order.courier && (
+                                <button
+                                  onClick={() => openChatModal(order)}
+                                  className="p-1.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-600 dark:text-blue-400 transition-colors"
+                                  title="Discuter directement avec le livreur"
+                                >
+                                  <span className="material-symbols-outlined text-base">forum</span>
+                                </button>
+                              )}
+
                               {(order.status === 'en_cours' || order.status === 'acceptee') && (
                                 <button
                                   onClick={() => handleInspectDelivery(order)}
@@ -613,6 +648,11 @@ export const VendeurDashboard: React.FC = () => {
               </>
             )}
           </section>
+
+          {/* 4. Foire aux Questions & Support Vendeur */}
+          <div id="vendeur-faq-section" className="scroll-mt-6">
+            <VendeurFAQSection onOpenGuide={() => setIsOnboardingOpen(true)} />
+          </div>
         </main>
 
         <OnboardingGuideModal
