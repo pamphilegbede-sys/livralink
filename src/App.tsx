@@ -5,6 +5,7 @@ import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { FullViewSkeleton } from './components/common/LoadingSkeleton';
 import { PlatformBroadcastBanner } from './components/common/PlatformBroadcastBanner';
 import { PriorityMissionNotificationBanner } from './components/common/PriorityMissionNotificationBanner';
+import { UpdateNotificationBanner } from './components/common/UpdateNotificationBanner';
 import { LandingPage } from './components/views/LandingPage';
 
 // Lazy-loaded Views for ultra-fast initial load & reduced bundle size
@@ -125,6 +126,9 @@ const MainAppRouter: React.FC = () => {
     <div className={`flex flex-col min-h-screen w-full bg-[#f8fafc] dark:bg-slate-950 text-[#131b2e] dark:text-slate-100 antialiased transition-colors duration-200 ${isDarkMode ? 'dark' : ''}`}>
       {/* Global Toast */}
       <Toast />
+
+      {/* Discreet Version Update Available Banner */}
+      <UpdateNotificationBanner />
 
       {/* Platform Emergency / Official Broadcast Banner */}
       <PlatformBroadcastBanner />

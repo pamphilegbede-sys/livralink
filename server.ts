@@ -89,8 +89,8 @@ const getClientIp = (req: Request): string => {
 
 // Global API rate limiting middleware: max 120 calls per 60s per visitor IP
 app.use('/api', (req, res, next) => {
-  // Allow healthz, security audit, and error logs without strict throttling
-  if (req.path === '/healthz' || req.path === '/security/audit' || req.path === '/logs/error') {
+  // Allow healthz, security audit, version, and error logs without strict throttling
+  if (req.path === '/healthz' || req.path === '/security/audit' || req.path === '/logs/error' || req.path === '/api/version' || req.path === '/version.json') {
     return next();
   }
   const ip = getClientIp(req);
@@ -2050,6 +2050,37 @@ app.get(['/healthz', '/api/healthz'], (_req: Request, res: Response) => {
   res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
 });
 
+// Version detection endpoints: always returns fresh deployment metadata with no-cache headers
+app.get(['/api/version', '/version.json'], (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
+
+  const distVersionPath = path.resolve(process.cwd(), 'dist/version.json');
+  const publicVersionPath = path.resolve(process.cwd(), 'public/version.json');
+
+  if (fs.existsSync(distVersionPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(distVersionPath, 'utf8'));
+      return res.json(data);
+    } catch {}
+  }
+
+  if (fs.existsSync(publicVersionPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(publicVersionPath, 'utf8'));
+      return res.json(data);
+    } catch {}
+  }
+
+  res.json({
+    version: '2.4.0',
+    buildTime: new Date().toISOString(),
+    appName: 'LivraLink',
+  });
+});
+
 // Security configuration & defensive audit status endpoint
 app.get('/api/security/audit', (_req: Request, res: Response) => {
   res.json({
@@ -2297,7 +2328,7 @@ async function startServer() {
   if (isProduction && hasDist) {
     console.log(`[SERVER] Mode Production actif - Fichiers servis depuis: ${distPath}`);
 
-    // Serve /assets with caching and prevent fallback to index.html on missing assets
+    // 1. Long-term immutable caching for hashed production assets
     app.use(
       '/assets',
       express.static(path.resolve(distPath, 'assets'), {
@@ -2306,18 +2337,61 @@ async function startServer() {
       })
     );
 
-    // Serve root static files
+    // 2. Strict zero-cache for Service Worker and PWA version manifests
+    const dynamicPwaFiles = ['/sw.js', '/registerSW.js', '/version.json', '/manifest.webmanifest', '/sw-push.js'];
+    app.get(dynamicPwaFiles, (req: Request, res: Response, next) => {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('Surrogate-Control', 'no-store');
+
+      const fileName = req.path.replace(/^\//, '');
+      const distFilePath = path.resolve(distPath, fileName);
+      if (fs.existsSync(distFilePath)) {
+        return res.sendFile(distFilePath);
+      }
+      const publicFilePath = path.resolve(process.cwd(), 'public', fileName);
+      if (fs.existsSync(publicFilePath)) {
+        return res.sendFile(publicFilePath);
+      }
+      next();
+    });
+
+    // 3. Serve root static files with intelligent Cache-Control discrimination
     app.use(
       express.static(distPath, {
-        maxAge: '1h',
+        setHeaders: (res, filePath) => {
+          const lower = filePath.toLowerCase();
+          if (
+            lower.endsWith('.html') ||
+            lower.endsWith('.json') ||
+            lower.includes('sw.js') ||
+            lower.includes('registersw') ||
+            lower.includes('manifest')
+          ) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+            res.setHeader('Surrogate-Control', 'no-store');
+          } else if (lower.includes('/assets/')) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          } else {
+            // Static icons, svgs, etc.: revalidate frequently
+            res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate');
+          }
+        },
       })
     );
 
-    // SPA Catch-all route (serves index.html for frontend client routing)
+    // 4. SPA Catch-all route: index.html is ALWAYS revalidated to ensure instant version pickup
     app.get('*', (req: Request, res: Response, next) => {
-      if (req.path.startsWith('/api/') || req.path === '/healthz') {
+      if (req.path.startsWith('/api/') || req.path === '/healthz' || req.path === '/version.json') {
         return next();
       }
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('Surrogate-Control', 'no-store');
       res.sendFile(path.resolve(distPath, 'index.html'));
     });
   } else {

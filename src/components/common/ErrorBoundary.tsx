@@ -44,7 +44,14 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   private handleReset = () => {
+    const isChunk = (this.state.error?.message || '').toLowerCase().includes('dynamically imported');
     this.setState({ hasError: false, error: null, errorInfo: null });
+    if (isChunk && 'caches' in window) {
+      caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n)))).finally(() => {
+        window.location.reload();
+      });
+      return;
+    }
     if (this.props.onReset) {
       this.props.onReset();
     } else {
@@ -54,19 +61,29 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public render() {
     if (this.state.hasError) {
+      const errMsg = (this.state.error?.message || '').toLowerCase();
+      const isChunkError =
+        errMsg.includes('failed to fetch dynamically imported module') ||
+        errMsg.includes('loading chunk') ||
+        errMsg.includes('error loading dynamically imported module');
+
       return (
         <div className="min-h-[420px] flex-1 flex items-center justify-center p-6 bg-slate-50 font-['Plus_Jakarta_Sans']">
           <div className="max-w-md w-full bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/90 shadow-xl text-center space-y-4">
-            <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-100/80 text-amber-600 flex items-center justify-center shadow-xs">
-              <span className="material-symbols-outlined text-3xl">warning</span>
+            <div className={`w-14 h-14 mx-auto rounded-2xl ${isChunkError ? 'bg-blue-100 text-blue-600' : 'bg-amber-100/80 text-amber-600'} flex items-center justify-center shadow-xs`}>
+              <span className="material-symbols-outlined text-3xl">
+                {isChunkError ? 'published_with_changes' : 'warning'}
+              </span>
             </div>
 
             <div className="space-y-1.5">
               <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-                {this.props.fallbackTitle || 'Oups ! Un imprévu est survenu'}
+                {isChunkError ? 'Mise à jour LivraLink requise' : (this.props.fallbackTitle || 'Oups ! Un imprévu est survenu')}
               </h2>
               <p className="text-xs text-slate-500 leading-relaxed">
-                Une anomalie technique a été interceptée et isolée pour protéger vos données et vos livraisons.
+                {isChunkError
+                  ? 'Une nouvelle version de LivraLink a été déployée. Vos données sont préservées, cliquez ci-dessous pour charger la dernière version.'
+                  : 'Une anomalie technique a été interceptée et isolée pour protéger vos données et vos livraisons.'}
               </p>
             </div>
 
@@ -89,7 +106,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 className="min-h-[44px] py-2.5 px-3 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-2xs"
               >
                 <span className="material-symbols-outlined text-sm">refresh</span>
-                <span>Réessayer</span>
+                <span>{isChunkError ? 'Mettre à jour' : 'Réessayer'}</span>
               </button>
               <button
                 type="button"

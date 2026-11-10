@@ -29,6 +29,18 @@ if (typeof window !== 'undefined') {
       console.warn('[LivraLink Auth Notice] Rejet asynchrone popup Firebase géré avec succès.');
     }
   });
+
+  // Intercept stale chunk loading failures following a new deployment (avoids white screens)
+  window.addEventListener('vite:preloadError', () => {
+    console.warn('[LivraLink Version Manager] Chunk obsolète intercepté après un déploiement. Rechargement propre...');
+    const reloadKey = 'livralink_chunk_reload_ts';
+    const lastReload = sessionStorage.getItem(reloadKey);
+    const now = Date.now();
+    if (!lastReload || now - parseInt(lastReload, 10) > 10000) {
+      sessionStorage.setItem(reloadKey, String(now));
+      window.location.reload();
+    }
+  });
 }
 
 createRoot(document.getElementById('root')!).render(<App />);

@@ -160,7 +160,7 @@ export const LivreurWallet: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => showToast("En mode MVP, les transactions d'argent sont réglées en direct entre les parties. Le portefeuille comptabilise vos statistiques et revenus.", "info")}
-                    className="text-blue-300 hover:text-white font-bold underline cursor-pointer"
+                    className="min-h-[44px] text-blue-300 hover:text-white font-bold underline cursor-pointer inline-flex items-center"
                   >
                     Information MVP
                   </button>

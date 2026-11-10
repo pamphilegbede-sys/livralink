@@ -4,15 +4,66 @@ import path from 'path';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+import fs from 'fs';
+
+const currentBuildTime = new Date().toISOString();
+const currentVersion = `2.4.${Date.now()}`;
+
+function versionGeneratorPlugin() {
+  const versionData = {
+    version: currentVersion,
+    buildTime: currentBuildTime,
+    appName: 'LivraLink',
+  };
+
+  return {
+    name: 'livralink-version-generator',
+    buildStart() {
+      try {
+        const publicDir = path.resolve(process.cwd(), 'public');
+        if (!fs.existsSync(publicDir)) {
+          fs.mkdirSync(publicDir, { recursive: true });
+        }
+        fs.writeFileSync(
+          path.resolve(publicDir, 'version.json'),
+          JSON.stringify(versionData, null, 2),
+          'utf8'
+        );
+      } catch (err) {
+        console.warn('[Vite Version Plugin] Notice:', err);
+      }
+    },
+    closeBundle() {
+      try {
+        const distDir = path.resolve(process.cwd(), 'dist');
+        if (fs.existsSync(distDir)) {
+          fs.writeFileSync(
+            path.resolve(distDir, 'version.json'),
+            JSON.stringify(versionData, null, 2),
+            'utf8'
+          );
+        }
+      } catch (err) {
+        console.warn('[Vite Version Plugin closeBundle] Notice:', err);
+      }
+    },
+  };
+}
+
 export default defineConfig(() => {
   return {
     base: '/',
+    define: {
+      __APP_VERSION__: JSON.stringify(currentVersion),
+      __APP_BUILD_TIME__: JSON.stringify(currentBuildTime),
+    },
     plugins: [
       react(),
       tailwindcss(),
+      versionGeneratorPlugin(),
       VitePWA({
-        registerType: 'autoUpdate',
-        includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
+        registerType: 'prompt',
+        includeAssets: ['icon.svg', 'favicon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'sw-push.js'],
         manifest: {
           id: '/',
           name: 'LivraLink - Logistique Urbaine Connectée',
@@ -47,6 +98,58 @@ export default defineConfig(() => {
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',
+            },
+          ],
+        },
+        workbox: {
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          globIgnores: ['**/version.json'],
+          cleanupOutdatedCaches: true,
+          clientsClaim: true,
+          skipWaiting: true,
+          importScripts: ['/sw-push.js'],
+          navigateFallback: '/index.html',
+          navigateFallbackDenylist: [/^\/api\//, /^\/healthz/, /^\/version\.json/],
+          runtimeCaching: [
+            {
+              // Do NOT cache API calls
+              urlPattern: /^https?:\/\/.*\/api\/.*/i,
+              handler: 'NetworkOnly',
+            },
+            {
+              // Do NOT cache version metadata
+              urlPattern: /^https?:\/\/.*\/version\.json.*/i,
+              handler: 'NetworkOnly',
+            },
+            {
+              // Cache Google Fonts
+              urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'google-fonts-cache',
+                expiration: {
+                  maxEntries: 10,
+                  maxAgeSeconds: 60 * 60 * 24 * 365,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              // Cache Gstatic Fonts
+              urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'gstatic-fonts-cache',
+                expiration: {
+                  maxEntries: 10,
+                  maxAgeSeconds: 60 * 60 * 24 * 365,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
             },
           ],
         },

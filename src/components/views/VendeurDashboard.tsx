@@ -208,7 +208,7 @@ export const VendeurDashboard: React.FC = () => {
               <button
                 type="button"
                 onClick={handleNewDeliveryClick}
-                className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
+                className={`min-h-[44px] px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
                   !featureFlags.vendeurSpaceEnabled || !featureFlags.allowExpressCreation
                     ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed shadow-none'
                     : 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/20 ring-2 ring-blue-500/20'
