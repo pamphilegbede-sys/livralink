@@ -24,7 +24,6 @@ export const VendeurDashboard: React.FC = () => {
     featureFlags,
     isDirectorModeActive,
     directorTargetName,
-    openEmailCenter,
     openLivreurSearchModal,
     openRateLivreurModal,
     openChatModal,
@@ -204,16 +203,6 @@ export const VendeurDashboard: React.FC = () => {
               >
                 <span className="material-symbols-outlined text-base text-slate-500">help_outline</span>
                 <span className="hidden md:inline">Guide</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={openEmailCenter}
-                className="px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer"
-                title="Centre e-mail"
-              >
-                <span className="material-symbols-outlined text-base text-slate-500">mail</span>
-                <span className="hidden md:inline">E-mails</span>
               </button>
 
               <button

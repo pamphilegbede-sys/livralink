@@ -361,7 +361,7 @@ const resetTokensStore = new Map<string, { email: string; expiresAt: number }>()
 export interface SentEmailRecord {
   id: string;
   dedupKey?: string;
-  type: 'welcome' | 'password_reset_request' | 'password_changed_confirmation' | 'priority_mission' | 'custom';
+  type: 'welcome' | 'password_reset_request' | 'password_changed_confirmation' | 'priority_mission' | 'custom' | 'kyc_submitted' | 'kyc_approved' | 'kyc_rejected';
   eventType?: string;
   to: string;
   recipientName: string;
@@ -1233,6 +1233,199 @@ app.post('/api/email/password-changed', async (req: Request, res: Response): Pro
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: 'Erreur lors de l\'envoi de la notification.' });
+  }
+});
+
+/**
+ * POST /api/email/kyc-approved
+ * Dispatches an email notification when a user's KYC verification status is confirmed or updated by Admin.
+ */
+app.post('/api/email/kyc-approved', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, fullName, role, status, reason } = req.body || {};
+
+    if (!email || typeof email !== 'string') {
+      res.status(400).json({ success: false, error: 'Email valide requis.' });
+      return;
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = (fullName || cleanEmail.split('@')[0]).trim().slice(0, 100);
+    const safeName = escapeHtml(cleanName);
+    const isApproved = status === 'approved';
+    const roleLabel = role === 'vendeur' ? 'Vendeur / Marchand' : 'Livreur Partenaire';
+
+    const subject = isApproved
+      ? `🎉 Compte Activé ! Votre vérification KYC LivraLink est confirmée, ${safeName}`
+      : `⚠️ Dossier KYC LivraLink : Action requise pour la validation de votre compte`;
+
+    const previewText = isApproved
+      ? `Félicitations ! Votre dossier d'accréditation est validé et votre compte ${roleLabel} est actif.`
+      : `Notification d'accréditation : des informations complémentaires sont requises pour votre compte.`;
+
+    const htmlContent = `
+      <div style="font-family: 'Plus Jakarta Sans', sans-serif; max-width: 580px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; color: #0f172a;">
+        <div style="background-color: #0f172a; padding: 24px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 800;">Livra<span style="color: #2563eb;">Link</span></h1>
+          <p style="color: #94a3b8; font-size: 11px; margin: 4px 0 0 0; text-transform: uppercase; letter-spacing: 1px;">Vérification d'Identité &amp; Accréditation</p>
+        </div>
+        <div style="padding: 28px 24px;">
+          <div style="display: inline-block; background-color: ${isApproved ? '#f0fdf4' : '#fef2f2'}; color: ${isApproved ? '#15803d' : '#b91c1c'}; font-weight: 800; font-size: 12px; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px;">
+            ${isApproved ? '✅ KYC CONFIRMÉ & COMPTE ACTIVÉ' : '⚠️ ACTION REQUISE SUR LE DOSSIER'}
+          </div>
+          <h2 style="font-size: 20px; font-weight: 800; margin: 0 0 14px 0; color: #0f172a;">
+            Bonjour ${safeName},
+          </h2>
+          ${
+            isApproved
+              ? `
+              <p style="font-size: 14px; color: #334155; line-height: 1.6; margin: 0 0 16px 0;">
+                Nous avons le plaisir de vous informer que vos pièces d'identité et votre dossier KYC ont été <strong>vérifiés et approuvés avec succès</strong>.
+              </p>
+              <p style="font-size: 14px; color: #334155; line-height: 1.6; margin: 0 0 20px 0;">
+                Votre compte <strong>${roleLabel}</strong> dispose désormais du statut accrédité et vérifié ★ sur LivraLink. Vous bénéficiez de toutes les fonctionnalités avancées de la plateforme.
+              </p>
+              `
+              : `
+              <p style="font-size: 14px; color: #334155; line-height: 1.6; margin: 0 0 16px 0;">
+                Votre dossier de validation KYC a été examiné. Des corrections sont nécessaires avant d'activer définitivement votre compte :
+              </p>
+              <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 16px; border-radius: 12px; margin-bottom: 20px;">
+                <p style="font-size: 13px; color: #991b1b; margin: 0; font-weight: 600;">Motif indiqué : ${escapeHtml(reason || 'Pièce d\'identité non conforme ou illisible.')}</p>
+              </div>
+              <p style="font-size: 13px; color: #475569;">Veuillez vous reconnecter à votre application et transmettre vos pièces révisées.</p>
+              `
+          }
+          <div style="text-align: center; margin: 24px 0 10px 0;">
+            <a href="https://ais-dev-ra34vpbmrgqe3eimwdz2y2-319073276082.europe-west3.run.app" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: 800; font-size: 14px; padding: 12px 28px; border-radius: 12px;">
+              Accéder à LivraLink →
+            </a>
+          </div>
+        </div>
+        <div style="background-color: #f8fafc; padding: 14px; text-align: center; border-top: 1px solid #e2e8f0;">
+          <p style="font-size: 11px; color: #94a3b8; margin: 0;">© ${new Date().getFullYear()} LivraLink Bénin</p>
+        </div>
+      </div>
+    `;
+
+    const transporter = getGmailTransporter();
+    let emailDelivered = false;
+
+    if (transporter) {
+      try {
+        const rawFrom = process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink <Pamphile.gbede@gmail.com>';
+        await transporter.sendMail({
+          from: rawFrom.replace(/\\"/g, '').trim(),
+          to: cleanEmail,
+          subject,
+          text: `${subject}\n\nBonjour ${cleanName},\nStatus KYC: ${isApproved ? 'VALIDÉ / ACTIVÉ' : 'REJETÉ / ACTION REQUISE'}`,
+          html: htmlContent,
+        });
+        emailDelivered = true;
+        console.log(`[GMAIL SMTP] Email KYC envoyé à ${cleanEmail}`);
+      } catch (mailErr: any) {
+        console.error('[GMAIL SMTP ERROR] Échec email KYC:', mailErr.message);
+      }
+    }
+
+    const emailRecord = await recordSentEmail({
+      type: isApproved ? 'kyc_approved' : 'kyc_rejected',
+      to: cleanEmail,
+      recipientName: cleanName,
+      recipientRole: role || 'livreur',
+      subject,
+      previewText,
+      htmlContent,
+      deliveredViaSmtp: emailDelivered,
+    });
+
+    res.json({
+      success: true,
+      emailDelivered,
+      emailId: emailRecord.id,
+      message: `Email KYC traité avec succès pour ${cleanEmail}`,
+    });
+  } catch (error: any) {
+    console.error('[EMAIL ERROR] kyc-approved:', error);
+    res.status(500).json({ success: false, error: 'Erreur lors du traitement de l\'email KYC.' });
+  }
+});
+
+/**
+ * POST /api/email/kyc-submitted
+ * Dispatches an email receipt when a user submits their KYC documents.
+ */
+app.post('/api/email/kyc-submitted', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, fullName, role, idType, idNumber } = req.body || {};
+
+    if (!email || typeof email !== 'string') {
+      res.status(400).json({ success: false, error: 'Email valide requis.' });
+      return;
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = (fullName || cleanEmail.split('@')[0]).trim().slice(0, 100);
+    const safeName = escapeHtml(cleanName);
+    const roleLabel = role === 'vendeur' ? 'Vendeur / Marchand' : 'Livreur Partenaire';
+
+    const subject = `📥 Réception de vos documents KYC - LivraLink Bénin`;
+    const previewText = `Nous avons bien reçu votre dossier de vérification d'identité. Traitement administratif en cours.`;
+
+    const htmlContent = `
+      <div style="font-family: 'Plus Jakarta Sans', sans-serif; max-width: 580px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; color: #0f172a;">
+        <div style="background-color: #0f172a; padding: 24px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 800;">Livra<span style="color: #2563eb;">Link</span></h1>
+          <p style="color: #94a3b8; font-size: 11px; margin: 4px 0 0 0; text-transform: uppercase;">Dossier d'Identification Transmis</p>
+        </div>
+        <div style="padding: 28px 24px;">
+          <h2 style="font-size: 18px; font-weight: 800; margin: 0 0 12px 0;">Bonjour ${safeName},</h2>
+          <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 16px 0;">
+            Nous vous confirmons la bonne réception de vos pièces justificatives (${escapeHtml(idType || 'Document')} #${escapeHtml(idNumber || 'En cours')}) pour l'accréditation de votre compte <strong>${roleLabel}</strong>.
+          </p>
+          <p style="font-size: 13px; color: #64748b; line-height: 1.6;">
+            Nos équipes valident les informations transmises sous 24h ouvrées. Dès la confirmation effectuée, vous recevrez un email de notification et votre compte sera activé.
+          </p>
+        </div>
+        <div style="background-color: #f8fafc; padding: 14px; text-align: center; border-top: 1px solid #e2e8f0;">
+          <p style="font-size: 11px; color: #94a3b8; margin: 0;">© ${new Date().getFullYear()} LivraLink Bénin</p>
+        </div>
+      </div>
+    `;
+
+    const transporter = getGmailTransporter();
+    let emailDelivered = false;
+
+    if (transporter) {
+      try {
+        const rawFrom = process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink <Pamphile.gbede@gmail.com>';
+        await transporter.sendMail({
+          from: rawFrom.replace(/\\"/g, '').trim(),
+          to: cleanEmail,
+          subject,
+          text: `Dossier KYC reçu.\n\nBonjour ${cleanName},\nVotre dossier KYC (${idType} #${idNumber}) a bien été transmis.`,
+          html: htmlContent,
+        });
+        emailDelivered = true;
+      } catch (mailErr: any) {
+        console.error('[GMAIL SMTP ERROR] Échec email KYC submission:', mailErr.message);
+      }
+    }
+
+    const emailRecord = await recordSentEmail({
+      type: 'kyc_submitted',
+      to: cleanEmail,
+      recipientName: cleanName,
+      recipientRole: role || 'livreur',
+      subject,
+      previewText,
+      htmlContent,
+      deliveredViaSmtp: emailDelivered,
+    });
+
+    res.json({ success: true, emailDelivered, emailId: emailRecord.id });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: 'Erreur lors de l\'enregistrement KYC.' });
   }
 });
 

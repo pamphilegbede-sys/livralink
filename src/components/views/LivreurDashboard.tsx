@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
@@ -13,6 +13,7 @@ export const LivreurDashboard: React.FC = () => {
   const {
     deliveries,
     courierSettings,
+    setCourierSettings,
     userProfile,
     couriers,
     selectedCourier,
@@ -28,7 +29,6 @@ export const LivreurDashboard: React.FC = () => {
     createDelivery,
     setCurrentView,
     featureFlags,
-    openEmailCenter,
     openKYCModal,
     kycRequests,
   } = useApp();
@@ -73,6 +73,21 @@ export const LivreurDashboard: React.FC = () => {
   const kycStatus: 'valide' | 'en_attente' | 'refuse' | 'non_soumis' = isKycApproved
     ? 'valide'
     : (existingKyc?.status as any) || 'non_soumis';
+
+  // Désactiver immédiatement le voyant vert et le statut connecté si le livreur n'est pas accrédité KYC
+  useEffect(() => {
+    if (!isKycApproved && courierSettings.isAvailable) {
+      setCourierSettings((prev) => {
+        const updated = { ...prev, isAvailable: false };
+        if (userProfile?.uid) {
+          try {
+            localStorage.setItem(`livralink_courier_settings_${userProfile.uid}`, JSON.stringify(updated));
+          } catch {}
+        }
+        return updated;
+      });
+    }
+  }, [isKycApproved, courierSettings.isAvailable, userProfile?.uid, setCourierSettings]);
 
   // Mission active en cours attribuée à ce livreur
   const activeOrder = deliveries.find((d) => {
@@ -209,13 +224,13 @@ export const LivreurDashboard: React.FC = () => {
                     type="button"
                     onClick={toggleCourierAvailability}
                     className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${
-                      courierSettings.isAvailable
+                      isKycApproved && courierSettings.isAvailable
                         ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
                         : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
                     }`}
                   >
-                    <span className={`w-2 h-2 rounded-full ${courierSettings.isAvailable ? 'bg-emerald-500' : 'bg-slate-400'}`}></span>
-                    <span>{courierSettings.isAvailable ? 'En ligne' : 'En pause'}</span>
+                    <span className={`w-2 h-2 rounded-full ${isKycApproved && courierSettings.isAvailable ? 'bg-emerald-500' : 'bg-slate-400'}`}></span>
+                    <span>{isKycApproved && courierSettings.isAvailable ? 'En ligne' : 'En pause'}</span>
                   </button>
                 </div>
                 <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
@@ -254,13 +269,6 @@ export const LivreurDashboard: React.FC = () => {
                 className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 text-xs font-medium hover:bg-slate-50"
               >
                 Guide
-              </button>
-              <button
-                type="button"
-                onClick={openEmailCenter}
-                className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 text-xs font-medium hover:bg-slate-50"
-              >
-                E-mails
               </button>
             </div>
           </div>

@@ -18,7 +18,7 @@ import {
   AppNotification,
   ChatMessage
 } from '../types';
-import { sendPlatformNotification } from '../services/emailService';
+import { sendPlatformNotification, sendKycConfirmationEmail, sendKycSubmissionEmail } from '../services/emailService';
 import {
   INITIAL_DELIVERIES,
   INITIAL_COURIERS,
@@ -148,7 +148,7 @@ interface AppContextType {
   toggleCourierAvailability: () => void;
   selectActiveCourier: (courierOrId: Courier | string) => void;
   approveKYC: (requestId: string) => void;
-  rejectKYC: (requestId: string) => void;
+  rejectKYC: (requestId: string, reason?: string) => void;
   resolveDispute: (orderId: string, resolutionNote: string) => void;
   
   // Admin Entity Management & Full Control
@@ -403,7 +403,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     zone: 'Cotonou',
     distanceKm: 1.0,
     etaMinutes: 10,
-    status: 'en_ligne',
+    status: 'hors_ligne',
     walletBalanceFCFA: 0,
     priceFCFA: 100,
     commissionFCFA: 0,
@@ -557,59 +557,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setRateLivreurTargetOrder(null);
   };
 
-  // Direct Messagerie / Chat Vendeur <-> Livreur state
+  // Direct Messagerie / Chat Vendeur <-> Livreur state (Initialisé vide sans chat de test pré-rempli)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
     try {
       const saved = localStorage.getItem('livralink_chat_messages');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Filtrer et purger les anciens messages de test (Ibrahim Touré, Sarah Kouamé, msg-seed-*, #LL-4192)
+          const clean = parsed.filter(
+            (m) =>
+              !m.id?.startsWith('msg-seed') &&
+              m.senderName !== 'Ibrahim Touré' &&
+              m.recipientName !== 'Ibrahim Touré' &&
+              m.senderName !== 'Sarah Kouamé' &&
+              m.recipientName !== 'Sarah Kouamé' &&
+              m.orderId !== '#LL-4192'
+          );
+          localStorage.setItem('livralink_chat_messages', JSON.stringify(clean));
+          return clean;
+        }
       }
     } catch {}
-    return [
-      {
-        id: 'msg-seed-1',
-        orderId: '#LL-4192',
-        senderId: 'courier-1',
-        senderName: 'Ibrahim Touré',
-        senderRole: 'livreur',
-        recipientId: 'vendor-1',
-        recipientName: 'Sarah Kouamé',
-        recipientRole: 'vendeur',
-        text: 'Bonjour Sarah ! Je suis en route pour récupérer le colis de la boutique.',
-        timestamp: new Date(Date.now() - 3600000).toISOString(),
-        isRead: true,
-        quickTag: 'location',
-      },
-      {
-        id: 'msg-seed-2',
-        orderId: '#LL-4192',
-        senderId: 'vendor-1',
-        senderName: 'Sarah Kouamé',
-        senderRole: 'vendeur',
-        recipientId: 'courier-1',
-        recipientName: 'Ibrahim Touré',
-        recipientRole: 'livreur',
-        text: 'Parfait Ibrahim ! Le paquet est prêt avec la facture sur le comptoir.',
-        timestamp: new Date(Date.now() - 3000000).toISOString(),
-        isRead: true,
-        quickTag: 'pickup_ready',
-      },
-      {
-        id: 'msg-seed-3',
-        orderId: '#LL-4192',
-        senderId: 'courier-1',
-        senderName: 'Ibrahim Touré',
-        senderRole: 'livreur',
-        recipientId: 'vendor-1',
-        recipientName: 'Sarah Kouamé',
-        recipientRole: 'vendeur',
-        text: 'Bien reçu, je suis arrivé devant l\'avenue. Je prends possession du colis.',
-        timestamp: new Date(Date.now() - 1800000).toISOString(),
-        isRead: true,
-        quickTag: 'location',
-      },
-    ];
+    return [];
   });
 
   const sendChatMessage = (params: {
@@ -1161,6 +1131,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               }
               setMerchantSettings(loadedMerchant);
             } else if (profile.role === 'livreur') {
+              const isAccredited = Boolean(
+                profile.isKycVerified ||
+                profile.kycStatus === 'valide'
+              );
               let loadedCourier: CourierSettings | null = null;
               try {
                 const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
@@ -1168,10 +1142,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               } catch {}
               if (!loadedCourier) {
                 loadedCourier = createFreshCourierSettings(profile);
-                try {
-                  localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loadedCourier));
-                } catch {}
               }
+              // Si le livreur n'est pas accrédité, forcer le statut hors ligne (voyant vert désactivé)
+              if (!isAccredited) {
+                loadedCourier.isAvailable = false;
+              }
+              try {
+                localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loadedCourier));
+              } catch {}
               setCourierSettings(loadedCourier);
 
               // Match or create the courier entity
@@ -1180,8 +1158,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   (c) => c.id === user.uid || (c.email && c.email.toLowerCase() === (profile.email || '').toLowerCase())
                 );
                 if (matched) {
-                  setSelectedCourier(matched);
-                  return prev;
+                  const updatedMatched = {
+                    ...matched,
+                    isKycVerified: isAccredited,
+                    status: isAccredited ? matched.status : ('hors_ligne' as const),
+                  };
+                  setSelectedCourier(updatedMatched);
+                  return prev.map((c) => (c.id === updatedMatched.id ? updatedMatched : c));
                 }
                 const freshEntity = createFreshCourierEntity(profile);
                 setSelectedCourier(freshEntity);
@@ -2154,6 +2137,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       message: `Votre dossier d'identification (${newReq.idType} #${newReq.idNumber}) a été transmis pour accréditation.`,
       actionView: 'livreur_dashboard',
     });
+
+    // Envoi de l'email de confirmation de dépôt KYC
+    const targetEmail = userProfile?.email || courierSettings.email || 'Pamphile.gbede@gmail.com';
+    sendKycSubmissionEmail({
+      email: targetEmail,
+      fullName: newReq.fullName,
+      role: 'livreur',
+      idType: newReq.idType,
+      idNumber: newReq.idNumber,
+    }).catch(err => console.warn('Notice email dépôt KYC:', err));
+
     showToast(`Dossier KYC transmis avec succès ! En attente de validation administrative.`, 'success');
     return newReq;
   };
@@ -2214,6 +2208,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       message: `Votre dossier d'accréditation a été validé avec succès. Vous pouvez maintenant passer en ligne et démarrer vos livraisons.`,
       actionView: 'livreur_dashboard',
     });
+
+    // Envoi de l'email de confirmation d'activation KYC
+    const targetReq = kycRequests.find(r => r.id === requestId);
+    const targetEmail = userProfile?.email || courierSettings.email || 'Pamphile.gbede@gmail.com';
+    sendKycConfirmationEmail({
+      email: targetEmail,
+      fullName: approvedCourierName || targetReq?.fullName || 'Utilisateur LivraLink',
+      role: 'livreur',
+      status: 'approved',
+    }).catch(err => console.warn('Notice email validation KYC:', err));
+
     showToast(`Dossier KYC (${approvedCourierName || requestId}) approuvé avec succès !`, 'success');
   };
 
@@ -2252,6 +2257,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       message: `Votre dossier KYC a été rejeté. Motif : ${rejectionReason}. Veuillez re-soumettre vos documents.`,
       actionView: 'livreur_dashboard',
     });
+
+    // Envoi de l'email de notification de rejet KYC
+    const targetReq = kycRequests.find(r => r.id === requestId);
+    const targetEmail = userProfile?.email || courierSettings.email || 'Pamphile.gbede@gmail.com';
+    sendKycConfirmationEmail({
+      email: targetEmail,
+      fullName: targetCourierName || targetReq?.fullName || 'Utilisateur LivraLink',
+      role: 'livreur',
+      status: 'rejected',
+      reason: rejectionReason,
+    }).catch(err => console.warn('Notice email rejet KYC:', err));
+
     showToast(`Dossier KYC rejeté : ${rejectionReason}`, 'error');
   };
 

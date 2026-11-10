@@ -79,6 +79,7 @@ export const LoginLivreurPage: React.FC = () => {
         setCurrentView('livreur_dashboard');
         if (profile) {
           setUserProfile(profile);
+          const isAccredited = Boolean(profile.isKycVerified || profile.kycStatus === 'valide');
           let loaded = null;
           try {
             const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
@@ -86,10 +87,14 @@ export const LoginLivreurPage: React.FC = () => {
           } catch {}
           if (!loaded) {
             loaded = createFreshCourierSettings(profile);
-            try {
-              localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loaded));
-            } catch {}
           }
+          // Si le livreur n'est pas encore accrédité, forcer le statut en pause / hors ligne (voyant vert désactivé)
+          if (!isAccredited) {
+            loaded.isAvailable = false;
+          }
+          try {
+            localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loaded));
+          } catch {}
           setCourierSettings(loaded);
           syncCourierIdentity(profile);
         }
@@ -112,6 +117,7 @@ export const LoginLivreurPage: React.FC = () => {
       setCurrentRole('livreur');
       if (profile) {
         setUserProfile(profile);
+        const isAccredited = Boolean(profile.isKycVerified || profile.kycStatus === 'valide');
         let loaded = null;
         try {
           const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
@@ -124,10 +130,14 @@ export const LoginLivreurPage: React.FC = () => {
             locationAddress: location?.address || profile.locationAddress,
             gpsCoordinates: location?.gpsCoordinates || profile.gpsCoordinates,
           });
-          try {
-            localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loaded));
-          } catch {}
         }
+        // Si le livreur n'est pas encore accrédité, forcer le statut en pause / hors ligne (voyant vert désactivé)
+        if (!isAccredited) {
+          loaded.isAvailable = false;
+        }
+        try {
+          localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loaded));
+        } catch {}
         setCourierSettings(loaded);
         syncCourierIdentity(profile);
       }

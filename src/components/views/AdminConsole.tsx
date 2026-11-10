@@ -4,7 +4,7 @@ import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
 import { BackButton } from '../common/BackButton';
 import { DisputeResolutionModal } from '../modals/DisputeResolutionModal';
-import { Courier, Merchant, DeliveryOrder, DeliveryStatus } from '../../types';
+import { Courier, Merchant, DeliveryOrder, DeliveryStatus, KYCUserRequest } from '../../types';
 import { loginWithGoogle, getFirebaseAuthErrorMessage } from '../../firebase/authService';
 import { AdminOverviewDashboard } from './AdminOverviewDashboard';
 import { ResetUserAccessModal, TargetResetUser } from '../modals/ResetUserAccessModal';
@@ -258,6 +258,9 @@ export const AdminConsole: React.FC = () => {
   const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<'all' | 'en_attente' | 'assignee' | 'en_cours' | 'livree' | 'echec'>('all');
 
   // Modals state
+  const [reviewingKycItem, setReviewingKycItem] = useState<KYCUserRequest | null>(null);
+  const [kycRejectionMotifInput, setKycRejectionMotifInput] = useState('');
+  const [isZoomingKycPhoto, setIsZoomingKycPhoto] = useState(false);
   const [selectedDisputeOrder, setSelectedDisputeOrder] = useState<string | null>(null);
   const [isAddCourierModalOpen, setIsAddCourierModalOpen] = useState(false);
   const [editingCourier, setEditingCourier] = useState<Courier | null>(null);
@@ -1856,32 +1859,34 @@ export const AdminConsole: React.FC = () => {
 
                       {/* Actions */}
                       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+                        <button
+                          onClick={() => setReviewingKycItem(kyc)}
+                          className="flex-1 py-2.5 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-98"
+                        >
+                          <span className="material-symbols-outlined text-sm">visibility</span>
+                          <span>Examiner &amp; Contrôler le Dossier</span>
+                        </button>
                         {kyc.status === 'en_attente' ? (
                           <>
                             <button
                               onClick={() => approveKYC(kyc.id)}
-                              className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 transition-all active:scale-98"
+                              className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer"
+                              title="Valider directement"
                             >
-                              <span className="material-symbols-outlined text-sm">verified</span>
-                              <span>Valider &amp; Activer le Livreur</span>
+                              <span className="material-symbols-outlined text-sm">check</span>
                             </button>
                             <button
                               onClick={() => rejectKYC(kyc.id)}
-                              className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition-all active:scale-98 text-center"
+                              className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                              title="Refuser directement"
                             >
-                              Refuser
+                              <span className="material-symbols-outlined text-sm">close</span>
                             </button>
                           </>
                         ) : (
-                          <div className="w-full flex items-center justify-between text-xs text-slate-500 py-1">
-                            <span>Statut d'accréditation enregistré.</span>
-                            <button
-                              onClick={() => approveKYC(kyc.id)}
-                              className="text-blue-600 font-bold hover:underline"
-                            >
-                              Re-valider
-                            </button>
-                          </div>
+                          <span className="text-[11px] font-bold text-slate-500 self-center">
+                            {kyc.status === 'valide' ? '✓ Validé' : '✕ Refusé'}
+                          </span>
                         )}
                       </div>
                     </div>
@@ -1978,24 +1983,31 @@ export const AdminConsole: React.FC = () => {
                         </div>
 
                         <div className="flex flex-col gap-1 shrink-0">
+                          <button
+                            onClick={() => setReviewingKycItem(kyc)}
+                            className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold shadow-2xs transition-all flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-xs">visibility</span>
+                            <span>Examiner</span>
+                          </button>
                           {kyc.status === 'en_attente' ? (
                             <>
                               <button
                                 onClick={() => approveKYC(kyc.id)}
-                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold shadow-2xs transition-all active:scale-95 flex items-center justify-center gap-1"
+                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold shadow-2xs transition-all active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
                               >
                                 <span className="material-symbols-outlined text-xs">check</span>
                                 <span>Valider</span>
                               </button>
                               <button
                                 onClick={() => rejectKYC(kyc.id)}
-                                className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-[10px] font-bold transition-all active:scale-95 flex items-center justify-center gap-1"
+                                className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-[10px] font-bold transition-all active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
                               >
                                 <span>Refuser</span>
                               </button>
                             </>
                           ) : (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 text-center">
                               Validé ✓
                             </span>
                           )}
@@ -5728,6 +5740,287 @@ export const AdminConsole: React.FC = () => {
         user={resetAccessUser}
         onClose={() => setResetAccessUser(null)}
       />
+
+      {/* 17. Modal Contrôle & Inspection Approfondie KYC (Administrateur) */}
+      {reviewingKycItem && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto"
+          onClick={() => setReviewingKycItem(null)}
+        >
+          <div
+            className="bg-white rounded-3xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 my-auto text-slate-800"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="p-4 sm:p-6 border-b border-slate-100 bg-slate-900 text-white flex items-center justify-between gap-4 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center font-bold text-xl shrink-0">
+                  <span className="material-symbols-outlined text-2xl">verified_user</span>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="font-extrabold text-base sm:text-lg">
+                      Contrôle &amp; Audit Dossier KYC
+                    </h3>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                      ID #{reviewingKycItem.id}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Examinez les pièces d'identité et vérifiez la cohérence des informations transmises avant validation.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setReviewingKycItem(null)}
+                className="w-9 h-9 rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white flex items-center justify-center transition-colors shrink-0 cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-lg">close</span>
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5 custom-scrollbar text-xs">
+              {/* Top Banner: Status & Submitter */}
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-blue-600 text-white font-black text-sm flex items-center justify-center shrink-0 shadow-xs">
+                    {(reviewingKycItem.lastName || reviewingKycItem.fullName.charAt(0)).toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="font-black text-sm text-slate-900 flex items-center gap-2">
+                      <span>{reviewingKycItem.fullName}</span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                        {reviewingKycItem.role === 'coursier' ? 'Livreur' : 'Vendeur'}
+                      </span>
+                    </p>
+                    <p className="text-slate-500 text-[11px] mt-0.5">
+                      Soumis le : <strong className="text-slate-700">{reviewingKycItem.submittedAt}</strong> • Téléphone : <strong className="text-slate-700">{reviewingKycItem.phone}</strong>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="shrink-0">
+                  {reviewingKycItem.status === 'valide' ? (
+                    <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-sm">check_circle</span>
+                      <span>Dossier Validé</span>
+                    </span>
+                  ) : reviewingKycItem.status === 'refuse' ? (
+                    <span className="px-3 py-1 rounded-full text-xs font-black bg-red-100 text-red-800 border border-red-300 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-sm">cancel</span>
+                      <span>Dossier Refusé</span>
+                    </span>
+                  ) : (
+                    <span className="px-3 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 animate-pulse">
+                      <span className="material-symbols-outlined text-sm">pending</span>
+                      <span>En Attente de Contrôle</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Data Grid Section */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Information d'identité */}
+                <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
+                  <h4 className="font-extrabold text-xs uppercase tracking-wider text-slate-500 border-b border-slate-100 pb-2 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-blue-600 text-sm">person</span>
+                    <span>1. État Civil &amp; Pièce d'Identité</span>
+                  </h4>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="p-2 bg-slate-50 rounded-xl">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase">Nom de famille</p>
+                      <p className="font-extrabold text-slate-900 mt-0.5 uppercase">
+                        {reviewingKycItem.lastName || reviewingKycItem.fullName.split(' ')[0] || '—'}
+                      </p>
+                    </div>
+
+                    <div className="p-2 bg-slate-50 rounded-xl">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase">Prénom(s)</p>
+                      <p className="font-extrabold text-slate-900 mt-0.5 capitalize">
+                        {reviewingKycItem.firstName || reviewingKycItem.fullName.split(' ').slice(1).join(' ') || '—'}
+                      </p>
+                    </div>
+
+                    <div className="p-2 bg-slate-50 rounded-xl">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase">Type de Pièce</p>
+                      <p className="font-bold text-blue-700 mt-0.5">
+                        {reviewingKycItem.idType || 'CIP / CNI'}
+                      </p>
+                    </div>
+
+                    <div className="p-2 bg-slate-50 rounded-xl">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase">Numéro de Pièce</p>
+                      <p className="font-mono font-extrabold text-slate-900 mt-0.5">
+                        {reviewingKycItem.idNumber || 'Non renseigné'}
+                      </p>
+                    </div>
+
+                    <div className="p-2 bg-slate-50 rounded-xl col-span-2">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase">Numéro IFU</p>
+                      <p className="font-mono font-extrabold text-slate-800 mt-0.5">
+                        {reviewingKycItem.ifuNumber || 'Non renseigné (optionnel)'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Engin & Zone */}
+                <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
+                  <h4 className="font-extrabold text-xs uppercase tracking-wider text-slate-500 border-b border-slate-100 pb-2 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-blue-600 text-sm">two_wheeler</span>
+                    <span>2. Engin &amp; Périmètre d'Activité</span>
+                  </h4>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="p-2 bg-slate-50 rounded-xl col-span-2">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase">Type / Modèle d'Engin</p>
+                      <p className="font-extrabold text-slate-900 mt-0.5">
+                        {reviewingKycItem.vehicleType || 'Non précisé'}
+                      </p>
+                    </div>
+
+                    <div className="p-2 bg-slate-50 rounded-xl">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase">Plaque d'Immatriculation</p>
+                      <p className="font-mono font-extrabold text-blue-700 mt-0.5 uppercase">
+                        {reviewingKycItem.vehiclePlate || 'Non renseignée'}
+                      </p>
+                    </div>
+
+                    <div className="p-2 bg-slate-50 rounded-xl">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase">Zone Principale</p>
+                      <p className="font-bold text-slate-800 mt-0.5">
+                        {reviewingKycItem.operatingZone || 'Cotonou'}
+                      </p>
+                    </div>
+
+                    <div className="p-2 bg-slate-50 rounded-xl col-span-2 flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-600">Assurance circulation déclarée :</span>
+                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${reviewingKycItem.documents.assurance ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                        {reviewingKycItem.documents.assurance ? '✓ Assuré' : '✗ Non assurée'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Photo Document Preview */}
+              <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <h4 className="font-extrabold text-xs uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-blue-600 text-sm">badge</span>
+                    <span>3. Photo du Document d'Identité Transmis</span>
+                  </h4>
+                  <span className="text-[10px] text-slate-400 font-bold">Vérifiez la lisibilité des 4 coins</span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center gap-4">
+                  <div className="relative w-full sm:w-64 h-40 rounded-2xl overflow-hidden border-2 border-slate-300 bg-slate-900 group shrink-0">
+                    <img
+                      src={
+                        reviewingKycItem.documentPhotoUrl ||
+                        'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=60'
+                      }
+                      alt="Photo document KYC"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setIsZoomingKycPhoto(!isZoomingKycPhoto)}
+                      className="absolute bottom-2 right-2 px-2.5 py-1 bg-black/75 hover:bg-black text-white text-[10px] font-bold rounded-lg backdrop-blur-xs flex items-center gap-1 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-xs">zoom_in</span>
+                      <span>Agrandir</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-2 text-xs text-slate-600 flex-1">
+                    <p className="font-bold text-slate-800">Directives de contrôle pour l'administrateur :</p>
+                    <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-500 leading-relaxed">
+                      <li>S'assurer que le nom <strong>{reviewingKycItem.fullName}</strong> correspond parfaitement au document.</li>
+                      <li>Vérifier la validité du numéro <strong>{reviewingKycItem.idNumber || '—'}</strong>.</li>
+                      <li>S'assurer que le document n'est ni flou, ni altéré, ni tronqué.</li>
+                    </ul>
+                  </div>
+                </div>
+
+                {isZoomingKycPhoto && (
+                  <div className="p-3 bg-slate-900 rounded-2xl animate-in fade-in duration-200">
+                    <p className="text-[10px] text-slate-400 mb-2 flex items-center justify-between">
+                      <span>Vue Haute Résolution Agrandie</span>
+                      <button onClick={() => setIsZoomingKycPhoto(false)} className="text-white hover:underline cursor-pointer">Réduire</button>
+                    </p>
+                    <img
+                      src={
+                        reviewingKycItem.documentPhotoUrl ||
+                        'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=60'
+                      }
+                      alt="Photo document KYC zoom"
+                      className="w-full h-auto max-h-[60vh] object-contain rounded-xl mx-auto"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Rejection motif input if admin chooses to reject */}
+              <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200 space-y-2">
+                <label className="block text-xs font-bold text-amber-950">
+                  Motif en cas de refus (transmis par notification &amp; e-mail à l'utilisateur) :
+                </label>
+                <input
+                  type="text"
+                  value={kycRejectionMotifInput}
+                  onChange={(e) => setKycRejectionMotifInput(e.target.value)}
+                  placeholder="ex: Photo floue, prénom manquant ou numéro NPI non lisible..."
+                  className="w-full p-2.5 bg-white border border-amber-300 rounded-xl text-xs text-slate-800 outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="p-4 sm:p-5 border-t border-slate-100 bg-slate-50 flex items-center justify-between gap-3 shrink-0 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setReviewingKycItem(null)}
+                className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
+              >
+                Fermer
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    rejectKYC(reviewingKycItem.id, kycRejectionMotifInput || undefined);
+                    setReviewingKycItem(null);
+                    setKycRejectionMotifInput('');
+                  }}
+                  className="px-4 py-2.5 bg-red-100 hover:bg-red-200 text-red-800 font-bold text-xs rounded-xl border border-red-300 flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm">block</span>
+                  <span>Refuser le dossier</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    approveKYC(reviewingKycItem.id);
+                    setReviewingKycItem(null);
+                  }}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-emerald-600/20 flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+                >
+                  <span className="material-symbols-outlined text-sm">verified</span>
+                  <span>Accréditation &amp; Validation</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Mobile Bottom Navigation */}
       <MobileBottomNav />

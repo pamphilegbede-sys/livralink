@@ -1,7 +1,7 @@
 export interface SentEmailItem {
   id: string;
   dedupKey?: string;
-  type: 'welcome' | 'password_reset_request' | 'password_changed_confirmation' | 'priority_mission' | 'custom';
+  type: 'welcome' | 'password_reset_request' | 'password_changed_confirmation' | 'priority_mission' | 'custom' | 'kyc_submitted' | 'kyc_approved' | 'kyc_rejected';
   to: string;
   recipientName: string;
   recipientRole?: string;
@@ -132,6 +132,121 @@ export const sendPasswordChangedConfirmationEmail = async (payload: {
 
   saveLocalSentEmail(localRecord);
   return { success: true, emailDelivered: false };
+};
+
+/**
+ * Envoie un e-mail de confirmation après validation ou mise à jour du KYC par l'administrateur.
+ */
+export const sendKycConfirmationEmail = async (payload: {
+  email: string;
+  fullName: string;
+  role?: 'vendeur' | 'livreur' | string;
+  status: 'approved' | 'rejected';
+  reason?: string;
+}): Promise<{ success: boolean; emailDelivered?: boolean; message?: string }> => {
+  const isApproved = payload.status === 'approved';
+  const roleLabel = payload.role === 'vendeur' ? 'Vendeur / Marchand' : 'Livreur Partenaire';
+
+  const localRecord: SentEmailItem = {
+    id: `kyc_${payload.status}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    type: isApproved ? 'kyc_approved' : 'kyc_rejected',
+    to: payload.email,
+    recipientName: payload.fullName,
+    recipientRole: payload.role,
+    subject: isApproved
+      ? `🎉 Compte Activé ! Votre vérification KYC LivraLink est confirmée, ${payload.fullName}`
+      : `⚠️ Dossier KYC LivraLink : Action requise pour la validation de votre compte`,
+    previewText: isApproved
+      ? `Bonne nouvelle ! Votre dossier KYC est validé et votre compte ${roleLabel} est 100% opérationnel.`
+      : `Information sur votre dossier d'accréditation LivraLink.`,
+    htmlContent: `
+      <div style="font-family: sans-serif; padding: 20px; color: #0f172a;">
+        <h2 style="color: ${isApproved ? '#16a34a' : '#dc2626'};">${isApproved ? '🎉 Votre compte est activé !' : '⚠️ Mise à jour de votre dossier KYC'}</h2>
+        <p>Bonjour <strong>${payload.fullName}</strong>,</p>
+        ${
+          isApproved
+            ? `<p>Nous avons le plaisir de vous informer que votre dossier d'identification et vos pièces justificatives KYC ont été vérifiés et <strong>approuvés</strong> par notre équipe d'administration.</p>
+               <p>Votre compte <strong>${roleLabel}</strong> est désormais pleinement actif et accrédité sur la plateforme LivraLink Bénin.</p>`
+            : `<p>Votre dossier KYC a été examiné par notre équipe. Malheureusement, il ne peut pas être validé en l'état pour la raison suivante :</p>
+               <blockquote style="background: #fef2f2; border-left: 4px solid #ef4444; padding: 12px; color: #991b1b;">${payload.reason || 'Documents d\'identité non conformes ou illisibles.'}</blockquote>
+               <p>Veuillez vous connecter à votre espace pour soumettre à nouveau vos cartes et documents mis à jour.</p>`
+        }
+      </div>
+    `,
+    sentAt: new Date().toISOString(),
+    deliveredViaSmtp: false,
+  };
+
+  try {
+    const res = await fetch('/api/email/kyc-approved', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      localRecord.deliveredViaSmtp = Boolean(data.emailDelivered);
+      saveLocalSentEmail(localRecord);
+      return { success: true, emailDelivered: data.emailDelivered, message: data.message };
+    }
+  } catch (err) {
+    console.warn('Notice envoi email KYC serveur:', err);
+  }
+
+  saveLocalSentEmail(localRecord);
+  return { success: true, emailDelivered: false, message: 'Notification KYC générée et archivée.' };
+};
+
+/**
+ * Envoie une confirmation par e-mail au dépôt d'un dossier KYC.
+ */
+export const sendKycSubmissionEmail = async (payload: {
+  email: string;
+  fullName: string;
+  role?: 'vendeur' | 'livreur' | string;
+  idType?: string;
+  idNumber?: string;
+}): Promise<{ success: boolean; emailDelivered?: boolean; message?: string }> => {
+  const roleLabel = payload.role === 'vendeur' ? 'Vendeur / Marchand' : 'Livreur Partenaire';
+
+  const localRecord: SentEmailItem = {
+    id: `kyc_sub_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    type: 'kyc_submitted',
+    to: payload.email,
+    recipientName: payload.fullName,
+    recipientRole: payload.role,
+    subject: `📥 Réception de vos documents KYC - LivraLink Bénin`,
+    previewText: `Nous avons bien reçu vos pièces d'identité (${payload.idType || 'Document'} #${payload.idNumber || ''}). Traitement en cours.`,
+    htmlContent: `
+      <div style="font-family: sans-serif; padding: 20px; color: #0f172a;">
+        <h2 style="color: #2563eb;">Dossier KYC bien reçu !</h2>
+        <p>Bonjour <strong>${payload.fullName}</strong>,</p>
+        <p>Nous vous confirmons la réception de vos pièces d'identité pour la vérification KYC de votre compte <strong>${roleLabel}</strong>.</p>
+        <p>Nos équipes procèdent à la vérification de vos documents (${payload.idType || 'Pièce'} #${payload.idNumber || ''}). Vous recevrez une notification par email dès la validation administrative.</p>
+      </div>
+    `,
+    sentAt: new Date().toISOString(),
+    deliveredViaSmtp: false,
+  };
+
+  try {
+    const res = await fetch('/api/email/kyc-submitted', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      localRecord.deliveredViaSmtp = Boolean(data.emailDelivered);
+      saveLocalSentEmail(localRecord);
+      return { success: true, emailDelivered: data.emailDelivered, message: data.message };
+    }
+  } catch (err) {
+    console.warn('Notice envoi email KYC soumis:', err);
+  }
+
+  saveLocalSentEmail(localRecord);
+  return { success: true, emailDelivered: false, message: 'Email de réception KYC archivé.' };
 };
 
 /**

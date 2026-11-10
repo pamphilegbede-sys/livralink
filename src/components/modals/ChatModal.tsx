@@ -41,8 +41,17 @@ export const ChatModal: React.FC<ChatModalProps> = ({
   const orderId = order?.id;
   const conversationKey = orderId ? `order_${orderId}` : `direct_${contactId}`;
 
-  // Messages for this modal's order or contact
+  // Messages for this modal's order or contact (sans messages de test pré-remplis)
   const modalMessages = chatMessages.filter((m) => {
+    if (
+      m.id?.startsWith('msg-seed') ||
+      m.senderName === 'Ibrahim Touré' ||
+      m.recipientName === 'Ibrahim Touré' ||
+      m.senderName === 'Sarah Kouamé' ||
+      m.recipientName === 'Sarah Kouamé'
+    ) {
+      return false;
+    }
     if (orderId && m.orderId === orderId) return true;
     return (
       (m.senderId === contactId && m.recipientId === currentUserId) ||

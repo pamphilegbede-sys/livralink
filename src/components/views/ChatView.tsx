@@ -49,9 +49,35 @@ export const ChatView: React.FC = () => {
       unreadCount: number;
     }>();
 
-    // 1. Process existing messages
+    // 1. Process existing messages (excluant tout chat de test pré-rempli)
     chatMessages.forEach((msg) => {
-      const isMeSender = msg.senderId === currentUserId || msg.senderRole === currentRole;
+      // Ignorer les anciens messages de test pré-remplis
+      if (
+        msg.id?.startsWith('msg-seed') ||
+        msg.senderName === 'Ibrahim Touré' ||
+        msg.recipientName === 'Ibrahim Touré' ||
+        msg.senderName === 'Sarah Kouamé' ||
+        msg.recipientName === 'Sarah Kouamé' ||
+        msg.orderId === '#LL-4192'
+      ) {
+        return;
+      }
+
+      const isMeSender =
+        msg.senderId === currentUserId ||
+        (userProfile?.fullName && msg.senderName.toLowerCase() === userProfile.fullName.toLowerCase()) ||
+        (!userProfile && msg.senderRole === currentRole);
+
+      const isMeRecipient =
+        msg.recipientId === currentUserId ||
+        (userProfile?.fullName && msg.recipientName.toLowerCase() === userProfile.fullName.toLowerCase()) ||
+        (!userProfile && msg.recipientRole === currentRole);
+
+      // Si l'utilisateur est authentifié, n'afficher que les messages le concernant directement
+      if (userProfile && !isMeSender && !isMeRecipient) {
+        return;
+      }
+
       const contactId = isMeSender ? msg.recipientId : msg.senderId;
       const contactName = isMeSender ? msg.recipientName : msg.senderName;
       const contactRole = isMeSender ? msg.recipientRole : msg.senderRole;
@@ -76,11 +102,20 @@ export const ChatView: React.FC = () => {
       }
     });
 
-    // 2. Populate conversations from active user deliveries if missing
+    // 2. Populate conversations from active user deliveries if missing (uniquement les livraisons du compte actuel)
     deliveries.forEach((d) => {
-      const orderKey = `order_${d.id}`;
-      if (!map.has(orderKey)) {
-        if (currentRole === 'vendeur' && d.courier) {
+      if (d.id === '#LL-4192') return;
+
+      if (currentRole === 'vendeur') {
+        const isMyDelivery = !userProfile ||
+          d.merchantId === currentUserId ||
+          (d.merchantEmail && userProfile.email && d.merchantEmail.toLowerCase() === userProfile.email.toLowerCase()) ||
+          (d.merchantStoreName && userProfile.storeName && d.merchantStoreName.toLowerCase() === userProfile.storeName.toLowerCase());
+
+        if (!isMyDelivery) return;
+
+        const orderKey = `order_${d.id}`;
+        if (!map.has(orderKey) && d.courier) {
           map.set(orderKey, {
             key: orderKey,
             orderId: d.id,
@@ -93,7 +128,17 @@ export const ChatView: React.FC = () => {
             lastTimestamp: d.createdAt || new Date().toISOString(),
             unreadCount: 0,
           });
-        } else if (currentRole === 'livreur') {
+        }
+      } else if (currentRole === 'livreur') {
+        const isMyDelivery = !userProfile ||
+          d.courier?.id === currentUserId ||
+          (d.courier?.email && userProfile.email && d.courier.email.toLowerCase() === userProfile.email.toLowerCase()) ||
+          (d.courier?.name && userProfile.fullName && d.courier.name.toLowerCase() === userProfile.fullName.toLowerCase());
+
+        if (!isMyDelivery) return;
+
+        const orderKey = `order_${d.id}`;
+        if (!map.has(orderKey)) {
           const storeName = d.merchantStoreName || d.pickupLocation.name || 'Boutique Partenaire';
           map.set(orderKey, {
             key: orderKey,
@@ -114,7 +159,7 @@ export const ChatView: React.FC = () => {
     return Array.from(map.values()).sort(
       (a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime()
     );
-  }, [chatMessages, deliveries, currentUserId, currentRole]);
+  }, [chatMessages, deliveries, currentUserId, currentRole, userProfile]);
 
   // Set initial selected conversation or react to chatActiveTarget prop
   useEffect(() => {
@@ -122,10 +167,14 @@ export const ChatView: React.FC = () => {
       const key = `order_${chatActiveTarget.orderId}`;
       setSelectedConversationKey(key);
       setShowMobileList(false);
-    } else if (conversations.length > 0 && !selectedConversationKey) {
-      setSelectedConversationKey(conversations[0].key);
+    } else if (conversations.length > 0) {
+      if (!selectedConversationKey || !conversations.some((c) => c.key === selectedConversationKey)) {
+        setSelectedConversationKey(conversations[0].key);
+      }
+    } else {
+      setSelectedConversationKey(null);
     }
-  }, [chatActiveTarget, conversations]);
+  }, [chatActiveTarget, conversations, selectedConversationKey]);
 
   // Auto-scroll chat window to bottom
   useEffect(() => {
@@ -134,6 +183,7 @@ export const ChatView: React.FC = () => {
 
   // Active conversation object
   const activeConversation = useMemo(() => {
+    if (conversations.length === 0) return null;
     return conversations.find((c) => c.key === selectedConversationKey) || conversations[0] || null;
   }, [conversations, selectedConversationKey]);
 

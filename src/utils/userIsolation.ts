@@ -60,7 +60,7 @@ export const createFreshCourierSettings = (profile?: Partial<UserProfile> | null
     email: cleanEmail,
     parkingBaseAddress: cleanBase,
     gpsCoordinates: profile?.gpsCoordinates,
-    isAvailable: true,
+    isAvailable: Boolean(profile?.isKycVerified || profile?.kycStatus === 'valide'),
     workingHours: 'Lundi à Samedi de 08:00 à 19:00',
     soundAlerts: true,
     activeZones: profile?.locationCommune ? [profile.locationCommune] : [],
@@ -86,6 +86,8 @@ export const createFreshCourierEntity = (profile: Partial<UserProfile> & { uid: 
     .toUpperCase()
     .substring(0, 2) || 'CR';
 
+  const isKycAccredited = Boolean(profile.isKycVerified || profile.kycStatus === 'valide');
+
   return {
     id: profile.uid,
     name: profile.fullName.trim(),
@@ -99,13 +101,13 @@ export const createFreshCourierEntity = (profile: Partial<UserProfile> & { uid: 
     zone: profile.locationCommune || 'Cotonou & Alentours',
     distanceKm: 0.8,
     etaMinutes: 5,
-    status: 'en_ligne',
+    status: isKycAccredited ? 'en_ligne' : 'hors_ligne',
     walletBalanceFCFA: 0,
     priceFCFA: 2000,
     commissionFCFA: 0,
     netEarningFCFA: 2000,
-    badge: 'Nouveau Livreur',
-    isKycVerified: false,
+    badge: isKycAccredited ? 'Livreur Vérifié KYC ★' : 'Nouveau Livreur',
+    isKycVerified: isKycAccredited,
     createdAt: new Date().toISOString().split('T')[0],
   };
 };

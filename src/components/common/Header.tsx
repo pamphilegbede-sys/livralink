@@ -102,15 +102,17 @@ export const Header: React.FC<{
               <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
             </button>
 
-            <button
-              onClick={openEmailCenter}
-              className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 transition-colors relative cursor-pointer"
-              title="Centre des e-mails envoyés (Bienvenue, Codes, Sécurité)"
-              aria-label="Centre d'e-mails"
-            >
-              <span className="material-symbols-outlined text-lg sm:text-xl">mail</span>
-              <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-            </button>
+            {currentRole === 'admin' && (
+              <button
+                onClick={openEmailCenter}
+                className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 transition-colors relative cursor-pointer"
+                title="Centre des e-mails envoyés (Bienvenue, Codes, Sécurité)"
+                aria-label="Centre d'e-mails"
+              >
+                <span className="material-symbols-outlined text-lg sm:text-xl">mail</span>
+                <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+              </button>
+            )}
             <button
               onClick={openNotificationCenter}
               className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 transition-colors relative cursor-pointer active:scale-95"

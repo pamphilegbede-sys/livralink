@@ -123,6 +123,8 @@ export interface DeliveryOrder {
 export interface KYCUserRequest {
   id: string;
   courierId?: string;
+  lastName?: string;
+  firstName?: string;
   fullName: string;
   phone: string;
   email?: string;

@@ -2,6 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { KYCUserRequest } from '../../types';
 
+export const BENIN_VEHICLE_OPTIONS = [
+  'Moto Haujue 115 / 125cc',
+  'Moto Bajaj Boxer 100 / 125cc',
+  'Moto TVS XL / HLX 125cc',
+  'Moto Dayang / Sanili / Lifan 125cc',
+  'Moto Kasea / Wave / Dream 110cc',
+  'Moto Électrique / Scooter Moped',
+  'Tricycle / Keke Napep (3 roues)',
+  'Voiture Berline / Compacte (Toyota, Hyundai, Nissan)',
+  'Voiture SUV / Break (Toyota, Suzuki, Kia)',
+  'Fourgonnette / Camionnette de livraison (Peugeot, HiAce)',
+  'Vélo / Deux-roues non motorisé',
+  'Autre engin (préciser)',
+];
+
 interface KYCSubmissionModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -19,42 +34,60 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
   } = useApp();
 
   const activeCourierName =
-    userProfile?.fullName || courierSettings.fullName || selectedCourier?.name || 'Coursier LivraLink';
+    userProfile?.fullName || courierSettings.fullName || selectedCourier?.name || '';
   const activeCourierPhone =
-    userProfile?.phone || courierSettings.phone || selectedCourier?.phone || '+229 97 00 00 00';
+    userProfile?.phone || courierSettings.phone || selectedCourier?.phone || '';
   const activeCourierId = userProfile?.uid || selectedCourier?.id || 'c-awa';
 
   // Find existing KYC submission for this courier
   const existingKyc = kycRequests.find(
     (k) =>
       k.courierId === activeCourierId ||
-      k.fullName.toLowerCase() === activeCourierName.toLowerCase() ||
-      k.phone === activeCourierPhone
+      (activeCourierName && k.fullName.toLowerCase() === activeCourierName.toLowerCase()) ||
+      (activeCourierPhone && k.phone === activeCourierPhone)
   );
 
-  const [fullName, setFullName] = useState(activeCourierName);
-  const [phone, setPhone] = useState(activeCourierPhone);
-  const [idType, setIdType] = useState<'CIP' | 'CNI' | 'PASSPORT'>('CIP');
-  const [idNumber, setIdNumber] = useState(existingKyc?.idNumber || 'BJ-0098412-B');
-  const [ifuNumber, setIfuNumber] = useState(existingKyc?.ifuNumber || '0202418934521');
-  const [vehicleType, setVehicleType] = useState(
-    userProfile?.vehicleType || courierSettings.vehicleType || selectedCourier?.vehicle || 'Moto Yamaha 125cc'
+  // Initialize Name split
+  const nameParts = (existingKyc?.fullName || activeCourierName || '').trim().split(' ');
+  const defaultLastName = existingKyc?.lastName || nameParts[0] || '';
+  const defaultFirstName = existingKyc?.firstName || nameParts.slice(1).join(' ') || '';
+
+  const [lastName, setLastName] = useState(defaultLastName);
+  const [firstName, setFirstName] = useState(defaultFirstName);
+  const [phone, setPhone] = useState(existingKyc?.phone || activeCourierPhone || '');
+  const [idType, setIdType] = useState<'CIP' | 'CNI' | 'PASSPORT'>(existingKyc?.idType || 'CIP');
+  const [idNumber, setIdNumber] = useState(existingKyc?.idNumber || '');
+  const [ifuNumber, setIfuNumber] = useState(existingKyc?.ifuNumber || '');
+
+  // Vehicle Selection logic
+  const existingVehicle = existingKyc?.vehicleType || '';
+  const isKnownVehicle = BENIN_VEHICLE_OPTIONS.includes(existingVehicle);
+
+  const [vehicleSelect, setVehicleSelect] = useState<string>(
+    existingVehicle ? (isKnownVehicle ? existingVehicle : 'Autre engin (préciser)') : BENIN_VEHICLE_OPTIONS[0]
   );
-  const [vehiclePlate, setVehiclePlate] = useState(
-    courierSettings.vehiclePlate || selectedCourier?.vehiclePlate || 'BJ-8492-RB'
+  const [customVehicle, setCustomVehicle] = useState<string>(
+    existingVehicle && !isKnownVehicle ? existingVehicle : ''
   );
-  const [operatingZone, setOperatingZone] = useState('Cotonou - Littoral (Haie Vive, Cadjehoun, Akpakpa)');
+
+  const [vehiclePlate, setVehiclePlate] = useState(existingKyc?.vehiclePlate || '');
+  const [operatingZone, setOperatingZone] = useState(
+    existingKyc?.operatingZone || 'Cotonou - Littoral (Haie Vive, Cadjehoun, Akpakpa)'
+  );
   const [hasInsurance, setHasInsurance] = useState(true);
   const [hasAgreedTerms, setHasAgreedTerms] = useState(true);
   const [photoPreview, setPhotoPreview] = useState<string | null>(
-    existingKyc?.documentPhotoUrl ||
-      'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=60'
+    existingKyc?.documentPhotoUrl || null
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (activeCourierName) setFullName(activeCourierName);
-    if (activeCourierPhone) setPhone(activeCourierPhone);
+    if (!lastName && activeCourierName) {
+      const parts = activeCourierName.trim().split(' ');
+      setLastName(parts[0] || '');
+      setFirstName(parts.slice(1).join(' ') || '');
+    }
+    if (!phone && activeCourierPhone) setPhone(activeCourierPhone);
   }, [activeCourierName, activeCourierPhone]);
 
   if (!isOpen) return null;
@@ -75,10 +108,27 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!lastName.trim() || !firstName.trim()) {
+      showToast('Veuillez renseigner votre Nom et vos Prénoms séparément.', 'error');
+      return;
+    }
+
     if (!idNumber.trim()) {
       showToast('Veuillez renseigner le numéro de votre pièce d\'identité.', 'error');
       return;
     }
+
+    const finalVehicleType =
+      vehicleSelect === 'Autre engin (préciser)'
+        ? customVehicle.trim() || 'Moto / Engin'
+        : vehicleSelect;
+
+    if (!finalVehicleType.trim()) {
+      showToast('Veuillez préciser votre type d\'engin ou véhicule.', 'error');
+      return;
+    }
+
     if (!hasAgreedTerms) {
       showToast('Veuillez accepter les conditions de vérification KYC.', 'error');
       return;
@@ -86,18 +136,23 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
     setIsSubmitting(true);
 
+    const fullFormattedName = `${lastName.trim()} ${firstName.trim()}`.trim();
+
     const newKycData: Partial<KYCUserRequest> = {
       courierId: activeCourierId,
-      fullName: fullName.trim(),
+      lastName: lastName.trim(),
+      firstName: firstName.trim(),
+      fullName: fullFormattedName,
       phone: phone.trim(),
       role: 'coursier',
-      vehicleType,
-      vehiclePlate,
+      vehicleType: finalVehicleType,
+      vehiclePlate: vehiclePlate.trim(),
       idType,
       idNumber: idNumber.trim(),
       ifuNumber: ifuNumber.trim(),
-      operatingZone,
-      documentPhotoUrl: photoPreview || undefined,
+      operatingZone: operatingZone.trim(),
+      documentPhotoUrl:
+        photoPreview || 'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=60',
       documents: {
         cni: true,
         permis: true,
@@ -107,22 +162,30 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
     submitKYCRequest(newKycData);
     setIsSubmitting(false);
+    onClose();
   };
 
   const handleInstantAdminValidation = () => {
+    const fullFormattedName = `${lastName.trim() || 'Nom'} ${firstName.trim() || 'Prénom'}`.trim();
+    const finalVehicleType =
+      vehicleSelect === 'Autre engin (préciser)'
+        ? customVehicle.trim() || 'Moto / Engin'
+        : vehicleSelect;
+
     if (existingKyc) {
       approveKYC(existingKyc.id);
     } else {
-      // First submit then approve
       const req = submitKYCRequest({
         courierId: activeCourierId,
-        fullName: fullName.trim(),
+        lastName: lastName.trim(),
+        firstName: firstName.trim(),
+        fullName: fullFormattedName,
         phone: phone.trim(),
         role: 'coursier',
-        vehicleType,
-        vehiclePlate,
+        vehicleType: finalVehicleType,
+        vehiclePlate: vehiclePlate.trim(),
         idType,
-        idNumber: idNumber.trim(),
+        idNumber: idNumber.trim() || 'BJ-KYC-TEMP',
         operatingZone,
         documents: { cni: true, permis: true, assurance: true },
       });
@@ -204,7 +267,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
               <div className="flex-1">
                 <p className="font-bold">Dossier KYC en cours d'examen par les superviseurs</p>
                 <p className="text-[11px] text-amber-900 dark:text-amber-300 mt-0.5">
-                  Votre dossier déposé est en cours de contrôle. Pour tester immédiatement le déblocage en environnement d'essai, vous pouvez utiliser la validation rapide ci-dessous.
+                  Votre dossier déposé est en cours de contrôle par l'administrateur.
                 </p>
               </div>
               <button
@@ -240,31 +303,64 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
         {/* KYC Form Content */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 custom-scrollbar text-xs">
+          {/* SEPARATE NOM ET PRÉNOMS */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-            {/* Full Name */}
             <div>
               <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                Nom complet et Prénoms (identiques à la pièce)
+                Nom de famille (tel qu'indiqué sur la pièce) *
               </label>
               <input
                 type="text"
                 required
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                placeholder="ex: GBÉDÉ"
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-semibold outline-none focus:ring-2 focus:ring-emerald-500 uppercase"
               />
             </div>
 
+            <div>
+              <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
+                Prénom(s) (tels qu'indiqués sur la pièce) *
+              </label>
+              <input
+                type="text"
+                required
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                placeholder="ex: Pamphile Kodjo"
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-semibold outline-none focus:ring-2 focus:ring-emerald-500 capitalize"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             {/* Phone */}
             <div>
               <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                Numéro de téléphone (MoMo / WhatsApp)
+                Numéro de téléphone (MoMo / WhatsApp) *
               </label>
               <input
                 type="tel"
                 required
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
+                placeholder="ex: +229 97 00 00 00"
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+
+            {/* Operating Zone */}
+            <div>
+              <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
+                Zone d'activité principale *
+              </label>
+              <input
+                type="text"
+                required
+                value={operatingZone}
+                onChange={(e) => setOperatingZone(e.target.value)}
+                placeholder="ex: Cotonou, Abomey-Calavi, Porto-Novo, Parakou"
                 className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
@@ -274,12 +370,12 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             {/* ID Type */}
             <div>
               <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                Type de pièce d'identité
+                Type de pièce d'identité *
               </label>
               <select
                 value={idType}
                 onChange={(e) => setIdType(e.target.value as any)}
-                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-medium outline-none focus:ring-2 focus:ring-emerald-500"
               >
                 <option value="CIP">CIP (Certificat d'Identification Personnelle)</option>
                 <option value="CNI">CNI Biométrique Béninoise</option>
@@ -287,22 +383,22 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
               </select>
             </div>
 
-            {/* ID Number */}
+            {/* ID Number (NO PRE-FILL DEFAULT) */}
             <div>
               <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                Numéro de la pièce (ex: NPI / CNI)
+                Numéro de la pièce (NPI / CNI) *
               </label>
               <input
                 type="text"
                 required
                 value={idNumber}
                 onChange={(e) => setIdNumber(e.target.value)}
-                placeholder="ex: BJ-0089248-B"
+                placeholder="Saisissez votre numéro de pièce"
                 className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
 
-            {/* IFU Number */}
+            {/* IFU Number (NO PRE-FILL DEFAULT) */}
             <div>
               <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
                 Numéro IFU (optionnel)
@@ -311,57 +407,64 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                 type="text"
                 value={ifuNumber}
                 onChange={(e) => setIfuNumber(e.target.value)}
-                placeholder="13 chiffres IFU"
+                placeholder="Saisissez vos 13 chiffres IFU"
                 className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-            {/* Vehicle Type */}
-            <div>
-              <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                Type d'engin / Véhicule
-              </label>
-              <input
-                type="text"
-                required
-                value={vehicleType}
-                onChange={(e) => setVehicleType(e.target.value)}
-                placeholder="ex: Moto Honda 150cc Pro"
-                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
-              />
+          {/* BENIN VEHICLE / ENGIN SELECTION */}
+          <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
+                  Type d'engin / Véhicule au Bénin *
+                </label>
+                <select
+                  value={vehicleSelect}
+                  onChange={(e) => setVehicleSelect(e.target.value)}
+                  className="w-full p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-medium outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  {BENIN_VEHICLE_OPTIONS.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Vehicle Plate (NO PRE-FILL DEFAULT) */}
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
+                  Plaque d'immatriculation *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={vehiclePlate}
+                  onChange={(e) => setVehiclePlate(e.target.value)}
+                  placeholder="ex: BJ-8492-RB"
+                  className="w-full p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-emerald-500 uppercase"
+                />
+              </div>
             </div>
 
-            {/* Vehicle Plate */}
-            <div>
-              <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                Plaque d'immatriculation
-              </label>
-              <input
-                type="text"
-                required
-                value={vehiclePlate}
-                onChange={(e) => setVehiclePlate(e.target.value)}
-                placeholder="ex: BJ-8492-RB"
-                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-
-            {/* Zone */}
-            <div>
-              <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                Zone d'activité principale
-              </label>
-              <input
-                type="text"
-                required
-                value={operatingZone}
-                onChange={(e) => setOperatingZone(e.target.value)}
-                placeholder="ex: Cotonou, Calavi, Porto-Novo"
-                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
+            {/* Custom vehicle input field if "Autre engin (préciser)" is selected */}
+            {vehicleSelect === 'Autre engin (préciser)' && (
+              <div className="animate-in fade-in duration-200 pt-1">
+                <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
+                  Saisissez le type ou modèle exact de votre engin *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={customVehicle}
+                  onChange={(e) => setCustomVehicle(e.target.value)}
+                  placeholder="ex: Moto Tricycle Spéciale, Scooter Honda Dio 110cc, etc."
+                  className="w-full p-2.5 bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700 rounded-xl text-slate-900 dark:text-white font-medium outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+            )}
           </div>
 
           {/* Photo Upload Simulation / Preview */}
@@ -369,7 +472,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             <div className="flex items-center justify-between">
               <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                 <span className="material-symbols-outlined text-emerald-600 text-sm">badge</span>
-                <span>Photo de la pièce d'identité (Recto / Verso)</span>
+                <span>Photo de la pièce d'identité (Recto / Verso) *</span>
               </span>
               <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 dark:bg-emerald-950 px-2 py-0.5 rounded-full">
                 Document Requis
@@ -385,7 +488,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                     className="w-full h-full object-cover"
                   />
                   <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/70 text-white text-[9px] font-bold">
-                    ✓ Prête
+                    ✓ Chargée
                   </span>
                 </div>
               ) : (
@@ -397,13 +500,13 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
               <div className="space-y-2 flex-1 w-full">
                 <p className="text-slate-500 dark:text-slate-400 text-[11px] leading-relaxed">
-                  Prenez une photo nette et lisible de votre pièce d'identité (CIP, CNI ou permis). Les 4 coins du document doivent être visibles sans reflet.
+                  Prenez une photo nette et lisible de votre pièce d'identité (CIP, CNI ou permis). Les 4 coins du document doivent être visibles.
                 </p>
 
                 <div className="flex items-center gap-2 flex-wrap">
                   <label className="px-3 py-1.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 hover:bg-slate-100 rounded-xl text-slate-700 dark:text-slate-200 font-bold text-xs cursor-pointer shadow-2xs transition-colors inline-flex items-center gap-1.5">
                     <span className="material-symbols-outlined text-sm">upload_file</span>
-                    <span>Choisir une photo</span>
+                    <span>Prendre / Télécharger la photo</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -416,11 +519,11 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                     type="button"
                     onClick={() => {
                       setPhotoPreview('https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=60');
-                      showToast('Spécimen officiel de pièce CIP inséré pour la validation.', 'info');
+                      showToast('Exemple de pièce CIP chargé.', 'info');
                     }}
                     className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-xl font-bold text-xs cursor-pointer"
                   >
-                    Utiliser exemple certifié
+                    Spécimen de test
                   </button>
                 </div>
               </div>
@@ -437,7 +540,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                 className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500"
               />
               <span className="text-slate-600 dark:text-slate-400 text-[11px]">
-                Mon engin / véhicule dispose d'une assurance circulation en cours de validité sur le territoire béninois.
+                Mon engin / véhicule dispose d'une assurance circulation valide au Bénin.
               </span>
             </label>
 
@@ -449,7 +552,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                 className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500"
               />
               <span className="text-slate-600 dark:text-slate-400 text-[11px]">
-                Je certifie sur l'honneur l'exactitude des pièces fournies et accepte le contrôle KYC d'intégrité LivraLink.
+                Je certifie sur l'honneur l'exactitude des pièces fournies et accepte le contrôle d'accréditation LivraLink.
               </span>
             </label>
           </div>
@@ -463,7 +566,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
               title="Valider immédiatement en mode simulation pour débloquer les livraisons"
             >
               <span className="material-symbols-outlined text-sm">bolt</span>
-              <span>Validation instantanée (Mode Démo)</span>
+              <span>Validation rapide (Test)</span>
             </button>
 
             <div className="flex items-center gap-2">
