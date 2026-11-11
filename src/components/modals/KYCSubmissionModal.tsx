@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { KYCUserRequest } from '../../types';
 
@@ -29,7 +29,6 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     selectedCourier,
     kycRequests,
     submitKYCRequest,
-    approveKYC,
     showToast,
   } = useApp();
 
@@ -47,14 +46,15 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       (activeCourierPhone && k.phone === activeCourierPhone)
   );
 
-  // Initialize Name split
-  const nameParts = (existingKyc?.fullName || activeCourierName || '').trim().split(' ');
-  const defaultLastName = existingKyc?.lastName || nameParts[0] || '';
-  const defaultFirstName = existingKyc?.firstName || nameParts.slice(1).join(' ') || '';
+  // POINT 1: Initialisation VIDE si nouveau formulaire (aucun préremplissage automatique)
+  // Conservé uniquement si un dossier/brouillon KYC existe déjà.
+  const [lastName, setLastName] = useState(existingKyc?.lastName || '');
+  const [firstName, setFirstName] = useState(existingKyc?.firstName || '');
+  const [phone, setPhone] = useState(existingKyc?.phone || '');
+  const [operatingZone, setOperatingZone] = useState(existingKyc?.operatingZone || '');
 
-  const [lastName, setLastName] = useState(defaultLastName);
-  const [firstName, setFirstName] = useState(defaultFirstName);
-  const [phone, setPhone] = useState(existingKyc?.phone || activeCourierPhone || '');
+  // POINT 4: Séparation NPI et Numéro de Pièce
+  const [npi, setNpi] = useState(existingKyc?.npi || '');
   const [idType, setIdType] = useState<'CIP' | 'CNI' | 'PASSPORT'>(existingKyc?.idType || 'CIP');
   const [idNumber, setIdNumber] = useState(existingKyc?.idNumber || '');
   const [ifuNumber, setIfuNumber] = useState(existingKyc?.ifuNumber || '');
@@ -71,24 +71,12 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
   );
 
   const [vehiclePlate, setVehiclePlate] = useState(existingKyc?.vehiclePlate || '');
-  const [operatingZone, setOperatingZone] = useState(
-    existingKyc?.operatingZone || 'Cotonou - Littoral (Haie Vive, Cadjehoun, Akpakpa)'
-  );
   const [hasInsurance, setHasInsurance] = useState(true);
   const [hasAgreedTerms, setHasAgreedTerms] = useState(true);
   const [photoPreview, setPhotoPreview] = useState<string | null>(
     existingKyc?.documentPhotoUrl || null
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (!lastName && activeCourierName) {
-      const parts = activeCourierName.trim().split(' ');
-      setLastName(parts[0] || '');
-      setFirstName(parts.slice(1).join(' ') || '');
-    }
-    if (!phone && activeCourierPhone) setPhone(activeCourierPhone);
-  }, [activeCourierName, activeCourierPhone]);
 
   if (!isOpen) return null;
 
@@ -111,6 +99,16 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
     if (!lastName.trim() || !firstName.trim()) {
       showToast('Veuillez renseigner votre Nom et vos Prénoms séparément.', 'error');
+      return;
+    }
+
+    if (!phone.trim()) {
+      showToast('Veuillez renseigner votre numéro de téléphone.', 'error');
+      return;
+    }
+
+    if (!operatingZone.trim()) {
+      showToast('Veuillez préciser votre zone d\'activité.', 'error');
       return;
     }
 
@@ -148,8 +146,9 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       vehicleType: finalVehicleType,
       vehiclePlate: vehiclePlate.trim(),
       idType,
+      npi: npi.trim() || undefined,
       idNumber: idNumber.trim(),
-      ifuNumber: ifuNumber.trim(),
+      ifuNumber: ifuNumber.trim() || undefined,
       operatingZone: operatingZone.trim(),
       documentPhotoUrl:
         photoPreview || 'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=60',
@@ -158,42 +157,12 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
         permis: true,
         assurance: hasInsurance,
       },
+      status: 'en_attente',
     };
 
     submitKYCRequest(newKycData);
     setIsSubmitting(false);
-    onClose();
-  };
-
-  const handleInstantAdminValidation = () => {
-    const fullFormattedName = `${lastName.trim() || 'Nom'} ${firstName.trim() || 'Prénom'}`.trim();
-    const finalVehicleType =
-      vehicleSelect === 'Autre engin (préciser)'
-        ? customVehicle.trim() || 'Moto / Engin'
-        : vehicleSelect;
-
-    if (existingKyc) {
-      approveKYC(existingKyc.id);
-    } else {
-      const req = submitKYCRequest({
-        courierId: activeCourierId,
-        lastName: lastName.trim(),
-        firstName: firstName.trim(),
-        fullName: fullFormattedName,
-        phone: phone.trim(),
-        role: 'coursier',
-        vehicleType: finalVehicleType,
-        vehiclePlate: vehiclePlate.trim(),
-        idType,
-        idNumber: idNumber.trim() || 'BJ-KYC-TEMP',
-        operatingZone,
-        documents: { cni: true, permis: true, assurance: true },
-      });
-      if (req?.id) {
-        approveKYC(req.id);
-      }
-    }
-    showToast('🎉 Compte validé avec succès par le contrôle KYC ! Vous pouvez maintenant passer en ligne.', 'success');
+    showToast('Votre dossier KYC a été soumis avec succès ! L\'administrateur va procéder à la vérification.', 'success');
     onClose();
   };
 
@@ -219,12 +188,12 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                 </h2>
                 {currentStatus === 'valide' && (
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                    ✓ Validé &amp; Autorisé
+                    ✓ Validé par Administrateur
                   </span>
                 )}
                 {currentStatus === 'en_attente' && (
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                    ⏳ En cours d'examen
+                    ⏳ En examen Administrateur
                   </span>
                 )}
                 {currentStatus === 'refuse' && (
@@ -234,7 +203,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                 )}
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Vérification obligatoire de votre identité avant de démarrer l'activité et recevoir des livraisons.
+                Saisie obligatoire de vos informations personnelles et justificatifs pour validation par l'administrateur.
               </p>
             </div>
           </div>
@@ -255,9 +224,9 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             <div className="flex items-center gap-3 p-3 rounded-2xl bg-emerald-100/80 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 text-xs">
               <span className="material-symbols-outlined text-emerald-600 text-2xl shrink-0">check_circle</span>
               <div>
-                <p className="font-bold">Votre dossier KYC est validé et accrédité !</p>
+                <p className="font-bold">Votre dossier KYC a été validé et accrédité par l'administrateur !</p>
                 <p className="text-[11px] text-emerald-800 dark:text-emerald-300 mt-0.5">
-                  Vous êtes pleinement autorisé à démarrer vos livraisons, passer en statut « En ligne » et accepter des courses des vendeurs.
+                  Vous êtes pleinement autorisé à passer en ligne et effectuer vos livraisons.
                 </p>
               </div>
             </div>
@@ -265,26 +234,19 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             <div className="flex items-center gap-3 p-3 rounded-2xl bg-amber-100/80 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200 text-xs">
               <span className="material-symbols-outlined text-amber-600 text-2xl shrink-0 animate-spin">sync</span>
               <div className="flex-1">
-                <p className="font-bold">Dossier KYC en cours d'examen par les superviseurs</p>
+                <p className="font-bold">Dossier KYC en cours d'examen par l'administrateur</p>
                 <p className="text-[11px] text-amber-900 dark:text-amber-300 mt-0.5">
-                  Votre dossier déposé est en cours de contrôle par l'administrateur.
+                  Seul un administrateur habilité peut étudier et valider votre dossier d'accréditation.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={handleInstantAdminValidation}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs shadow-xs shrink-0 cursor-pointer"
-              >
-                ⚡ Valider maintenant (Test)
-              </button>
             </div>
           ) : currentStatus === 'refuse' ? (
             <div className="flex items-center gap-3 p-3 rounded-2xl bg-red-100/80 dark:bg-red-950/60 border border-red-300 dark:border-red-800 text-red-950 dark:text-red-200 text-xs">
               <span className="material-symbols-outlined text-red-600 text-2xl shrink-0">error</span>
               <div>
-                <p className="font-bold">Votre dossier KYC a été refusé</p>
+                <p className="font-bold">Votre dossier KYC a été refusé par l'administrateur</p>
                 <p className="text-[11px] text-red-900 dark:text-red-300 mt-0.5">
-                  Motif : {existingKyc?.rejectionReason || 'Documents illisibles ou informations non conformes. Veuillez re-soumettre des photos nettes de votre pièce.'}
+                  Motif : {existingKyc?.rejectionReason || 'Documents illisibles ou informations non conformes. Veuillez re-soumettre des photos nettes.'}
                 </p>
               </div>
             </div>
@@ -292,9 +254,9 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             <div className="flex items-center gap-3 p-3 rounded-2xl bg-blue-100/70 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200 text-xs">
               <span className="material-symbols-outlined text-blue-600 text-2xl shrink-0">shield</span>
               <div>
-                <p className="font-bold">Étape préalable obligatoire avant vos premières courses</p>
+                <p className="font-bold">Formulaire vierge de vérification d'identité</p>
                 <p className="text-[11px] text-blue-800 dark:text-blue-300 mt-0.5">
-                  Conformément aux directives de sécurité LivraLink au Bénin, renseignez vos pièces d'identité (CIP, CNI biométrique ou permis) pour activer votre compte coursier.
+                  Saisissez personnellement vos informations et vos pièces d'identité (CIP, CNI biométrique ou passeport).
                 </p>
               </div>
             </div>
@@ -360,13 +322,45 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                 required
                 value={operatingZone}
                 onChange={(e) => setOperatingZone(e.target.value)}
-                placeholder="ex: Cotonou, Abomey-Calavi, Porto-Novo, Parakou"
+                placeholder="ex: Cotonou, Abomey-Calavi, Porto-Novo"
                 className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+          {/* POINT 4: CHAMPS NPI ET NUMÉRO DE PIÈCE DEUX CHAMPS DISTINCTS */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            {/* Field 1: Numéro Personnel d'Identification (NPI) */}
+            <div>
+              <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
+                Numéro Personnel d'Identification (NPI)
+              </label>
+              <input
+                type="text"
+                value={npi}
+                onChange={(e) => setNpi(e.target.value)}
+                placeholder="Saisissez votre NPI (10 chiffres)"
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+
+            {/* Field 2: Numéro de pièce d'identité */}
+            <div>
+              <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
+                Numéro de pièce d'identité *
+              </label>
+              <input
+                type="text"
+                required
+                value={idNumber}
+                onChange={(e) => setIdNumber(e.target.value)}
+                placeholder="Saisissez le numéro figurant sur la pièce"
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             {/* ID Type */}
             <div>
               <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
@@ -383,22 +377,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
               </select>
             </div>
 
-            {/* ID Number (NO PRE-FILL DEFAULT) */}
-            <div>
-              <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                Numéro de la pièce (NPI / CNI) *
-              </label>
-              <input
-                type="text"
-                required
-                value={idNumber}
-                onChange={(e) => setIdNumber(e.target.value)}
-                placeholder="Saisissez votre numéro de pièce"
-                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-
-            {/* IFU Number (NO PRE-FILL DEFAULT) */}
+            {/* IFU Number */}
             <div>
               <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
                 Numéro IFU (optionnel)
@@ -433,7 +412,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                 </select>
               </div>
 
-              {/* Vehicle Plate (NO PRE-FILL DEFAULT) */}
+              {/* Vehicle Plate */}
               <div>
                 <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
                   Plaque d'immatriculation *
@@ -467,7 +446,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             )}
           </div>
 
-          {/* Photo Upload Simulation / Preview */}
+          {/* Photo Upload / Preview (POINT 5: "Spécimen de test" supprimé) */}
           <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-3">
             <div className="flex items-center justify-between">
               <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
@@ -500,7 +479,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
               <div className="space-y-2 flex-1 w-full">
                 <p className="text-slate-500 dark:text-slate-400 text-[11px] leading-relaxed">
-                  Prenez une photo nette et lisible de votre pièce d'identité (CIP, CNI ou permis). Les 4 coins du document doivent être visibles.
+                  Prenez une photo nette et lisible de votre pièce d'identité (CIP, CNI ou passeport). Les 4 coins du document doivent être visibles.
                 </p>
 
                 <div className="flex items-center gap-2 flex-wrap">
@@ -514,17 +493,6 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                       className="hidden"
                     />
                   </label>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPhotoPreview('https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=60');
-                      showToast('Exemple de pièce CIP chargé.', 'info');
-                    }}
-                    className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-xl font-bold text-xs cursor-pointer"
-                  >
-                    Spécimen de test
-                  </button>
                 </div>
               </div>
             </div>
@@ -557,35 +525,23 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             </label>
           </div>
 
-          {/* Modal Actions */}
-          <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 flex-wrap">
+          {/* Modal Actions (POINT 2: Seul l'administrateur peut valider) */}
+          <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={handleInstantAdminValidation}
-              className="text-emerald-700 dark:text-emerald-400 hover:underline font-bold text-xs flex items-center gap-1 cursor-pointer"
-              title="Valider immédiatement en mode simulation pour débloquer les livraisons"
+              onClick={onClose}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-bold transition-all"
             >
-              <span className="material-symbols-outlined text-sm">bolt</span>
-              <span>Validation rapide (Test)</span>
+              Annuler
             </button>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-bold transition-all"
-              >
-                Annuler
-              </button>
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-md shadow-emerald-600/20 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-sm">send</span>
-                <span>{currentStatus === 'en_attente' ? 'Mettre à jour mon dossier' : 'Soumettre mon dossier KYC'}</span>
-              </button>
-            </div>
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-md shadow-emerald-600/20 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-sm">send</span>
+              <span>{currentStatus === 'en_attente' ? 'Mettre à jour mon dossier' : 'Soumettre mon dossier KYC'}</span>
+            </button>
           </div>
         </form>
       </div>

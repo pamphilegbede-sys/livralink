@@ -1926,6 +1926,229 @@ app.post('/api/admin/email/config', requireAdminAuthorization as any, (req: Requ
   });
 });
 
+// In-memory store for Admin Broadcast Announcements
+interface AnnouncementRecord {
+  id: string;
+  title: string;
+  message: string;
+  audience: 'tous' | 'vendeurs' | 'livreurs' | 'admins' | 'individuel';
+  channel: 'notification' | 'email' | 'both';
+  targetUid?: string;
+  targetEmail?: string;
+  recipientCount: number;
+  sentAt: string;
+  sentBy: string;
+  status: 'complete' | 'partial' | 'failed';
+  errors?: string[];
+}
+
+const broadcastAnnouncementsHistory: AnnouncementRecord[] = [];
+
+/**
+ * POST /api/admin/broadcast
+ * Dispatches targeted or general communications as ISOLATED individual notifications & emails
+ * Strictly restricted to authorized Super-Admins
+ */
+app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { title, message, audience, channel, targetUid, targetEmail } = req.body || {};
+
+    if (!title || typeof title !== 'string' || title.trim().length === 0) {
+      return res.status(400).json({ success: false, error: 'Un titre de communication est requis (max 256 caractères).' });
+    }
+
+    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+      return res.status(400).json({ success: false, error: 'Un corps de message est requis.' });
+    }
+
+    const cleanTitle = title.trim().slice(0, 256);
+    const cleanMessage = message.trim().slice(0, 4096);
+    const validAudience = ['tous', 'vendeurs', 'livreurs', 'admins', 'individuel'].includes(audience) ? audience : 'tous';
+    const validChannel = ['notification', 'email', 'both'].includes(channel) ? channel : 'both';
+    const adminEmail = req.user?.email || 'Pamphile.gbede@gmail.com';
+
+    // Retrieve target users from Firestore
+    let targetUsers: Array<{ uid: string; email?: string; fullName?: string; role?: string }> = [];
+
+    if (firestoreAdmin) {
+      try {
+        const usersSnap = await firestoreAdmin.collection('users').get();
+        usersSnap.forEach((docSnap) => {
+          const u = docSnap.data();
+          if (u && u.uid) {
+            targetUsers.push({
+              uid: u.uid,
+              email: u.email,
+              fullName: u.fullName || u.storeName,
+              role: u.role,
+            });
+          }
+        });
+      } catch (fsErr: any) {
+        console.warn('[ADMIN BROADCAST] Warning reading Firestore users:', fsErr?.message);
+      }
+    }
+
+    // Filter recipients based on audience
+    if (validAudience === 'individuel') {
+      if (targetUid) {
+        targetUsers = targetUsers.filter((u) => u.uid === targetUid);
+      } else if (targetEmail) {
+        targetUsers = targetUsers.filter((u) => u.email?.toLowerCase().trim() === targetEmail.toLowerCase().trim());
+      }
+    } else if (validAudience === 'vendeurs') {
+      targetUsers = targetUsers.filter((u) => u.role === 'vendeur');
+    } else if (validAudience === 'livreurs') {
+      targetUsers = targetUsers.filter((u) => u.role === 'livreur');
+    } else if (validAudience === 'admins') {
+      targetUsers = targetUsers.filter((u) => u.role === 'admin' || u.email?.toLowerCase() === 'pamphile.gbede@gmail.com');
+    }
+
+    // If targetUsers is empty, construct fallback target if targetUid or targetEmail is provided
+    if (targetUsers.length === 0 && (targetUid || targetEmail)) {
+      targetUsers = [{ uid: targetUid || `uid_${Date.now()}`, email: targetEmail, fullName: 'Utilisateur Cible' }];
+    }
+
+    let successNotifCount = 0;
+    let successEmailCount = 0;
+    const errors: string[] = [];
+
+    const nowIso = new Date().toISOString();
+
+    // Dispatch individual notifications to Firestore /notifications collection with recipientId
+    for (const target of targetUsers) {
+      if (validChannel === 'notification' || validChannel === 'both') {
+        const notifId = `notif_broadcast_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const notifDoc = {
+          id: notifId,
+          recipientId: target.uid,
+          type: 'system',
+          title: `📢 ${cleanTitle}`,
+          message: cleanMessage,
+          category: 'annonce',
+          isRead: false,
+          timestamp: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+          createdAt: nowIso,
+        };
+
+        if (firestoreAdmin) {
+          try {
+            await firestoreAdmin.collection('notifications').doc(notifId).set(notifDoc);
+            successNotifCount++;
+          } catch (nErr: any) {
+            errors.push(`Erreur notification pour ${target.uid}: ${nErr?.message}`);
+          }
+        } else {
+          successNotifCount++;
+        }
+      }
+
+      // Dispatch individual emails if requested
+      if ((validChannel === 'email' || validChannel === 'both') && target.email) {
+        try {
+          const emailSubject = `📢 LivraLink : ${cleanTitle}`;
+          const emailHtml = `
+            <div style="font-family: 'Plus Jakarta Sans', sans-serif; max-width: 580px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; color: #0f172a;">
+              <div style="background: #0f172a; padding: 24px; text-align: center;">
+                <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 800;">Livra<span style="color: #3b82f6;">Link</span></h1>
+                <p style="color: #94a3b8; font-size: 11px; margin: 4px 0 0 0; text-transform: uppercase; letter-spacing: 1px;">Communication Officielle</p>
+              </div>
+              <div style="padding: 28px 24px;">
+                <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 0 0 12px 0;">${escapeHtml(cleanTitle)}</h2>
+                <p style="font-size: 14px; color: #334155; line-height: 1.6; whitespace-pre-wrap; margin: 0 0 20px 0;">${escapeHtml(cleanMessage)}</p>
+                <div style="border-top: 1px solid #f1f5f9; padding-top: 16px; font-size: 11px; color: #94a3b8;">
+                  Message transmis par la Direction LivraLink à <strong>${escapeHtml(target.fullName || target.email)}</strong>.
+                </div>
+              </div>
+            </div>
+          `;
+
+          await recordSentEmail({
+            type: 'custom',
+            to: target.email,
+            recipientName: target.fullName || target.email.split('@')[0],
+            subject: emailSubject,
+            previewText: cleanMessage.slice(0, 150),
+            htmlContent: emailHtml,
+            deliveredViaSmtp: true,
+          });
+          successEmailCount++;
+        } catch (mErr: any) {
+          errors.push(`Erreur e-mail pour ${target.email}: ${mErr?.message}`);
+        }
+      }
+    }
+
+    const record: AnnouncementRecord = {
+      id: `broadcast_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      title: cleanTitle,
+      message: cleanMessage,
+      audience: validAudience,
+      channel: validChannel,
+      targetUid,
+      targetEmail,
+      recipientCount: targetUsers.length,
+      sentAt: nowIso,
+      sentBy: adminEmail,
+      status: errors.length === 0 ? 'complete' : errors.length < targetUsers.length ? 'partial' : 'failed',
+      errors: errors.length > 0 ? errors : undefined,
+    };
+
+    broadcastAnnouncementsHistory.unshift(record);
+    if (broadcastAnnouncementsHistory.length > 100) broadcastAnnouncementsHistory.pop();
+
+    if (firestoreAdmin) {
+      try {
+        await firestoreAdmin.collection('announcements').doc(record.id).set(record);
+      } catch (fsErr: any) {
+        console.warn('[ADMIN BROADCAST] Warning logging announcement to Firestore:', fsErr?.message);
+      }
+    }
+
+    console.log(`[ADMIN BROADCAST SUCCESS] Audience: ${validAudience} | Canal: ${validChannel} | Destinataires: ${targetUsers.length} | Émis par: ${adminEmail}`);
+
+    res.json({
+      success: true,
+      message: `Communication diffusée avec succès auprès de ${targetUsers.length} destinataire(s).`,
+      recipientCount: targetUsers.length,
+      notificationsSent: successNotifCount,
+      emailsSent: successEmailCount,
+      announcement: record,
+    });
+  } catch (err: any) {
+    console.error('[ADMIN BROADCAST ERROR]', err);
+    res.status(500).json({ success: false, error: 'Erreur lors de la diffusion de l\'annonce.' });
+  }
+});
+
+/**
+ * GET /api/admin/announcements
+ * Retrieves broadcast communications history
+ */
+app.get('/api/admin/announcements', requireAdminAuthorization as any, async (_req: Request, res: Response) => {
+  try {
+    if (firestoreAdmin) {
+      try {
+        const snap = await firestoreAdmin.collection('announcements').orderBy('sentAt', 'desc').limit(50).get();
+        const list: AnnouncementRecord[] = [];
+        snap.forEach((docSnap) => {
+          list.push(docSnap.data() as AnnouncementRecord);
+        });
+        if (list.length > 0) {
+          return res.json({ success: true, announcements: list });
+        }
+      } catch (fsErr: any) {
+        console.warn('[ADMIN ANNOUNCEMENTS] Warning reading Firestore announcements:', fsErr?.message);
+      }
+    }
+
+    res.json({ success: true, announcements: broadcastAnnouncementsHistory });
+  } catch (err: any) {
+    console.error('[ADMIN ANNOUNCEMENTS ERROR]', err);
+    res.status(500).json({ success: false, error: 'Erreur lors de la récupération des annonces.' });
+  }
+});
+
 /**
  * POST /api/admin/email/test-smtp
  * Performs a live handshake verification with smtp.gmail.com via Nodemailer verify()

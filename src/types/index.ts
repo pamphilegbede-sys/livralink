@@ -118,6 +118,9 @@ export interface DeliveryOrder {
   merchantId?: string;
   merchantEmail?: string;
   merchantStoreName?: string;
+  courierLat?: number;
+  courierLng?: number;
+  courierLocationUpdatedAt?: string;
 }
 
 export interface KYCUserRequest {
@@ -132,7 +135,8 @@ export interface KYCUserRequest {
   vehicleType: string;
   vehiclePlate?: string;
   idType?: 'CIP' | 'CNI' | 'PASSPORT';
-  idNumber: string;
+  npi?: string; // Numéro Personnel d'Identification (NPI) distinct
+  idNumber: string; // Numéro de pièce d'identité distinct
   ifuNumber?: string;
   operatingZone: string;
   submittedAt: string;

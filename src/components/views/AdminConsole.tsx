@@ -7,6 +7,7 @@ import { DisputeResolutionModal } from '../modals/DisputeResolutionModal';
 import { Courier, Merchant, DeliveryOrder, DeliveryStatus, KYCUserRequest } from '../../types';
 import { loginWithGoogle, getFirebaseAuthErrorMessage } from '../../firebase/authService';
 import { AdminOverviewDashboard } from './AdminOverviewDashboard';
+import { AdminCommunicationsSection } from '../admin/AdminCommunicationsSection';
 import { ResetUserAccessModal, TargetResetUser } from '../modals/ResetUserAccessModal';
 import {
   fetchSmtpConfig,
@@ -67,6 +68,12 @@ const AdminSidebarContent: React.FC<{
         { id: 'couriers', label: 'Flotte Livreurs', icon: 'two_wheeler', badge: `${couriersCount}`, badgeColor: 'bg-emerald-950 text-emerald-300 border border-emerald-800' },
         { id: 'merchants', label: 'Boutiques Vendeurs', icon: 'storefront', badge: `${merchantsCount}`, badgeColor: 'bg-sky-950 text-sky-300 border border-sky-800' },
         { id: 'disputes', label: 'Litiges & Arbitrage', icon: 'warning', badge: disputesCount > 0 ? `${disputesCount}` : undefined, badgeColor: 'bg-red-600 text-white' },
+      ],
+    },
+    {
+      group: 'COMMUNICATIONS & ANNONCES',
+      items: [
+        { id: 'communications', label: 'Diffusion & Annonces', icon: 'campaign', badge: 'Diffuser', badgeColor: 'bg-amber-400 text-slate-950 font-extrabold' },
       ],
     },
     {
@@ -1082,6 +1089,7 @@ export const AdminConsole: React.FC = () => {
             { id: 'deliveries', label: 'Courses', icon: 'local_shipping', badge: activeDeliveriesCount > 0 ? `${activeDeliveriesCount}` : undefined },
             { id: 'users', label: 'Utilisateurs', icon: 'group' },
             { id: 'kyc', label: 'KYC', icon: 'verified_user', badge: kycRequests.filter(k => k.status === 'en_attente').length > 0 ? `${kycRequests.filter(k => k.status === 'en_attente').length}` : undefined },
+            { id: 'communications', label: 'Annonces', icon: 'campaign' },
             { id: 'couriers', label: 'Livreurs', icon: 'two_wheeler' },
             { id: 'merchants', label: 'Boutiques', icon: 'storefront' },
             { id: 'disputes', label: 'Litiges', icon: 'warning', badge: disputeCount > 0 ? `${disputeCount}` : undefined },
@@ -1134,6 +1142,7 @@ export const AdminConsole: React.FC = () => {
                   {activeViewTab === 'deliveries' && 'Supervision des Courses'}
                   {activeViewTab === 'users' && 'Annuaire Utilisateurs'}
                   {activeViewTab === 'kyc' && 'Vérifications KYC'}
+                  {activeViewTab === 'communications' && 'Communications & Annonces Massives'}
                   {activeViewTab === 'couriers' && 'Flotte Livreurs'}
                   {activeViewTab === 'merchants' && 'Boutiques Vendeurs'}
                   {activeViewTab === 'disputes' && 'Litiges & Support'}
@@ -1150,6 +1159,7 @@ export const AdminConsole: React.FC = () => {
                   activeViewTab === 'deliveries' ? 'bg-blue-600 shadow-sm' :
                   activeViewTab === 'disputes' ? 'bg-red-600' :
                   activeViewTab === 'kyc' ? 'bg-amber-600' :
+                  activeViewTab === 'communications' ? 'bg-amber-500 text-slate-950 font-black' :
                   activeViewTab === 'features' ? 'bg-purple-600 shadow-sm' :
                   activeViewTab === 'email_settings' ? 'bg-emerald-600 shadow-sm' :
                   activeViewTab === 'tests' ? 'bg-indigo-600' : 'bg-slate-900'
@@ -1158,6 +1168,7 @@ export const AdminConsole: React.FC = () => {
                   {activeViewTab === 'overview' && 'dashboard'}
                   {activeViewTab === 'users' && 'group'}
                   {activeViewTab === 'kyc' && 'verified_user'}
+                  {activeViewTab === 'communications' && 'campaign'}
                   {activeViewTab === 'couriers' && 'two_wheeler'}
                   {activeViewTab === 'merchants' && 'storefront'}
                   {activeViewTab === 'disputes' && 'warning'}
@@ -1173,6 +1184,7 @@ export const AdminConsole: React.FC = () => {
                   {activeViewTab === 'overview' && 'Tableau de Bord & Synthèse Générale'}
                   {activeViewTab === 'users' && 'Annuaire Global des Utilisateurs'}
                   {activeViewTab === 'kyc' && 'Centre d\'Accréditation KYC'}
+                  {activeViewTab === 'communications' && 'Centre de Communications & Annonces Massives'}
                   {activeViewTab === 'couriers' && 'Gestion Complète des Livreurs'}
                   {activeViewTab === 'merchants' && 'Gestion des Boutiques Vendeurs'}
                   {activeViewTab === 'disputes' && 'Centre de Résolution des Litiges'}
@@ -1187,6 +1199,13 @@ export const AdminConsole: React.FC = () => {
             </div>
           </div>
         </div>
+
+          {/* =========================================================================
+              TAB: COMMUNICATIONS ET ANNONCES
+             ========================================================================= */}
+          {activeViewTab === 'communications' && (
+            <AdminCommunicationsSection />
+          )}
 
           {/* =========================================================================
               TAB 1: VUE D'ENSEMBLE (Indicateurs clés + Suivi centralisé de toutes les activités)

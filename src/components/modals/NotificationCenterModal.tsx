@@ -219,20 +219,6 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
           </div>
         </div>
 
-        {/* Test Trigger Button Bar */}
-        <div className="px-5 py-2 bg-blue-50/70 dark:bg-blue-950/40 border-b border-blue-100 dark:border-blue-900/40 flex items-center justify-between text-xs">
-          <span className="text-blue-900 dark:text-blue-200 font-semibold flex items-center gap-1.5">
-            <span className="material-symbols-outlined text-base text-blue-600">bolt</span>
-            <span>Tester la réception en temps réel :</span>
-          </span>
-          <button
-            onClick={() => sendTestNotification()}
-            className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[11px] font-extrabold shadow-xs transition-all cursor-pointer active:scale-95"
-          >
-            + Simuler Notification
-          </button>
-        </div>
-
         {/* Notifications List */}
         <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
           {filteredNotifications.length === 0 ? (
@@ -244,14 +230,8 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                 Aucune notification {activeFilter === 'unread' ? 'non lue' : ''}
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto">
-                Vous recevrez ici les alertes en temps réel lors des créations et mises à jour de livraisons.
+                Vous recevrez ici les alertes en temps réel concernant vos livraisons et votre compte.
               </p>
-              <button
-                onClick={() => sendTestNotification('🔔 Notification de test LivraLink', 'Ceci est une notification de test générée avec succès.')}
-                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
-              >
-                Générer une alerte de démonstration
-              </button>
             </div>
           ) : (
             filteredNotifications.map((notif) => {

@@ -13,6 +13,7 @@ import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from './config';
 import { UserRole } from '../types';
 import { detectUserGeolocation, DetectedUserLocation } from '../config/maps';
+import { sendWelcomeEmail } from '../services/emailService';
 
 export interface UserProfile {
   uid: string;
@@ -232,6 +233,20 @@ export const registerWithEmailPassword = async (
   const cleanName = fullName.trim();
   const cleanPhone = phone.trim();
 
+  // POINT 8: Contrôle d'accès strict pour le rôle Administrateur
+  if (role === 'admin' && cleanEmail !== 'pamphile.gbede@gmail.com') {
+    throw new Error('La création d\'un compte administrateur est soumise à une autorisation stricte.');
+  }
+
+  // POINT 8: Unicité stricte de l'adresse e-mail (vérification pré-inscription)
+  const stored = getStoredUsers();
+  if (stored[cleanEmail]) {
+    const existingRole = stored[cleanEmail].profile?.role === 'vendeur' ? 'Vendeur' : stored[cleanEmail].profile?.role === 'livreur' ? 'Livreur' : 'Admin';
+    const err: any = new Error(`Cette adresse e-mail est déjà associée à un compte LivraLink (${existingRole}). Un e-mail ne peut appartenir qu'à un seul compte.`);
+    err.code = 'auth/email-already-in-use';
+    throw err;
+  }
+
   let createdUid = '';
   let authUser: Partial<FirebaseUser> | null = null;
 
@@ -248,13 +263,7 @@ export const registerWithEmailPassword = async (
 
     // If email already in use on Firebase Auth
     if (firebaseErr?.code === 'auth/email-already-in-use') {
-      throw firebaseErr;
-    }
-
-    // Check local store
-    const stored = getStoredUsers();
-    if (stored[cleanEmail]) {
-      const err: any = new Error('Cette adresse e-mail est déjà enregistrée.');
+      const err: any = new Error('Cette adresse e-mail est déjà enregistrée sur LivraLink. Veuillez vous connecter ou réinitialiser votre mot de passe.');
       err.code = 'auth/email-already-in-use';
       throw err;
     }
@@ -317,6 +326,18 @@ export const registerWithEmailPassword = async (
 
   // 4. Cache user profile locally for instant resilience
   saveStoredUser(cleanEmail, profileData, btoa(password));
+
+  // POINT 3: Envoi automatique de l'e-mail de bienvenue après inscription réussie
+  if (role === 'vendeur' || role === 'livreur') {
+    sendWelcomeEmail({
+      email: cleanEmail,
+      fullName: cleanName,
+      role: role,
+      storeName: profileData.storeName,
+      vehicleType: profileData.vehicleType,
+      phone: cleanPhone,
+    }).catch((err) => console.warn('Erreur envoi email bienvenue inscription:', err));
+  }
 
   return { user: authUser!, profile: profileData };
 };

@@ -21,6 +21,10 @@
         "locationLat": { "type": "number", "description": "Latitude GPS détectée" },
         "locationLng": { "type": "number", "description": "Longitude GPS détectée" },
         "locationUpdatedAt": { "type": "string", "maxLength": 64, "description": "Horodatage de la détection de position" },
+        "isKycVerified": { "type": "boolean", "description": "Statut d'accréditation KYC" },
+        "kycStatus": { "type": "string", "enum": ["non_soumis", "en_attente", "valide", "refuse"], "description": "État du dossier KYC" },
+        "kycRejectionReason": { "type": "string", "maxLength": 512, "description": "Motif de refus du dossier KYC" },
+        "kycSubmittedAt": { "type": "string", "maxLength": 64, "description": "Date de soumission du dossier KYC" },
         "createdAt": { "type": "string", "maxLength": 64, "description": "Horodatage de création du compte" },
         "updatedAt": { "type": "string", "maxLength": 64, "description": "Horodatage de mise à jour" }
       },
@@ -55,20 +59,125 @@
         "createdAt": { "type": "string", "maxLength": 64, "description": "Date d'habilitation" }
       },
       "required": ["uid", "email", "level"]
+    },
+    "KYCDossier": {
+      "title": "KYCDossier",
+      "description": "Dossier d'accréditation et de contrôle identité KYC.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "description": "Identifiant du dossier (UID de l'utilisateur)" },
+        "userId": { "type": "string", "maxLength": 128, "description": "UID de l'utilisateur propriétaire" },
+        "fullName": { "type": "string", "maxLength": 128, "description": "Nom complet de l'utilisateur" },
+        "phone": { "type": "string", "maxLength": 32, "description": "Numéro de téléphone" },
+        "email": { "type": "string", "format": "email", "maxLength": 128, "description": "E-mail de l'utilisateur" },
+        "idNumber": { "type": "string", "maxLength": 64, "description": "Numéro de CNI ou Passeport" },
+        "vehicleType": { "type": "string", "maxLength": 64, "description": "Type d'engin ou véhicule" },
+        "status": { "type": "string", "enum": ["en_attente", "valide", "refuse"], "description": "Statut d'instruction" },
+        "submittedAt": { "type": "string", "maxLength": 64, "description": "Date de soumission" },
+        "reviewedAt": { "type": "string", "maxLength": 64, "description": "Date d'instruction par l'administrateur" },
+        "rejectionReason": { "type": "string", "maxLength": 512, "description": "Motif du refus" }
+      },
+      "required": ["id", "userId", "fullName", "phone", "status"]
+    },
+    "AppNotification": {
+      "title": "AppNotification",
+      "description": "Notification personnelle distribuée à un utilisateur spécifique.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "description": "Identifiant unique de notification" },
+        "recipientId": { "type": "string", "maxLength": 128, "description": "UID de l'utilisateur destinataire" },
+        "type": { "type": "string", "description": "Type opérationnel de notification" },
+        "title": { "type": "string", "maxLength": 256, "description": "Titre de la notification" },
+        "message": { "type": "string", "maxLength": 2048, "description": "Contenu de la notification" },
+        "category": { "type": "string", "maxLength": 64, "description": "Catégorie métier" },
+        "orderId": { "type": "string", "maxLength": 64, "description": "Référence optionnelle vers une commande" },
+        "isRead": { "type": "boolean", "description": "Statut de lecture par le destinataire" },
+        "timestamp": { "type": "string", "maxLength": 64, "description": "Horodatage de création" }
+      },
+      "required": ["id", "recipientId", "title", "message"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Fil de discussion privé entre vendeurs et livreurs.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "description": "Identifiant unique de la conversation" },
+        "participantIds": { "type": "array", "description": "Liste explicite des UIDs des participants" },
+        "orderId": { "type": "string", "maxLength": 64, "description": "Identifiant de la commande liée" },
+        "creatorId": { "type": "string", "maxLength": 128, "description": "UID de l'initiateur" },
+        "contactName": { "type": "string", "maxLength": 128, "description": "Nom du correspondant" },
+        "lastMessage": { "type": "string", "maxLength": 1000, "description": "Dernier extrait de message" },
+        "updatedAt": { "type": "string", "maxLength": 64, "description": "Horodatage de dernière activité" }
+      },
+      "required": ["id", "participantIds", "creatorId"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Message individuel dans une conversation isolée.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "description": "Identifiant unique du message" },
+        "conversationId": { "type": "string", "maxLength": 128, "description": "Identifiant de la conversation résidente" },
+        "participantIds": { "type": "array", "description": "Miroir des participants pour l'isolation" },
+        "senderId": { "type": "string", "maxLength": 128, "description": "UID de l'expéditeur" },
+        "senderName": { "type": "string", "maxLength": 128, "description": "Nom affiché de l'expéditeur" },
+        "text": { "type": "string", "maxLength": 2048, "description": "Texte du message" },
+        "createdAt": { "type": "string", "maxLength": 64, "description": "Horodatage d'envoi" },
+        "isRead": { "type": "boolean", "description": "Statut d'accusé de lecture" }
+      },
+      "required": ["id", "conversationId", "senderId", "text"]
+    },
+    "BroadcastAnnouncement": {
+      "title": "BroadcastAnnouncement",
+      "description": "Annonce et communication générale administrée par la direction.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "description": "Identifiant unique de la diffusion" },
+        "title": { "type": "string", "maxLength": 256, "description": "Sujet ou titre de l'annonce" },
+        "message": { "type": "string", "maxLength": 4096, "description": "Corps du message officiel" },
+        "audience": { "type": "string", "enum": ["tous", "vendeurs", "livreurs", "admins", "individuel"], "description": "Portée de l'audience" },
+        "channel": { "type": "string", "enum": ["notification", "email", "both"], "description": "Canal d'expédition" },
+        "targetUid": { "type": "string", "maxLength": 128, "description": "UID de la cible en cas de message individuel" },
+        "recipientCount": { "type": "number", "description": "Nombre total de destinataires touchés" },
+        "sentAt": { "type": "string", "maxLength": 64, "description": "Horodatage de la diffusion" },
+        "sentBy": { "type": "string", "maxLength": 128, "description": "Identifiant de l'administrateur émetteur" },
+        "status": { "type": "string", "enum": ["complete", "partial", "failed"], "description": "Statut de distribution" }
+      },
+      "required": ["id", "title", "message", "audience", "channel", "sentBy"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "UserProfile",
-      "description": "Collection des profils utilisateurs authentifiés."
+      "description": "Profils isolés et confidentiels des utilisateurs."
     },
     "/deliveries/{deliveryId}": {
       "schema": "DeliveryOrder",
-      "description": "Collection des livraisons et expéditions gérées par la plateforme."
+      "description": "Commandes et expéditions gérées."
     },
     "/admins/{adminId}": {
       "schema": "AdminUser",
-      "description": "Collection des administrateurs racine autorisés."
+      "description": "Administrateurs racine du système."
+    },
+    "/kyc/{userId}": {
+      "schema": "KYCDossier",
+      "description": "Dossiers d'accréditation KYC strictement confidentiels."
+    },
+    "/notifications/{notificationId}": {
+      "schema": "AppNotification",
+      "description": "Notifications personnelles filtrées par UID destinataire."
+    },
+    "/conversations/{conversationId}": {
+      "schema": "Conversation",
+      "description": "Conversations de messagerie restreintes aux participants."
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Messages isolés de discussion privée."
+    },
+    "/announcements/{announcementId}": {
+      "schema": "BroadcastAnnouncement",
+      "description": "Historique des annonces officielles diffusées."
     }
   }
 }

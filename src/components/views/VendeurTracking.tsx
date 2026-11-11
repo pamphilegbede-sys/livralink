@@ -440,6 +440,14 @@ export const VendeurTracking: React.FC = () => {
                   }
                   originLabel={`Boutique: ${currentOrder.pickupLocation.name}`}
                   destinationLabel={`Client: ${currentOrder.clientName}`}
+                  courierPosition={
+                    (currentOrder.courierLat && currentOrder.courierLng)
+                      ? { lat: currentOrder.courierLat, lng: currentOrder.courierLng }
+                      : (currentOrder.status === 'en_cours' || currentOrder.status === 'colis_recupere')
+                      ? getLocationForCommune(currentOrder.pickupLocation?.commune || 'Cotonou - Haie Vive')
+                      : undefined
+                  }
+                  courierName={currentOrder.courier?.name || 'Livreur Partenaire'}
                   heightClass="h-[280px]"
                 />
               </div>

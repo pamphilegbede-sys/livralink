@@ -58,7 +58,6 @@ service cloud.firestore {
              data.email is string && data.email.size() >= 5 && data.email.size() <= 128 &&
              data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 128 &&
              data.phone is string && data.phone.size() <= 32 &&
-             // Anti-Privilege Escalation: Standard users can only register as 'vendeur' or 'livreur'
              (data.role in ['vendeur', 'livreur'] || (data.role == 'admin' && isAdmin())) &&
              (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 1000)) &&
              (!('storeName' in data) || (data.storeName is string && data.storeName.size() <= 128)) &&
@@ -92,32 +91,35 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // Priority Mission Blueprint Validation
+    // Notification Blueprint Validation
     // -------------------------------------------------------------------------
-    function isValidPriorityMission(data) {
-      return data.keys().hasAll(['id', 'orderId', 'storeName', 'pickupCommune', 'dropoffCommune', 'fee', 'status']) &&
-             data.id is string && data.id.size() <= 64 &&
-             data.orderId is string && data.orderId.size() <= 64 &&
-             data.storeName is string && data.storeName.size() <= 128 &&
-             data.pickupCommune is string && data.pickupCommune.size() <= 128 &&
-             data.dropoffCommune is string && data.dropoffCommune.size() <= 128 &&
-             data.fee is number && data.fee >= 0 &&
-             data.status in ['en_attente', 'assignee', 'terminee'];
+    function isValidNotification(data) {
+      return data.keys().hasAll(['id', 'recipientId', 'title', 'message']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.recipientId is string && data.recipientId.size() <= 128 &&
+             data.title is string && data.title.size() <= 256 &&
+             data.message is string && data.message.size() <= 2048;
+    }
+
+    // -------------------------------------------------------------------------
+    // KYC Dossier Blueprint Validation
+    // -------------------------------------------------------------------------
+    function isValidKYCDossier(data) {
+      return data.keys().hasAll(['id', 'userId', 'fullName', 'phone', 'status']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.fullName is string && data.fullName.size() <= 128 &&
+             data.phone is string && data.phone.size() <= 32 &&
+             data.status in ['en_attente', 'valide', 'refuse'];
     }
 
     // -------------------------------------------------------------------------
     // 1. Users Collection (/users)
     // -------------------------------------------------------------------------
     match /users/{userId} {
-      // PII Protection: Non-owners & unauthenticated users CANNOT read user documents
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
-      // Anti-Scraping: Public listing of user directory is strictly forbidden to standard users
       allow list: if isAdmin();
-
-      // Create: User must match uid and satisfy validation blueprint without self-assigning admin
       allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming());
-
-      // Update: Role immutability (role, uid, email cannot be altered by standard user)
       allow update: if isValidId(userId) && (
         isAdmin() ||
         (
@@ -128,8 +130,6 @@ service cloud.firestore {
           incoming().role == existing().role
         )
       );
-
-      // Delete: Users cannot be deleted by client SDK except by Admin
       allow delete: if isAdmin();
     }
 
@@ -137,7 +137,6 @@ service cloud.firestore {
     // 2. Deliveries Collection (/deliveries)
     // -------------------------------------------------------------------------
     match /deliveries/{deliveryId} {
-      // Get: Allowed for associated merchant, assigned courier, open deliveries ('en_attente'), or admin
       allow get: if isValidId(deliveryId) && (
         isAdmin() ||
         (isSignedIn() && resource.data.merchantId == request.auth.uid) ||
@@ -145,7 +144,6 @@ service cloud.firestore {
         (isSignedIn() && resource.data.status == 'en_attente')
       );
 
-      // List (Secure Query Enforcer): Client queries MUST evaluate against auth.uid or open status
       allow list: if isSignedIn() && (
         isAdmin() ||
         resource.data.merchantId == request.auth.uid ||
@@ -153,40 +151,33 @@ service cloud.firestore {
         resource.data.status == 'en_attente'
       );
 
-      // Create: Verified merchant or admin; initial status must be 'en_attente'
       allow create: if isValidId(deliveryId) &&
                     isSignedIn() &&
                     isValidDelivery(incoming()) &&
                     (incoming().merchantId == request.auth.uid || isAdmin()) &&
                     incoming().status == 'en_attente';
 
-      // Tiered Updates & Terminal State Locking
       allow update: if isValidId(deliveryId) &&
                     isSignedIn() &&
                     isValidDelivery(incoming()) &&
                     incoming().id == existing().id &&
                     incoming().merchantId == existing().merchantId &&
                     (
-                      // Escape Hatch: Super-Admin override
                       isAdmin() ||
                       (
-                        // Terminal State Lock: Regular users cannot modify finalized orders ('livree', 'echec')
                         !(existing().status in ['livree', 'echec']) &&
                         (
-                          // Tier 1: Merchant owner can edit while pending
                           (
                             existing().merchantId == request.auth.uid &&
                             existing().status == 'en_attente' &&
                             incoming().diff(existing()).affectedKeys().hasOnly(['clientName', 'clientPhone', 'itemValueCOD', 'deliveryFee', 'status', 'updatedAt'])
                           ) ||
-                          // Tier 2: Courier claims open delivery
                           (
                             existing().status == 'en_attente' &&
                             incoming().courierId == request.auth.uid &&
                             incoming().status in ['assignee', 'acceptee'] &&
                             incoming().diff(existing()).affectedKeys().hasOnly(['courierId', 'status', 'updatedAt'])
                           ) ||
-                          // Tier 3: Assigned courier progresses status
                           (
                             existing().courierId == request.auth.uid &&
                             incoming().courierId == existing().courierId &&
@@ -196,12 +187,79 @@ service cloud.firestore {
                       )
                     );
 
-      // Delete: Permanent purge forbidden for non-admins
       allow delete: if isAdmin();
     }
 
     // -------------------------------------------------------------------------
-    // 3. Admins Collection (/admins)
+    // 3. Isolated Notifications Collection (/notifications)
+    // -------------------------------------------------------------------------
+    match /notifications/{notificationId} {
+      // Get / List: strictly restricted to recipient UID or Admin
+      allow get, list: if isSignedIn() && (resource.data.recipientId == request.auth.uid || isAdmin());
+      // Create: Authenticated system/users can generate a targeted notification
+      allow create: if isSignedIn() && isValidId(notificationId) && isValidNotification(incoming());
+      // Update: Recipient can mark as read; Admin can update
+      allow update: if isSignedIn() && isValidId(notificationId) && (
+        isAdmin() ||
+        (
+          resource.data.recipientId == request.auth.uid &&
+          incoming().recipientId == existing().recipientId &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'read', 'updatedAt'])
+        )
+      );
+      // Delete: Recipient or Admin
+      allow delete: if isSignedIn() && isValidId(notificationId) && (resource.data.recipientId == request.auth.uid || isAdmin());
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. Isolated KYC Dossiers Collection (/kyc)
+    // -------------------------------------------------------------------------
+    match /kyc/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId) && isOwner(userId) && isValidKYCDossier(incoming()) && incoming().userId == request.auth.uid && incoming().status == 'en_attente';
+      allow update: if isValidId(userId) && (
+        isAdmin() ||
+        (
+          isOwner(userId) &&
+          isValidKYCDossier(incoming()) &&
+          existing().status == 'refuse' &&
+          incoming().userId == request.auth.uid &&
+          incoming().status == 'en_attente'
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. Isolated Messaging & Chat (/conversations)
+    // -------------------------------------------------------------------------
+    match /conversations/{conversationId} {
+      allow get, list: if isSignedIn() && (request.auth.uid in resource.data.participantIds || isAdmin());
+      allow create: if isSignedIn() && isValidId(conversationId) && request.auth.uid in incoming().participantIds;
+      allow update: if isSignedIn() && isValidId(conversationId) && (request.auth.uid in existing().participantIds || isAdmin());
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow get, list: if isSignedIn() && (
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds || isAdmin()
+        );
+        allow create: if isSignedIn() && isValidId(messageId) &&
+                      request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds &&
+                      incoming().senderId == request.auth.uid;
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. Admin Broadcast Announcements (/announcements)
+    // -------------------------------------------------------------------------
+    match /announcements/{announcementId} {
+      allow read, write: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // 7. Admins Collection (/admins)
     // -------------------------------------------------------------------------
     match /admins/{adminId} {
       allow read: if isAdmin();
@@ -209,17 +267,17 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // 4. Priority Missions Collection (/priority_missions)
+    // 8. Priority Missions Collection (/priority_missions)
     // -------------------------------------------------------------------------
     match /priority_missions/{missionId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(missionId) && isValidPriorityMission(incoming());
-      allow update: if isSignedIn() && isValidId(missionId) && isValidPriorityMission(incoming());
+      allow create: if isSignedIn() && isValidId(missionId);
+      allow update: if isSignedIn() && isValidId(missionId);
       allow delete: if isAdmin();
     }
 
     // -------------------------------------------------------------------------
-    // 5. Connection Test Probe
+    // 9. Connection Test Probe
     // -------------------------------------------------------------------------
     match /test/{testId} {
       allow read: if true;

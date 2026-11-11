@@ -4,7 +4,7 @@ import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
 
 export const LandingPage: React.FC = () => {
-  const { setCurrentView, setCurrentRole, viewHistory } = useApp();
+  const { setCurrentView, setCurrentRole, viewHistory, userProfile, firebaseUser } = useApp();
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans'] selection:bg-blue-600 selection:text-white">
@@ -104,9 +104,13 @@ export const LandingPage: React.FC = () => {
               <button
                 onClick={() => {
                   setCurrentRole('vendeur');
-                  setCurrentView('vendeur_dashboard');
+                  if (userProfile || firebaseUser) {
+                    setCurrentView('vendeur_dashboard');
+                  } else {
+                    setCurrentView('login_vendeur');
+                  }
                 }}
-                className="py-3.5 px-6 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-blue-600/25 active:scale-95 transition-all flex items-center justify-center gap-2"
+                className="py-3.5 px-6 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-blue-600/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 <span className="material-symbols-outlined text-lg">storefront</span>
                 <span>Espace Vendeur</span>
@@ -114,9 +118,13 @@ export const LandingPage: React.FC = () => {
               <button
                 onClick={() => {
                   setCurrentRole('livreur');
-                  setCurrentView('livreur_dashboard');
+                  if (userProfile || firebaseUser) {
+                    setCurrentView('livreur_dashboard');
+                  } else {
+                    setCurrentView('login_livreur');
+                  }
                 }}
-                className="py-3.5 px-6 bg-white hover:bg-slate-50 text-slate-800 border-2 border-slate-300 rounded-xl font-bold text-sm shadow-xs active:scale-95 transition-all flex items-center justify-center gap-2"
+                className="py-3.5 px-6 bg-white hover:bg-slate-50 text-slate-800 border-2 border-slate-300 rounded-xl font-bold text-sm shadow-xs active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 <span className="material-symbols-outlined text-lg text-emerald-600">two_wheeler</span>
                 <span>Espace Livreur</span>

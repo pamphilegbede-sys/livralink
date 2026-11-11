@@ -81,6 +81,8 @@ const MainAppRouter: React.FC = () => {
     return (
       <React.Suspense fallback={<FullViewSkeleton label="Chargement instantané..." />}>
         {(() => {
+          const isAuthenticated = Boolean(firebaseUser || userProfile);
+
           switch (currentView) {
             case 'landing':
               return <LandingPage />;
@@ -91,27 +93,27 @@ const MainAppRouter: React.FC = () => {
             case 'register':
               return <RegisterPage />;
             case 'vendeur_dashboard':
-              return <VendeurDashboard />;
+              return isAuthenticated ? <VendeurDashboard /> : <LoginVendeurPage />;
             case 'vendeur_new_delivery':
-              return <VendeurNewDelivery />;
+              return isAuthenticated ? <VendeurNewDelivery /> : <LoginVendeurPage />;
             case 'vendeur_tracking':
-              return <VendeurTracking />;
+              return isAuthenticated ? <VendeurTracking /> : <LoginVendeurPage />;
             case 'vendeur_reports':
-              return <VendeurReports />;
+              return isAuthenticated ? <VendeurReports /> : <LoginVendeurPage />;
             case 'vendeur_settings':
-              return <VendeurSettings />;
+              return isAuthenticated ? <VendeurSettings /> : <LoginVendeurPage />;
             case 'vendeur_chat':
-              return <ChatView />;
+              return isAuthenticated ? <ChatView /> : <LoginVendeurPage />;
             case 'livreur_dashboard':
-              return <LivreurDashboard />;
+              return isAuthenticated ? <LivreurDashboard /> : <LoginLivreurPage />;
             case 'livreur_missions':
-              return <LivreurMissions />;
+              return isAuthenticated ? <LivreurMissions /> : <LoginLivreurPage />;
             case 'livreur_wallet':
-              return <LivreurWallet />;
+              return isAuthenticated ? <LivreurWallet /> : <LoginLivreurPage />;
             case 'livreur_settings':
-              return <LivreurSettings />;
+              return isAuthenticated ? <LivreurSettings /> : <LoginLivreurPage />;
             case 'livreur_chat':
-              return <ChatView />;
+              return isAuthenticated ? <ChatView /> : <LoginLivreurPage />;
             case 'admin_console':
               return <AdminConsole />;
             default:

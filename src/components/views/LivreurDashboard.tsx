@@ -26,6 +26,7 @@ export const LivreurDashboard: React.FC = () => {
     acceptDelivery,
     refuseDelivery,
     updateDeliveryStatus,
+    updateDeliveryDetails,
     createDelivery,
     setCurrentView,
     featureFlags,
@@ -104,6 +105,32 @@ export const LivreurDashboard: React.FC = () => {
     }
     return d.courier?.id === selectedCourier?.id || (selectedCourier && d.courier?.name === selectedCourier.name);
   });
+
+  // Transmission automatique de la position GPS du livreur en direct pendant une course active
+  useEffect(() => {
+    if (!activeOrder || !courierSettings.isAvailable) return;
+    if (typeof window === 'undefined' || !navigator.geolocation) return;
+
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const lat = Math.round(pos.coords.latitude * 10000) / 10000;
+        const lng = Math.round(pos.coords.longitude * 10000) / 10000;
+        updateDeliveryDetails(activeOrder.id, {
+          courierLat: lat,
+          courierLng: lng,
+          courierLocationUpdatedAt: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        });
+      },
+      (err) => {
+        console.warn('Suivi GPS livreur en arrière-plan:', err.message);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+    );
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [activeOrder?.id, courierSettings.isAvailable, updateDeliveryDetails]);
 
   // GPS coordinates for map
   const activeOriginCoords = activeOrder?.pickupLocation?.coordinates

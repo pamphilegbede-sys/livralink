@@ -503,7 +503,7 @@ export const ChatView: React.FC = () => {
                       </div>
                     ) : (
                       activeMessages.map((msg) => {
-                        const isMe = msg.senderId === currentUserId || msg.senderRole === currentRole;
+                        const isMe = msg.senderId === currentUserId || (userProfile?.uid && msg.senderId === userProfile.uid);
                         return (
                           <div
                             key={msg.id}

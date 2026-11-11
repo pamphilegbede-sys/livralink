@@ -69,6 +69,7 @@ export type AdminTab =
   | 'overview'
   | 'users'
   | 'kyc'
+  | 'communications'
   | 'couriers'
   | 'merchants'
   | 'deliveries'
@@ -203,6 +204,17 @@ interface AppContextType {
   // Admin Tabs State
   adminActiveTab: AdminTab;
   setAdminActiveTab: (tab: AdminTab) => void;
+  sendAdminBroadcast: (params: {
+    targetCategory?: 'all' | 'vendeurs' | 'livreurs' | 'individual' | 'tous' | 'admins' | 'individuel';
+    targetUserEmail?: string;
+    title: string;
+    message: string;
+    audience?: 'tous' | 'vendeurs' | 'livreurs' | 'admins' | 'individuel' | 'all' | 'individual';
+    channel?: 'notification' | 'email' | 'both' | 'in_app';
+    targetUid?: string;
+    targetEmail?: string;
+    sendEmailCopy?: boolean;
+  }) => Promise<{ success: boolean; recipientCount?: number; message?: string }>;
   
   // Admin Google Security & Whitelist
   authorizedAdminEmails: string[];
@@ -2929,6 +2941,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Course ignorée.', 'info');
   };
 
+  const sendAdminBroadcast = async (params: {
+    targetCategory?: 'all' | 'vendeurs' | 'livreurs' | 'individual' | 'tous' | 'admins' | 'individuel';
+    targetUserEmail?: string;
+    title: string;
+    message: string;
+    audience?: 'tous' | 'vendeurs' | 'livreurs' | 'admins' | 'individuel' | 'all' | 'individual';
+    channel?: 'notification' | 'email' | 'both' | 'in_app';
+    targetUid?: string;
+    targetEmail?: string;
+    sendEmailCopy?: boolean;
+  }) => {
+    try {
+      const payload = {
+        targetCategory: params.targetCategory || params.audience || 'all',
+        targetUserEmail: params.targetUserEmail || params.targetEmail,
+        title: params.title,
+        message: params.message,
+        sendEmailCopy: params.sendEmailCopy ?? (params.channel === 'email' || params.channel === 'both'),
+      };
+      const response = await fetch('/api/admin/broadcast', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-email': userProfile?.email || 'Pamphile.gbede@gmail.com',
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        showToast(data.message || 'Diffusion enregistrée avec succès !', 'success');
+        return { success: true, recipientCount: data.recipientCount, message: data.message };
+      } else {
+        showToast(data.message || 'Erreur lors de la diffusion.', 'error');
+        return { success: false, message: data.message };
+      }
+    } catch (err: any) {
+      showToast('Impossible de contacter le serveur de diffusion.', 'error');
+      return { success: false, message: err?.message || 'Erreur réseau.' };
+    }
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -3016,6 +3069,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         closeTestModal,
         adminActiveTab,
         setAdminActiveTab,
+        sendAdminBroadcast,
         authorizedAdminEmails,
         isEmailAuthorizedAdmin,
         addAuthorizedAdminEmail,
