@@ -31,7 +31,12 @@ import {
   INITIAL_NOTIFICATIONS
 } from '../data/mockData';
 import { calculateDeliveryPrice, calculateDistanceKm, DetectedUserLocation } from '../config/maps';
-import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, query, where, runTransaction } from 'firebase/firestore';
+import {
+  uploadPODPhoto,
+  uploadPODSignature,
+  uploadKYCDocument,
+} from '../firebase/storageService';
 import { playPriorityMissionChime } from '../utils/audioChime';
 import { 
   triggerRealDeviceAlert, 
@@ -130,7 +135,7 @@ interface AppContextType {
   
   // Interactive Actions
   createDelivery: (newOrder: Partial<DeliveryOrder>) => DeliveryOrder;
-  acceptDelivery: (orderId: string, customCourier?: Courier) => void;
+  acceptDelivery: (orderId: string, customCourier?: Courier) => void | Promise<void>;
   refuseDelivery: (orderId: string, reason?: string) => void;
   updateDeliveryStatus: (orderId: string, newStatus: DeliveryStatus, note?: string, callerRoleOverride?: UserRole) => { success: boolean; reason?: string };
   assignCourierToDelivery: (orderId: string, courierId: string) => void;
@@ -479,6 +484,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Trigger audio chime, vibration haptic & real OS/browser notification
     triggerRealDeviceAlert(notif.title, notif.message, notif.type, notif.orderId);
+
+    // Persist to Cloud Firestore if user is authenticated
+    if (auth.currentUser) {
+      const cleanNotifId = newNotif.id.replace(/[^a-zA-Z0-9_-]/g, '');
+      try {
+        setDoc(doc(db, 'notifications', cleanNotifId), {
+          id: newNotif.id,
+          senderId: auth.currentUser.uid,
+          targetUserId: notif.roleTarget || 'all',
+          title: notif.title,
+          message: notif.message,
+          type: notif.type,
+          orderId: notif.orderId || null,
+          actionView: notif.actionView || null,
+          read: false,
+          isRead: false,
+          createdAt: Date.now(),
+          timestamp: newNotif.timestamp,
+        }).catch((err) => console.warn('Erreur Firestore notification setDoc:', err));
+      } catch (err) {
+        console.warn('Erreur Firestore addNotification:', err);
+      }
+    }
   };
 
   const markNotificationAsRead = (id: string) => {
@@ -631,6 +659,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     showToast('Message envoyé !', 'success');
+
+    // Persist to Cloud Firestore if user is authenticated
+    if (auth.currentUser) {
+      const convId = params.orderId
+        ? `order_${params.orderId.replace(/[^a-zA-Z0-9_-]/g, '')}`
+        : `direct_${senderId.replace(/[^a-zA-Z0-9_-]/g, '')}_${params.recipientId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+      const msgCleanId = newMsg.id.replace(/[^a-zA-Z0-9_-]/g, '');
+      try {
+        setDoc(doc(db, 'conversations', convId, 'messages', msgCleanId), {
+          id: newMsg.id,
+          senderId: auth.currentUser.uid,
+          senderName: newMsg.senderName,
+          senderRole: newMsg.senderRole,
+          recipientId: newMsg.recipientId,
+          recipientName: newMsg.recipientName,
+          recipientRole: newMsg.recipientRole,
+          text: newMsg.text,
+          orderId: newMsg.orderId || null,
+          createdAt: Date.now(),
+          timestamp: newMsg.timestamp,
+          read: false,
+        }).catch((err) => console.warn('Erreur Firestore message chat:', err));
+      } catch (err) {
+        console.warn('Erreur Firestore sendChatMessage:', err);
+      }
+    }
   };
 
   const markChatAsRead = React.useCallback((conversationKey: string) => {
@@ -1268,7 +1322,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Contextual real-time Firestore listener for priority missions (strictly for logged-in couriers)
   useEffect(() => {
     try {
-      const unsubscribe = onSnapshot(collection(db, 'priority_missions'), (snapshot) => {
+      const activeMissionsQuery = query(
+        collection(db, 'priority_missions'),
+        where('status', '==', 'en_attente')
+      );
+
+      const unsubscribe = onSnapshot(activeMissionsQuery, (snapshot) => {
         snapshot.docChanges().forEach((change) => {
           if (change.type === 'added' || change.type === 'modified') {
             const data = change.doc.data();
@@ -1332,6 +1391,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const cod = Math.random() > 0.4 ? 12000 + Math.floor(Math.random() * 15) * 1000 : 0;
     const storeNames = ['Mode & Élégance Cotonou', 'TechZone Bénin', 'Parfumerie Divine', 'Pharmacie Haie Vive'];
     const store = storeNames[Math.floor(Math.random() * storeNames.length)];
+    const currentMerchantUid = firebaseUser?.uid || userProfile?.uid || 'simulated_admin';
 
     // Create in local deliveries state
     createDelivery({
@@ -1357,6 +1417,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await setDoc(doc(db, 'priority_missions', cleanDocId), {
         id: simOrderId,
         orderId: simOrderId,
+        merchantId: currentMerchantUid,
         storeName: store,
         pickupCommune: pickup,
         dropoffCommune: dropoff,
@@ -1522,13 +1583,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       },
     });
 
+    // Sync to Firestore collections (deliveries & priority_missions)
+    const authenticatedMerchantUid = auth.currentUser?.uid || firebaseUser?.uid;
+    const cleanDocId = newId.replace(/[^a-zA-Z0-9_-]/g, '');
+
+    if (authenticatedMerchantUid) {
+      try {
+        setDoc(doc(db, 'deliveries', cleanDocId), {
+          id: newId,
+          orderId: newId,
+          merchantId: authenticatedMerchantUid,
+          merchantEmail: newOrder.merchantEmail || userProfile?.email || '',
+          merchantStoreName: newOrder.merchantStoreName || newOrder.pickupLocation.name || 'Boutique Vendeur',
+          clientName: newOrder.clientName,
+          clientPhone: newOrder.clientPhone,
+          clientNote: newOrder.clientNote || '',
+          channel: newOrder.channel || 'WhatsApp',
+          pickupLocation: newOrder.pickupLocation,
+          dropoffLocation: newOrder.dropoffLocation,
+          itemDescription: newOrder.itemDescription,
+          itemWeightKg: newOrder.itemWeightKg,
+          itemFormat: newOrder.itemFormat,
+          isFragile: newOrder.isFragile,
+          itemValueCOD: newOrder.itemValueCOD,
+          deliveryFee: newOrder.deliveryFee,
+          totalCustomerPayable: newOrder.totalCustomerPayable,
+          status: initialStatus,
+          statusNote: newOrder.statusNote,
+          createdAt: Date.now(),
+          otpCode: newOrder.otpCode,
+          courierId: courierObj?.id || null,
+          courierName: courierObj?.name || null,
+        }).catch((err: any) => {
+          console.warn('Erreur synchro deliveries Firestore:', err?.message || err);
+        });
+      } catch (err: any) {
+        console.warn('Erreur synchro deliveries Firestore:', err);
+      }
+    }
+
     // Sync to Firestore priority_missions collection so couriers receive real-time notifications
     if (!courierObj || initialStatus === 'en_attente') {
-      const cleanDocId = newId.replace(/[^a-zA-Z0-9_-]/g, '');
+      if (!authenticatedMerchantUid) {
+        showToast('Session Firebase Auth non valide. Veuillez vous connecter pour créer une livraison.', 'error');
+        return newOrder;
+      }
+
       try {
         setDoc(doc(db, 'priority_missions', cleanDocId), {
           id: newId,
           orderId: newId,
+          merchantId: authenticatedMerchantUid,
           storeName: newOrder.merchantStoreName || newOrder.pickupLocation.name || 'Boutique Vendeur',
           pickupCommune: newOrder.pickupLocation.commune || 'Cotonou',
           dropoffCommune: newOrder.dropoffLocation.commune || 'Cotonou',
@@ -1538,9 +1643,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           status: 'en_attente',
           createdAt: Date.now(),
           urgency: 'high'
-        }).catch(err => console.warn('Erreur Firestore priority_missions:', err));
-      } catch (err) {
-        console.warn('Erreur synchro priority_missions:', err);
+        }).catch((err: any) => {
+          console.error('Erreur synchro priority_missions:', err?.message || err);
+          showToast('Erreur lors de la publication de la livraison sur le réseau.', 'error');
+        });
+      } catch (err: any) {
+        console.error('Erreur synchro priority_missions:', err?.message || err);
       }
     }
 
@@ -1574,7 +1682,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const acceptDelivery = (orderId: string, customCourier?: Courier) => {
+  const acceptDelivery = async (orderId: string, customCourier?: Courier) => {
     // 0. Strict authentication & courier role check: only logged-in couriers can accept missions
     const isCourierLoggedIn =
       (currentRole === 'livreur' || userProfile?.role === 'livreur') &&
@@ -1767,14 +1875,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setPriorityMissionAlert(null);
     }
 
-    // Update Firestore priority_missions doc
+    // Execute atomic transaction on Firestore priority_missions
+    const authenticatedCourierUid = auth.currentUser?.uid || firebaseUser?.uid;
+    if (!authenticatedCourierUid) {
+      showToast('Session Firebase Auth non valide. Veuillez vous connecter pour accepter cette course.', 'error');
+      return;
+    }
+
+    const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
+    const missionDocRef = doc(db, 'priority_missions', cleanDocId);
+
     try {
-      const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
-      setDoc(doc(db, 'priority_missions', cleanDocId), { 
-        status: 'assignee', 
-        courierName: courier.name,
-        assignedAt: Date.now()
-      }, { merge: true }).catch(() => {});
+      await runTransaction(db, async (transaction) => {
+        const sfDoc = await transaction.get(missionDocRef);
+        if (sfDoc.exists()) {
+          const missionData = sfDoc.data();
+          if (missionData.status !== 'en_attente') {
+            throw new Error('MISSION_ALREADY_ASSIGNED');
+          }
+          transaction.update(missionDocRef, {
+            status: 'assignee',
+            courierId: authenticatedCourierUid,
+            courierName: courier.name || userProfile?.fullName || 'Livreur Partenaire',
+            assignedAt: Date.now(),
+            updatedAt: new Date().toISOString()
+          });
+        } else {
+          // If priority mission doc does not exist, reject assignment
+          throw new Error('MISSION_NOT_FOUND');
+        }
+      });
+    } catch (err: any) {
+      console.error('Erreur transaction acceptation mission:', err?.message || err);
+      if (err?.message === 'MISSION_ALREADY_ASSIGNED' || err?.message?.includes('ALREADY_ASSIGNED')) {
+        showToast("⚡ Cette mission vient d'être prise par un autre livreur.", 'error');
+        return;
+      }
+      showToast('Erreur lors de la réservation de la mission sur le serveur.', 'error');
+      return;
+    }
+
+    // Sync assignment to deliveries collection in Firestore
+    try {
+      setDoc(doc(db, 'deliveries', cleanDocId), {
+        status: 'assignee',
+        courierId: authenticatedCourierUid,
+        courierName: courier.name || userProfile?.fullName || 'Livreur Partenaire',
+        assignedAt: Date.now(),
+        updatedAt: Date.now()
+      }, { merge: true }).catch((err: any) => console.warn('Erreur synchro deliveries assignee:', err));
     } catch {}
 
     addAuditLog('system', `Course ${orderId} acceptée`, `Mission prise en charge par le coursier ${courier.name}`);
@@ -1900,6 +2049,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           otpVerified: newStatus === 'livree',
         },
       });
+    }
+
+    // Sync status update to Firestore collections (deliveries & priority_missions)
+    const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
+    try {
+      setDoc(doc(db, 'deliveries', cleanDocId), {
+        status: newStatus,
+        statusNote: note || `Statut mis à jour : ${newStatus}`,
+        updatedAt: Date.now(),
+      }, { merge: true }).catch((err: any) => console.warn('Erreur update deliveries status Firestore:', err));
+
+      if (newStatus === 'livree' || newStatus === 'echec') {
+        setDoc(doc(db, 'priority_missions', cleanDocId), {
+          status: newStatus === 'livree' ? 'terminee' : 'echec',
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch((err: any) => console.warn('Erreur priority_missions update status:', err));
+      }
+    } catch (err: any) {
+      console.warn('Erreur Firestore updateDeliveryStatus:', err);
     }
 
     showToast(`Statut de la course ${orderId} mis à jour : ${newStatus}`, 'info');
@@ -2050,6 +2218,76 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setIsPODModalOpen(false);
+
+    // Asynchronously upload POD assets (photo & signature) to Firebase Storage and update Firestore
+    const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
+    if (isTriFactorObject) {
+      (async () => {
+        let finalPhotoUrl = methodOrData.photoUrl;
+        let finalSigUrl = methodOrData.signatureDataUrl;
+
+        if (methodOrData.photoUrl && methodOrData.photoUrl.startsWith('data:')) {
+          try {
+            finalPhotoUrl = await uploadPODPhoto(cleanDocId, methodOrData.photoUrl);
+          } catch (err) {
+            console.warn('Fallback POD photo Storage upload:', err);
+          }
+        }
+
+        if (methodOrData.signatureDataUrl && methodOrData.signatureDataUrl.startsWith('data:')) {
+          try {
+            finalSigUrl = await uploadPODSignature(cleanDocId, methodOrData.signatureDataUrl);
+          } catch (err) {
+            console.warn('Fallback POD signature Storage upload:', err);
+          }
+        }
+
+        // Update in-memory state with real storage URLs
+        setDeliveries((prev) =>
+          prev.map((ord) => {
+            if (ord.id === orderId && ord.podData) {
+              return {
+                ...ord,
+                podData: {
+                  ...ord.podData,
+                  photoUrl: finalPhotoUrl,
+                  signatureDataUrl: finalSigUrl,
+                },
+              };
+            }
+            return ord;
+          })
+        );
+
+        // Persist completed POD proof into Cloud Firestore
+        try {
+          await setDoc(doc(db, 'deliveries', cleanDocId), {
+            status: 'livree',
+            statusNote,
+            podData: {
+              type: 'complete_tri_factor',
+              otpCode: methodOrData.otpCode,
+              photoUrl: finalPhotoUrl,
+              signatureDataUrl: finalSigUrl,
+              signedByName: methodOrData.signedByName,
+              validatedAt: nowTime,
+              validatedTimestamp: Date.now(),
+            },
+            deliveredAt: Date.now(),
+            updatedAt: Date.now(),
+          }, { merge: true });
+
+          await setDoc(doc(db, 'priority_missions', cleanDocId), {
+            status: 'terminee',
+            completedAt: Date.now(),
+            updatedAt: new Date().toISOString(),
+          }, { merge: true });
+        } catch (fsErr) {
+          console.warn('Erreur Firestore POD setDoc:', fsErr);
+        }
+      })();
+    }
+
     addAuditLog(
       'system',
       `Preuve de livraison certifiée ${orderId}`,
@@ -2160,6 +2398,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       idNumber: newReq.idNumber,
     }).catch(err => console.warn('Notice email dépôt KYC:', err));
 
+    // Synchronisation Firebase Storage (document CNI/CIP) et Firestore (dossier KYC)
+    const courierDocId = newReq.courierId || auth.currentUser?.uid || 'temp_user';
+    const cleanCourierId = courierDocId.replace(/[^a-zA-Z0-9_-]/g, '');
+
+    (async () => {
+      let docUrl = newReq.documentPhotoUrl;
+      if (docUrl && (docUrl.startsWith('data:') || docUrl.startsWith('blob:'))) {
+        try {
+          docUrl = await uploadKYCDocument(cleanCourierId, 'cni', docUrl);
+        } catch (err) {
+          console.warn('Fallback upload document KYC vers Firebase Storage:', err);
+        }
+      }
+
+      try {
+        await setDoc(doc(db, 'kyc', cleanCourierId), {
+          courierId: cleanCourierId,
+          fullName: newReq.fullName,
+          phone: newReq.phone,
+          role: 'coursier',
+          vehicleType: newReq.vehicleType,
+          vehiclePlate: newReq.vehiclePlate,
+          idType: newReq.idType,
+          idNumber: newReq.idNumber,
+          ifuNumber: newReq.ifuNumber || null,
+          npi: newReq.npi || null,
+          operatingZone: newReq.operatingZone,
+          documentPhotoUrl: docUrl || null,
+          status: 'en_attente',
+          isApproved: false,
+          verified: false,
+          submittedAt: Date.now(),
+          createdAt: Date.now(),
+        }, { merge: true });
+      } catch (fsErr) {
+        console.warn('Erreur enregistrement KYC dans Firestore:', fsErr);
+      }
+    })();
+
     showToast(`Dossier KYC transmis avec succès ! En attente de validation administrative.`, 'success');
     return newReq;
   };
@@ -2213,6 +2490,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCourierSettings(prev => ({ ...prev, isKycVerified: true, kycStatus: 'valide' }));
     }
 
+    // Persist KYC validation to Firestore
+    if (approvedCourierId) {
+      const cleanId = approvedCourierId.replace(/[^a-zA-Z0-9_-]/g, '');
+      try {
+        setDoc(doc(db, 'kyc', cleanId), {
+          status: 'valide',
+          isApproved: true,
+          verified: true,
+          reviewedAt: Date.now(),
+          reviewedBy: auth.currentUser?.uid || 'admin'
+        }, { merge: true }).catch(err => console.warn('Erreur Firestore approveKYC:', err));
+      } catch (err) {
+        console.warn('Erreur Firestore approveKYC:', err);
+      }
+    }
+
     addAuditLog('kyc', 'Validation KYC', `Dossier ${requestId} approuvé par l'administrateur (${approvedCourierName})`);
     addNotification({
       type: 'kyc',
@@ -2261,6 +2554,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return c;
       })
     );
+
+    // Persist KYC rejection to Firestore
+    if (targetCourierId) {
+      const cleanId = targetCourierId.replace(/[^a-zA-Z0-9_-]/g, '');
+      try {
+        setDoc(doc(db, 'kyc', cleanId), {
+          status: 'refuse',
+          isApproved: false,
+          verified: false,
+          rejectionReason,
+          reviewedAt: Date.now(),
+          reviewedBy: auth.currentUser?.uid || 'admin'
+        }, { merge: true }).catch(err => console.warn('Erreur Firestore rejectKYC:', err));
+      } catch (err) {
+        console.warn('Erreur Firestore rejectKYC:', err);
+      }
+    }
 
     addAuditLog('kyc', 'Rejet KYC', `Dossier ${requestId} rejeté : ${rejectionReason}`);
     addNotification({

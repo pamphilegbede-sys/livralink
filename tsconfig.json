@@ -23,5 +23,6 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "exclude": ["firestore.rules.test.ts", "firestore.rules.test.js"]
 }

@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
 import { initializeFirestore, getFirestore, Firestore, setLogLevel, doc, getDocFromServer } from 'firebase/firestore';
+import { getStorage, FirebaseStorage } from 'firebase/storage';
 import appletConfig from '../../firebase-applet-config.json';
 
 // Silence non-critical network / offline timeout warnings in preview environments
@@ -55,6 +56,7 @@ try {
 }
 
 export const db: Firestore = firestoreDb;
+export const storage: FirebaseStorage = getStorage(app);
 
 // Validate Connection to Firestore asynchronously without blocking app render
 async function testFirestoreConnection() {

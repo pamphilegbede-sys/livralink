@@ -120,6 +120,13 @@ export function useVersionUpdate() {
   // Apply update cleanly
   const applyUpdate = useCallback(async () => {
     setIsUpdating(true);
+    const lastAutoUpdate = sessionStorage.getItem('livralink_auto_update_ts');
+    if (lastAutoUpdate && Date.now() - parseInt(lastAutoUpdate, 10) < 30000) {
+      console.log('[Version Manager] Auto-update debounce active to prevent reload loop.');
+      setIsUpdating(false);
+      return;
+    }
+    sessionStorage.setItem('livralink_auto_update_ts', String(Date.now()));
     try {
       await applySWUpdate();
     } catch (e) {
@@ -127,6 +134,14 @@ export function useVersionUpdate() {
       window.location.reload();
     }
   }, []);
+
+  // Automatically apply update when detected without prompting user
+  useEffect(() => {
+    if (isUpdateAvailable && !isDismissed) {
+      console.log('[Version Manager] Application automatique de la nouvelle version en arrière-plan...');
+      applyUpdate();
+    }
+  }, [isUpdateAvailable, isDismissed, applyUpdate]);
 
   // Dismiss update temporarily (e.g. while courier is actively finalizing a mission)
   const dismissUpdate = useCallback(() => {

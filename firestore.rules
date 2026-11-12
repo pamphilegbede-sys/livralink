@@ -40,6 +40,27 @@ service cloud.firestore {
       );
     }
 
+    function isVendeur() {
+      return isSignedIn() &&
+             request.auth.token.email_verified == true &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'vendeur';
+    }
+
+    function isLivreur() {
+      return isSignedIn() &&
+             request.auth.token.email_verified == true &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'livreur';
+    }
+
+    function isClient() {
+      return isSignedIn() &&
+             request.auth.token.email_verified == true &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'client';
+    }
+
     // -------------------------------------------------------------------------
     // User Blueprint Validation (Anti-Privilege Escalation & Schema Hardening)
     // -------------------------------------------------------------------------
@@ -58,7 +79,9 @@ service cloud.firestore {
              data.email is string && data.email.size() >= 5 && data.email.size() <= 128 &&
              data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 128 &&
              data.phone is string && data.phone.size() <= 32 &&
-             (data.role in ['vendeur', 'livreur'] || (data.role == 'admin' && isAdmin())) &&
+             (data.role in ['client', 'vendeur', 'livreur'] || (data.role == 'admin' && isAdmin())) &&
+             (!('isKycVerified' in data) || data.isKycVerified == false || isAdmin()) &&
+             (!('kycStatus' in data) || data.kycStatus in ['non_soumis', 'en_attente'] || isAdmin()) &&
              (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 1000)) &&
              (!('storeName' in data) || (data.storeName is string && data.storeName.size() <= 128)) &&
              (!('storeCommune' in data) || (data.storeCommune is string && data.storeCommune.size() <= 128)) &&
@@ -70,8 +93,6 @@ service cloud.firestore {
              (!('locationLat' in data) || (data.locationLat is number)) &&
              (!('locationLng' in data) || (data.locationLng is number)) &&
              (!('locationUpdatedAt' in data) || (data.locationUpdatedAt is string && data.locationUpdatedAt.size() <= 64)) &&
-             (!('isKycVerified' in data) || (data.isKycVerified is bool)) &&
-             (!('kycStatus' in data) || (data.kycStatus in ['non_soumis', 'en_attente', 'valide', 'refuse'])) &&
              (!('mfaEnabled' in data) || (data.mfaEnabled is bool));
     }
 
@@ -94,11 +115,13 @@ service cloud.firestore {
     // Notification Blueprint Validation
     // -------------------------------------------------------------------------
     function isValidNotification(data) {
-      return data.keys().hasAll(['id', 'recipientId', 'title', 'message']) &&
+      return data.keys().hasAll(['id', 'recipientId', 'senderId', 'title', 'message']) &&
              data.id is string && data.id.size() <= 128 &&
              data.recipientId is string && data.recipientId.size() <= 128 &&
+             data.senderId is string && (data.senderId == request.auth.uid || isAdmin()) &&
              data.title is string && data.title.size() <= 256 &&
-             data.message is string && data.message.size() <= 2048;
+             data.message is string && data.message.size() <= 2048 &&
+             (!('type' in data) || !(data.type in ['system', 'admin', 'broadcast']) || isAdmin());
     }
 
     // -------------------------------------------------------------------------
@@ -127,7 +150,9 @@ service cloud.firestore {
           isValidUser(incoming()) &&
           incoming().uid == existing().uid &&
           incoming().email == existing().email &&
-          incoming().role == existing().role
+          incoming().role == existing().role &&
+          (!('isKycVerified' in incoming()) || incoming().isKycVerified == existing().isKycVerified) &&
+          (!('kycStatus' in incoming()) || incoming().kycStatus == existing().kycStatus || (existing().kycStatus == 'refuse' && incoming().kycStatus == 'en_attente'))
         )
       );
       allow delete: if isAdmin();
@@ -137,18 +162,25 @@ service cloud.firestore {
     // 2. Deliveries Collection (/deliveries)
     // -------------------------------------------------------------------------
     match /deliveries/{deliveryId} {
+      // Client PII protection:
+      // - Admins have full supervision
+      // - Merchant reads their own deliveries
+      // - Assigned courier reads their assigned deliveries
+      // - Client reads their own deliveries
+      // - Unassigned deliveries (en_attente) can ONLY be accessed by verified couriers (isLivreur()), never random users
       allow get: if isValidId(deliveryId) && (
         isAdmin() ||
         (isSignedIn() && resource.data.merchantId == request.auth.uid) ||
         (isSignedIn() && resource.data.courierId == request.auth.uid) ||
-        (isSignedIn() && resource.data.status == 'en_attente')
+        (isSignedIn() && 'clientId' in resource.data && resource.data.clientId == request.auth.uid) ||
+        (isLivreur() && resource.data.status == 'en_attente')
       );
 
       allow list: if isSignedIn() && (
         isAdmin() ||
-        resource.data.merchantId == request.auth.uid ||
-        resource.data.courierId == request.auth.uid ||
-        resource.data.status == 'en_attente'
+        (isVendeur() && resource.data.merchantId == request.auth.uid) ||
+        (isLivreur() && (resource.data.courierId == request.auth.uid || resource.data.status == 'en_attente')) ||
+        (isClient() && resource.data.clientId == request.auth.uid)
       );
 
       allow create: if isValidId(deliveryId) &&
@@ -237,7 +269,13 @@ service cloud.firestore {
     match /conversations/{conversationId} {
       allow get, list: if isSignedIn() && (request.auth.uid in resource.data.participantIds || isAdmin());
       allow create: if isSignedIn() && isValidId(conversationId) && request.auth.uid in incoming().participantIds;
-      allow update: if isSignedIn() && isValidId(conversationId) && (request.auth.uid in existing().participantIds || isAdmin());
+      allow update: if isSignedIn() && isValidId(conversationId) && (
+        isAdmin() ||
+        (
+          request.auth.uid in existing().participantIds &&
+          incoming().participantIds == existing().participantIds
+        )
+      );
       allow delete: if isAdmin();
 
       match /messages/{messageId} {
@@ -246,6 +284,9 @@ service cloud.firestore {
         );
         allow create: if isSignedIn() && isValidId(messageId) &&
                       request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds &&
+                      incoming().keys().hasAll(['id', 'senderId', 'text']) &&
+                      incoming().id is string && incoming().id.size() <= 128 &&
+                      incoming().text is string && incoming().text.size() <= 4000 &&
                       incoming().senderId == request.auth.uid;
         allow update, delete: if isAdmin();
       }
@@ -256,6 +297,29 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     match /announcements/{announcementId} {
       allow read, write: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // Helper : Priority Mission Blueprint Validation
+    // -------------------------------------------------------------------------
+    function isValidPriorityMission(data) {
+      return data.keys().hasAll(['id', 'orderId', 'status', 'fee', 'merchantId']) &&
+             data.id is string && data.id.size() >= 1 && data.id.size() <= 64 &&
+             data.orderId is string && data.orderId.size() >= 1 && data.orderId.size() <= 64 &&
+             data.merchantId is string && data.merchantId.size() >= 1 && data.merchantId.size() <= 128 &&
+             data.status in ['en_attente', 'assignee', 'acceptee', 'colis_recupere', 'en_cours', 'livree', 'echec'] &&
+             data.fee is number && data.fee >= 0 &&
+             (!('cod' in data) || data.cod is number) &&
+             (!('courierId' in data) || (data.courierId is string && data.courierId.size() <= 128)) &&
+             (!('courierName' in data) || (data.courierName is string && data.courierName.size() <= 128));
+    }
+
+    // Helper : Delivery Status Transitions Validation
+    function isValidStatusTransition(oldStatus, newStatus) {
+      return (oldStatus == 'en_attente' && newStatus in ['assignee', 'acceptee']) ||
+             (oldStatus in ['assignee', 'acceptee'] && newStatus in ['colis_recupere', 'en_cours']) ||
+             (oldStatus == 'colis_recupere' && newStatus in ['en_cours', 'livree', 'echec']) ||
+             (oldStatus == 'en_cours' && newStatus in ['livree', 'echec']);
     }
 
     // -------------------------------------------------------------------------
@@ -270,9 +334,73 @@ service cloud.firestore {
     // 8. Priority Missions Collection (/priority_missions)
     // -------------------------------------------------------------------------
     match /priority_missions/{missionId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(missionId);
-      allow update: if isSignedIn() && isValidId(missionId);
+      // Read:
+      // - Admin: reads all missions
+      // - Courier (isLivreur): reads available unassigned missions (en_attente) or missions assigned to themselves (courierId == uid)
+      // - Vendor (isVendeur): reads strictly their own missions (merchantId == uid)
+      allow get, list: if isSignedIn() && (
+        isAdmin() ||
+        (isLivreur() && (resource.data.status == 'en_attente' || ('courierId' in resource.data && resource.data.courierId == request.auth.uid))) ||
+        (isVendeur() && ('merchantId' in resource.data && resource.data.merchantId == request.auth.uid))
+      );
+
+      // Create: Authenticated Merchant (isVendeur, merchantId MANDATORY and equals request.auth.uid)
+      allow create: if isValidId(missionId) &&
+                    isSignedIn() &&
+                    isValidPriorityMission(incoming()) &&
+                    incoming().status == 'en_attente' &&
+                    (!('courierId' in incoming())) &&
+                    ((isVendeur() && incoming().merchantId == request.auth.uid) || isAdmin());
+
+      // Update: Strict role-segregated control
+      allow update: if isValidId(missionId) &&
+                    isSignedIn() &&
+                    isValidPriorityMission(incoming()) &&
+                    incoming().id == existing().id &&
+                    incoming().orderId == existing().orderId &&
+                    (!('merchantId' in existing()) || incoming().merchantId == existing().merchantId) &&
+                    (
+                      // Admin
+                      isAdmin() ||
+
+                      // Vendor owner (isVendeur & merchantId match)
+                      (
+                        isVendeur() &&
+                        ('merchantId' in existing() && existing().merchantId == request.auth.uid) &&
+                        existing().status == 'en_attente' &&
+                        incoming().status == existing().status &&
+                        (!('courierId' in incoming())) &&
+                        incoming().diff(existing()).affectedKeys().hasOnly([
+                          'fee', 'cod', 'pickupCommune', 'dropoffCommune', 'itemDescription',
+                          'storeName', 'urgency', 'updatedAt'
+                        ])
+                      ) ||
+
+                      // Courier accepting available mission (isLivreur & courierId match)
+                      (
+                        isLivreur() &&
+                        existing().status == 'en_attente' &&
+                        incoming().status in ['assignee', 'acceptee'] &&
+                        'courierId' in incoming() &&
+                        incoming().courierId == request.auth.uid &&
+                        incoming().diff(existing()).affectedKeys().hasOnly([
+                          'status', 'courierId', 'courierName', 'assignedAt', 'updatedAt'
+                        ])
+                      ) ||
+
+                      // Courier assigned updating status (isLivreur & assigned match)
+                      (
+                        isLivreur() &&
+                        ('courierId' in existing() && existing().courierId == request.auth.uid) &&
+                        ('courierId' in incoming() && incoming().courierId == existing().courierId) &&
+                        isValidStatusTransition(existing().status, incoming().status) &&
+                        incoming().diff(existing()).affectedKeys().hasOnly([
+                          'status', 'updatedAt', 'podData'
+                        ])
+                      )
+                    );
+
+      // Delete: Admin only
       allow delete: if isAdmin();
     }
 
@@ -280,7 +408,8 @@ service cloud.firestore {
     // 9. Connection Test Probe
     // -------------------------------------------------------------------------
     match /test/{testId} {
-      allow read: if true;
+      allow get: if testId == 'connection';
+      allow list, write: if false;
     }
   }
 }

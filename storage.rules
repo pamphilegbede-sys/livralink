@@ -1,0 +1,57 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Default deny all access
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == "pamphile.gbede@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    // 1. User Profile Avatars: /avatars/{userId}/{fileName}
+    // - Read: any authenticated user
+    // - Write: only the owner or super-admin, image only, max 5MB
+    match /avatars/{userId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (request.auth.uid == userId || isAdmin())
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+
+    // 2. KYC Identification Documents: /kyc/{userId}/{fileName}
+    // - Read: only the owner or super-admin (strictly private)
+    // - Write: only the owner, max 10MB, images or PDF documents
+    match /kyc/{userId}/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow write: if isSignedIn() && (request.auth.uid == userId || isAdmin())
+                   && request.resource.size < 10 * 1024 * 1024
+                   && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf');
+    }
+
+    // 3. Proof of Delivery (POD) Photos & Signatures: /pod/{orderId}/{fileName}
+    // - Read: authenticated participants & admin
+    // - Write: authenticated couriers & admin, max 10MB, images only
+    match /pod/{orderId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn()
+                   && request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+
+    // 4. Chat attachments / Media: /chat/{conversationId}/{fileName}
+    // - Read, write: authenticated participants, max 15MB
+    match /chat/{conversationId}/{fileName} {
+      allow read, write: if isSignedIn()
+                         && request.resource.size < 15 * 1024 * 1024;
+    }
+  }
+}

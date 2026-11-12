@@ -1,0 +1,395 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // -------------------------------------------------------------------------
+    // 0. Global Safety Net: Default-deny catch-all
+    // -------------------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Helper Primitives & Attribute-Based Access Control (ABAC)
+    // -------------------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-#]+$');
+    }
+
+    // Strict Super-Admin & Authorized Admin Check
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == "pamphile.gbede@gmail.com" && request.auth.token.email_verified == true) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isVendeur() {
+      return isSignedIn() &&
+             request.auth.token.email_verified == true &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'vendeur';
+    }
+
+    function isLivreur() {
+      return isSignedIn() &&
+             request.auth.token.email_verified == true &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'livreur';
+    }
+
+    // -------------------------------------------------------------------------
+    // User Blueprint Validation (Anti-Privilege Escalation & Schema Hardening)
+    // -------------------------------------------------------------------------
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'fullName', 'phone', 'role']) &&
+             data.keys().hasOnly([
+               'uid', 'email', 'fullName', 'phone', 'role', 'avatarUrl',
+               'storeName', 'storeCommune', 'storeAddress', 'storeCoordinates',
+               'vehicleType', 'gpsCoordinates', 'locationCommune', 'locationAddress',
+               'locationLat', 'locationLng', 'locationUpdatedAt',
+               'isKycVerified', 'kycStatus', 'kycRejectionReason', 'kycSubmittedAt',
+               'mfaEnabled', 'mfaMethod',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.uid == request.auth.uid &&
+             data.email is string && data.email.size() >= 5 && data.email.size() <= 128 &&
+             data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 128 &&
+             data.phone is string && data.phone.size() <= 32 &&
+             (data.role in ['vendeur', 'livreur'] || (data.role == 'admin' && isAdmin())) &&
+             (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 1000)) &&
+             (!('storeName' in data) || (data.storeName is string && data.storeName.size() <= 128)) &&
+             (!('storeCommune' in data) || (data.storeCommune is string && data.storeCommune.size() <= 128)) &&
+             (!('storeAddress' in data) || (data.storeAddress is string && data.storeAddress.size() <= 256)) &&
+             (!('vehicleType' in data) || (data.vehicleType is string && data.vehicleType.size() <= 64)) &&
+             (!('gpsCoordinates' in data) || (data.gpsCoordinates is string && data.gpsCoordinates.size() <= 64)) &&
+             (!('locationCommune' in data) || (data.locationCommune is string && data.locationCommune.size() <= 128)) &&
+             (!('locationAddress' in data) || (data.locationAddress is string && data.locationAddress.size() <= 256)) &&
+             (!('locationLat' in data) || (data.locationLat is number)) &&
+             (!('locationLng' in data) || (data.locationLng is number)) &&
+             (!('locationUpdatedAt' in data) || (data.locationUpdatedAt is string && data.locationUpdatedAt.size() <= 64)) &&
+             (!('isKycVerified' in data) || (data.isKycVerified is bool)) &&
+             (!('kycStatus' in data) || (data.kycStatus in ['non_soumis', 'en_attente', 'valide', 'refuse'])) &&
+             (!('mfaEnabled' in data) || (data.mfaEnabled is bool));
+    }
+
+    // -------------------------------------------------------------------------
+    // Delivery Blueprint Validation
+    // -------------------------------------------------------------------------
+    function isValidDelivery(data) {
+      return data.keys().hasAll(['id', 'clientName', 'clientPhone', 'status', 'deliveryFee', 'merchantId']) &&
+             data.id is string && data.id.size() >= 1 && data.id.size() <= 64 &&
+             data.clientName is string && data.clientName.size() <= 128 &&
+             data.clientPhone is string && data.clientPhone.size() <= 32 &&
+             data.merchantId is string && data.merchantId.size() <= 128 &&
+             data.deliveryFee is number && data.deliveryFee >= 0 &&
+             data.status in ['en_attente', 'assignee', 'acceptee', 'colis_recupere', 'en_cours', 'livree', 'echec'] &&
+             (!('itemValueCOD' in data) || data.itemValueCOD is number) &&
+             (!('courierId' in data) || (data.courierId is string && data.courierId.size() <= 128));
+    }
+
+    // -------------------------------------------------------------------------
+    // Notification Blueprint Validation
+    // -------------------------------------------------------------------------
+    function isValidNotification(data) {
+      return data.keys().hasAll(['id', 'recipientId', 'senderId', 'title', 'message']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.recipientId is string && data.recipientId.size() <= 128 &&
+             data.senderId is string && (data.senderId == request.auth.uid || isAdmin()) &&
+             data.title is string && data.title.size() <= 256 &&
+             data.message is string && data.message.size() <= 2048 &&
+             (!('type' in data) || !(data.type in ['system', 'admin', 'broadcast']) || isAdmin());
+    }
+
+    // -------------------------------------------------------------------------
+    // KYC Dossier Blueprint Validation
+    // -------------------------------------------------------------------------
+    function isValidKYCDossier(data) {
+      return data.keys().hasAll(['id', 'userId', 'fullName', 'phone', 'status']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.fullName is string && data.fullName.size() <= 128 &&
+             data.phone is string && data.phone.size() <= 32 &&
+             data.status in ['en_attente', 'valide', 'refuse'];
+    }
+
+    // -------------------------------------------------------------------------
+    // 1. Users Collection (/users)
+    // -------------------------------------------------------------------------
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming());
+      allow update: if isValidId(userId) && (
+        isAdmin() ||
+        (
+          isOwner(userId) &&
+          isValidUser(incoming()) &&
+          incoming().uid == existing().uid &&
+          incoming().email == existing().email &&
+          incoming().role == existing().role
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. Deliveries Collection (/deliveries)
+    // -------------------------------------------------------------------------
+    match /deliveries/{deliveryId} {
+      allow get: if isValidId(deliveryId) && (
+        isAdmin() ||
+        (isSignedIn() && resource.data.merchantId == request.auth.uid) ||
+        (isSignedIn() && resource.data.courierId == request.auth.uid) ||
+        (isSignedIn() && resource.data.status == 'en_attente')
+      );
+
+      allow list: if isSignedIn() && (
+        isAdmin() ||
+        (isVendeur() && resource.data.merchantId == request.auth.uid) ||
+        (isLivreur() && (resource.data.courierId == request.auth.uid || resource.data.status == 'en_attente'))
+      );
+
+      allow create: if isValidId(deliveryId) &&
+                    isSignedIn() &&
+                    isValidDelivery(incoming()) &&
+                    (incoming().merchantId == request.auth.uid || isAdmin()) &&
+                    incoming().status == 'en_attente';
+
+      allow update: if isValidId(deliveryId) &&
+                    isSignedIn() &&
+                    isValidDelivery(incoming()) &&
+                    incoming().id == existing().id &&
+                    incoming().merchantId == existing().merchantId &&
+                    (
+                      isAdmin() ||
+                      (
+                        !(existing().status in ['livree', 'echec']) &&
+                        (
+                          (
+                            existing().merchantId == request.auth.uid &&
+                            existing().status == 'en_attente' &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['clientName', 'clientPhone', 'itemValueCOD', 'deliveryFee', 'status', 'updatedAt'])
+                          ) ||
+                          (
+                            existing().status == 'en_attente' &&
+                            incoming().courierId == request.auth.uid &&
+                            incoming().status in ['assignee', 'acceptee'] &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['courierId', 'status', 'updatedAt'])
+                          ) ||
+                          (
+                            existing().courierId == request.auth.uid &&
+                            incoming().courierId == existing().courierId &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'podData'])
+                          )
+                        )
+                      )
+                    );
+
+      allow delete: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. Isolated Notifications Collection (/notifications)
+    // -------------------------------------------------------------------------
+    match /notifications/{notificationId} {
+      // Get / List: strictly restricted to recipient UID or Admin
+      allow get, list: if isSignedIn() && (resource.data.recipientId == request.auth.uid || isAdmin());
+      // Create: Authenticated system/users can generate a targeted notification
+      allow create: if isSignedIn() && isValidId(notificationId) && isValidNotification(incoming());
+      // Update: Recipient can mark as read; Admin can update
+      allow update: if isSignedIn() && isValidId(notificationId) && (
+        isAdmin() ||
+        (
+          resource.data.recipientId == request.auth.uid &&
+          incoming().recipientId == existing().recipientId &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'read', 'updatedAt'])
+        )
+      );
+      // Delete: Recipient or Admin
+      allow delete: if isSignedIn() && isValidId(notificationId) && (resource.data.recipientId == request.auth.uid || isAdmin());
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. Isolated KYC Dossiers Collection (/kyc)
+    // -------------------------------------------------------------------------
+    match /kyc/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId) && isOwner(userId) && isValidKYCDossier(incoming()) && incoming().userId == request.auth.uid && incoming().status == 'en_attente';
+      allow update: if isValidId(userId) && (
+        isAdmin() ||
+        (
+          isOwner(userId) &&
+          isValidKYCDossier(incoming()) &&
+          existing().status == 'refuse' &&
+          incoming().userId == request.auth.uid &&
+          incoming().status == 'en_attente'
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. Isolated Messaging & Chat (/conversations)
+    // -------------------------------------------------------------------------
+    match /conversations/{conversationId} {
+      allow get, list: if isSignedIn() && (request.auth.uid in resource.data.participantIds || isAdmin());
+      allow create: if isSignedIn() && isValidId(conversationId) && request.auth.uid in incoming().participantIds;
+      allow update: if isSignedIn() && isValidId(conversationId) && (
+        isAdmin() ||
+        (
+          request.auth.uid in existing().participantIds &&
+          incoming().participantIds == existing().participantIds
+        )
+      );
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow get, list: if isSignedIn() && (
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds || isAdmin()
+        );
+        allow create: if isSignedIn() && isValidId(messageId) &&
+                      request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds &&
+                      incoming().senderId == request.auth.uid;
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. Admin Broadcast Announcements (/announcements)
+    // -------------------------------------------------------------------------
+    match /announcements/{announcementId} {
+      allow read, write: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // Helper : Priority Mission Blueprint Validation
+    // -------------------------------------------------------------------------
+    function isValidPriorityMission(data) {
+      return data.keys().hasAll(['id', 'orderId', 'status', 'fee', 'merchantId']) &&
+             data.id is string && data.id.size() >= 1 && data.id.size() <= 64 &&
+             data.orderId is string && data.orderId.size() >= 1 && data.orderId.size() <= 64 &&
+             data.merchantId is string && data.merchantId.size() >= 1 && data.merchantId.size() <= 128 &&
+             data.status in ['en_attente', 'assignee', 'acceptee', 'colis_recupere', 'en_cours', 'livree', 'echec'] &&
+             data.fee is number && data.fee >= 0 &&
+             (!('cod' in data) || data.cod is number) &&
+             (!('courierId' in data) || (data.courierId is string && data.courierId.size() <= 128)) &&
+             (!('courierName' in data) || (data.courierName is string && data.courierName.size() <= 128));
+    }
+
+    // Helper : Delivery Status Transitions Validation
+    function isValidStatusTransition(oldStatus, newStatus) {
+      return (oldStatus == 'en_attente' && newStatus in ['assignee', 'acceptee']) ||
+             (oldStatus in ['assignee', 'acceptee'] && newStatus in ['colis_recupere', 'en_cours']) ||
+             (oldStatus == 'colis_recupere' && newStatus in ['en_cours', 'livree', 'echec']) ||
+             (oldStatus == 'en_cours' && newStatus in ['livree', 'echec']);
+    }
+
+    // -------------------------------------------------------------------------
+    // 7. Admins Collection (/admins)
+    // -------------------------------------------------------------------------
+    match /admins/{adminId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // 8. Priority Missions Collection (/priority_missions)
+    // -------------------------------------------------------------------------
+    match /priority_missions/{missionId} {
+      // Read:
+      // - Admin: reads all missions
+      // - Courier (isLivreur): reads available unassigned missions (en_attente) or missions assigned to themselves (courierId == uid)
+      // - Vendor (isVendeur): reads strictly their own missions (merchantId == uid)
+      allow get, list: if isSignedIn() && (
+        isAdmin() ||
+        (isLivreur() && (resource.data.status == 'en_attente' || ('courierId' in resource.data && resource.data.courierId == request.auth.uid))) ||
+        (isVendeur() && ('merchantId' in resource.data && resource.data.merchantId == request.auth.uid))
+      );
+
+      // Create: Authenticated Merchant (isVendeur, merchantId MANDATORY and equals request.auth.uid)
+      allow create: if isValidId(missionId) &&
+                    isSignedIn() &&
+                    isValidPriorityMission(incoming()) &&
+                    incoming().status == 'en_attente' &&
+                    (!('courierId' in incoming())) &&
+                    ((isVendeur() && incoming().merchantId == request.auth.uid) || isAdmin());
+
+      // Update: Strict role-segregated control
+      allow update: if isValidId(missionId) &&
+                    isSignedIn() &&
+                    isValidPriorityMission(incoming()) &&
+                    incoming().id == existing().id &&
+                    incoming().orderId == existing().orderId &&
+                    (!('merchantId' in existing()) || incoming().merchantId == existing().merchantId) &&
+                    (
+                      // Admin
+                      isAdmin() ||
+
+                      // Vendor owner (isVendeur & merchantId match)
+                      (
+                        isVendeur() &&
+                        ('merchantId' in existing() && existing().merchantId == request.auth.uid) &&
+                        existing().status == 'en_attente' &&
+                        incoming().status == existing().status &&
+                        (!('courierId' in incoming())) &&
+                        incoming().diff(existing()).affectedKeys().hasOnly([
+                          'fee', 'cod', 'pickupCommune', 'dropoffCommune', 'itemDescription',
+                          'storeName', 'urgency', 'updatedAt'
+                        ])
+                      ) ||
+
+                      // Courier accepting available mission (isLivreur & courierId match)
+                      (
+                        isLivreur() &&
+                        existing().status == 'en_attente' &&
+                        incoming().status in ['assignee', 'acceptee'] &&
+                        'courierId' in incoming() &&
+                        incoming().courierId == request.auth.uid &&
+                        incoming().diff(existing()).affectedKeys().hasOnly([
+                          'status', 'courierId', 'courierName', 'assignedAt', 'updatedAt'
+                        ])
+                      ) ||
+
+                      // Courier assigned updating status (isLivreur & assigned match)
+                      (
+                        isLivreur() &&
+                        ('courierId' in existing() && existing().courierId == request.auth.uid) &&
+                        ('courierId' in incoming() && incoming().courierId == existing().courierId) &&
+                        isValidStatusTransition(existing().status, incoming().status) &&
+                        incoming().diff(existing()).affectedKeys().hasOnly([
+                          'status', 'updatedAt', 'podData'
+                        ])
+                      )
+                    );
+
+      // Delete: Admin only
+      allow delete: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // 9. Connection Test Probe
+    // -------------------------------------------------------------------------
+    match /test/{testId} {
+      allow get: if testId == 'connection';
+      allow list, write: if false;
+    }
+  }
+}
