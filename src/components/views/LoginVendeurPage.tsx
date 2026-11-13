@@ -5,8 +5,7 @@ import { ForgotPasswordModal } from '../modals/ForgotPasswordModal';
 import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
 import { createFreshMerchantSettings } from '../../utils/userIsolation';
-
-const SUPER_ADMIN_EMAIL = 'pamphile.gbede@gmail.com';
+import { isVerifiedMasterAdminEmail } from '../../utils/deliveryIsolation';
 
 export const LoginVendeurPage: React.FC = () => {
   const { setCurrentView, setCurrentRole, setMerchantSettings, setUserProfile, showToast, detectAndSaveLocation } = useApp();
@@ -26,18 +25,9 @@ export const LoginVendeurPage: React.FC = () => {
     try {
       const { user, profile } = await loginWithEmailPassword(identifier, password, 'vendeur');
       const resolvedRole = profile.role;
-      const isVerifiedSuperAdmin =
-        (user.email || '').toLowerCase().trim() === SUPER_ADMIN_EMAIL && user.emailVerified === true;
+      const isVerifiedSuperAdmin = isVerifiedMasterAdminEmail(user.email, user.emailVerified);
 
-      if (resolvedRole === 'admin' || isVerifiedSuperAdmin) {
-        setUserProfile(profile);
-        setCurrentRole('admin');
-        setCurrentView('admin_console');
-        showToast('Connexion Super-Admin confirmée.', 'success');
-        return;
-      }
-
-      if (resolvedRole !== 'vendeur') {
+      if (resolvedRole !== 'vendeur' && !isVerifiedSuperAdmin) {
         await logoutUser();
         setUserProfile(null);
         const msg =
@@ -66,7 +56,12 @@ export const LoginVendeurPage: React.FC = () => {
       }
       setMerchantSettings(loaded);
       setCurrentView('vendeur_dashboard');
-      showToast(`Bienvenue sur votre Espace Vendeur, ${profile.fullName || user.displayName || 'Marchand'} !`, 'success');
+      showToast(
+        isVerifiedSuperAdmin
+          ? `Bienvenue sur votre Espace Vendeur, ${profile.fullName || user.displayName || 'Super-Admin'} ! (Accès Admin actif)`
+          : `Bienvenue sur votre Espace Vendeur, ${profile.fullName || user.displayName || 'Marchand'} !`,
+        'success'
+      );
     } catch (err: any) {
       const friendlyMsg = getFirebaseAuthErrorMessage(err);
       setErrorMessage(friendlyMsg);
@@ -82,18 +77,9 @@ export const LoginVendeurPage: React.FC = () => {
     try {
       const { user, profile, location } = await loginWithGoogle('vendeur');
       const resolvedRole = profile.role;
-      const isVerifiedSuperAdmin =
-        (user.email || '').toLowerCase().trim() === SUPER_ADMIN_EMAIL && user.emailVerified === true;
+      const isVerifiedSuperAdmin = isVerifiedMasterAdminEmail(user.email, user.emailVerified);
 
-      if (resolvedRole === 'admin' || isVerifiedSuperAdmin) {
-        setUserProfile(profile);
-        setCurrentRole('admin');
-        setCurrentView('admin_console');
-        showToast('Connexion Google Super-Admin confirmée.', 'success');
-        return;
-      }
-
-      if (resolvedRole !== 'vendeur') {
+      if (resolvedRole !== 'vendeur' && !isVerifiedSuperAdmin) {
         await logoutUser();
         setUserProfile(null);
         const msg =
@@ -128,7 +114,9 @@ export const LoginVendeurPage: React.FC = () => {
       setMerchantSettings(loaded);
       setCurrentView('vendeur_dashboard');
       showToast(
-        `Connexion Google réussie ! Bienvenue ${profile.fullName || user.displayName || 'Vendeur'}.`,
+        isVerifiedSuperAdmin
+          ? `Connexion Google réussie ! Bienvenue ${profile.fullName || user.displayName || 'Super-Admin'} (Espace Vendeur & Admin actif).`
+          : `Connexion Google réussie ! Bienvenue ${profile.fullName || user.displayName || 'Vendeur'}.`,
         'success'
       );
     } catch (err: any) {

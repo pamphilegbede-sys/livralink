@@ -16,10 +16,56 @@ export interface DeliveryDraftData {
   itemValueCOD: number;
 }
 
+export const MASTER_ADMIN_EMAIL = 'pamphile.gbede@gmail.com';
+
+export const isVerifiedMasterAdminEmail = (
+  email?: string | null,
+  emailVerified?: boolean | null
+): boolean => {
+  if (!email || emailVerified !== true) return false;
+  return email.toLowerCase().trim() === MASTER_ADMIN_EMAIL;
+};
+
+export interface SpaceAccessInput {
+  isAuthenticated: boolean;
+  profileRole?: UserRole | string | null;
+  email?: string | null;
+  emailVerified?: boolean | null;
+  isAdminAuthenticated?: boolean;
+  isDirectorModeActive?: boolean;
+  currentRole?: UserRole | string;
+}
+
+export const canAccessVendorSpace = (input: SpaceAccessInput): boolean => {
+  if (!input.isAuthenticated) return false;
+  if (isVerifiedMasterAdminEmail(input.email, input.emailVerified)) return true;
+  if (input.profileRole === 'vendeur') return true;
+  return Boolean(
+    input.isAdminAuthenticated &&
+      (input.isDirectorModeActive || input.currentRole === 'vendeur')
+  );
+};
+
+export const canAccessCourierSpace = (input: SpaceAccessInput): boolean => {
+  if (!input.isAuthenticated) return false;
+  if (isVerifiedMasterAdminEmail(input.email, input.emailVerified)) return true;
+  if (input.profileRole === 'livreur') return true;
+  return Boolean(
+    input.isAdminAuthenticated &&
+      (input.isDirectorModeActive || input.currentRole === 'livreur')
+  );
+};
+
+export const canShowAdminDashboardButton = (
+  email?: string | null,
+  emailVerified?: boolean | null
+): boolean => isVerifiedMasterAdminEmail(email, emailVerified);
+
 export interface VendorIsolationContext {
   userProfile?: { uid?: string; role?: UserRole | string } | null;
   firebaseUserUid?: string | null;
   isAdminAuthenticated?: boolean;
+  isUserMasterAdmin?: boolean;
   isDirectorModeActive?: boolean;
   directorTargetId?: string | null;
   directorTargetName?: string | null;
@@ -68,12 +114,12 @@ export const filterVendorDeliveries = (
   const effectiveRole = ctx.userProfile?.role;
   const effectiveUid = ctx.userProfile?.uid || ctx.firebaseUserUid;
 
-  if (effectiveRole === 'vendeur') {
-    return deliveries.filter((d) => isOrderOwnedByVendor(d, effectiveUid));
+  if (ctx.isAdminAuthenticated && (effectiveRole === 'admin' || ctx.isUserMasterAdmin)) {
+    return deliveries;
   }
 
-  if (ctx.isAdminAuthenticated && effectiveRole === 'admin') {
-    return deliveries;
+  if (effectiveRole === 'vendeur') {
+    return deliveries.filter((d) => isOrderOwnedByVendor(d, effectiveUid));
   }
 
   return [];

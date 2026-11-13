@@ -19,12 +19,12 @@ export const Sidebar: React.FC = () => {
     merchants,
     kycRequests,
     userProfile,
-    isEmailAuthorizedAdmin,
+    isUserMasterAdmin,
     courierMissionsFilter,
     setCourierMissionsFilter,
   } = useApp();
 
-  const isUserSuperAdmin = Boolean(userProfile?.email && isEmailAuthorizedAdmin(userProfile.email));
+  const isUserSuperAdmin = isUserMasterAdmin;
 
   // Résolution déterministe du rôle affiché dans la barre latérale afin que le menu ne disparaisse jamais
   const effectiveNavRole: 'vendeur' | 'livreur' | 'admin' =
@@ -178,16 +178,29 @@ export const Sidebar: React.FC = () => {
                 <span>Paramètres Vendeur</span>
               </button>
 
-              {/* Super-Admin Dashboard Button for pamphile.gbede@gmail.com */}
+              {/* Super-Admin Dashboard & Multi-Space Buttons exclusively for pamphile.gbede@gmail.com */}
               {isUserSuperAdmin && (
-                <div className="pt-2 mt-2 border-t border-amber-200 dark:border-amber-900/40">
-                  <p className="px-3 text-[10px] font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-1.5">Privilège Super-Admin</p>
+                <div className="pt-2 mt-2 border-t border-amber-200 dark:border-amber-900/40 space-y-1.5">
+                  <p className="px-3 text-[10px] font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-1">Privilège Super-Admin</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCurrentRole('livreur');
+                      setCurrentView('livreur_dashboard');
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-300 hover:bg-emerald-100 border border-emerald-300/60 dark:border-emerald-700/50 transition-all"
+                  >
+                    <span className="material-symbols-outlined text-base text-emerald-600 dark:text-emerald-400">two_wheeler</span>
+                    <span>Espace Livreur</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
                       if (currentView === 'admin_console') {
+                        setCurrentRole('vendeur');
                         setCurrentView('vendeur_dashboard');
                       } else {
+                        setCurrentRole('admin');
                         setCurrentView('admin_console');
                       }
                     }}
@@ -341,16 +354,29 @@ export const Sidebar: React.FC = () => {
                 <span>Paramètres Livreur</span>
               </button>
 
-              {/* Super-Admin Dashboard Button for pamphile.gbede@gmail.com */}
+              {/* Super-Admin Dashboard & Multi-Space Buttons exclusively for pamphile.gbede@gmail.com */}
               {isUserSuperAdmin && (
-                <div className="pt-2 mt-2 border-t border-amber-200 dark:border-amber-900/40">
-                  <p className="px-3 text-[10px] font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-1.5">Privilège Super-Admin</p>
+                <div className="pt-2 mt-2 border-t border-amber-200 dark:border-amber-900/40 space-y-1.5">
+                  <p className="px-3 text-[10px] font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-1">Privilège Super-Admin</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCurrentRole('vendeur');
+                      setCurrentView('vendeur_dashboard');
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-900 dark:text-blue-300 hover:bg-blue-100 border border-blue-300/60 dark:border-blue-700/50 transition-all"
+                  >
+                    <span className="material-symbols-outlined text-base text-blue-600 dark:text-blue-400">storefront</span>
+                    <span>Espace Vendeur</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
                       if (currentView === 'admin_console') {
+                        setCurrentRole('livreur');
                         setCurrentView('livreur_dashboard');
                       } else {
+                        setCurrentRole('admin');
                         setCurrentView('admin_console');
                       }
                     }}

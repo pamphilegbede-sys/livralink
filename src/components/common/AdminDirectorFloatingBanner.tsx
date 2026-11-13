@@ -10,13 +10,10 @@ export const AdminDirectorFloatingBanner: React.FC = () => {
     setAdminActiveTab,
     currentRole,
     currentView,
-    userProfile,
-    isEmailAuthorizedAdmin,
-    featureFlags
+    isUserMasterAdmin,
   } = useApp();
 
-  const isUserSuperAdmin = userProfile?.email && isEmailAuthorizedAdmin(userProfile.email);
-  const shouldShow = (isDirectorModeActive || (isUserSuperAdmin && currentView !== 'admin_console' && currentView !== 'landing')) && currentView !== 'admin_console';
+  const shouldShow = (isDirectorModeActive || (isUserMasterAdmin && currentView !== 'admin_console' && currentView !== 'landing')) && currentView !== 'admin_console';
 
   if (!shouldShow) return null;
 

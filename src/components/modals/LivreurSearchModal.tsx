@@ -27,6 +27,7 @@ export const LivreurSearchModal: React.FC<LivreurSearchModalProps> = ({
     firebaseUser,
     userProfile,
     isAdminAuthenticated,
+    isUserMasterAdmin,
     isDirectorModeActive,
     directorTargetId,
     directorTargetName,
@@ -52,11 +53,12 @@ export const LivreurSearchModal: React.FC<LivreurSearchModalProps> = ({
       userProfile,
       firebaseUserUid: firebaseUser?.uid,
       isAdminAuthenticated,
+      isUserMasterAdmin,
       isDirectorModeActive,
       directorTargetId,
       directorTargetName,
     });
-  }, [deliveries, userProfile, firebaseUser?.uid, isAdminAuthenticated, isDirectorModeActive, directorTargetId, directorTargetName]);
+  }, [deliveries, userProfile, firebaseUser?.uid, isAdminAuthenticated, isUserMasterAdmin, isDirectorModeActive, directorTargetId, directorTargetName]);
 
   // Orders eligible for direct assignment (status === 'en_attente')
   const pendingOrders = useMemo(() => {

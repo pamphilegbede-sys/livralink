@@ -11,6 +11,7 @@ export const Header: React.FC<{
 }> = ({ title, subtitle, breadcrumbs }) => {
   const {
     currentRole,
+    setCurrentRole,
     currentView,
     setCurrentView,
     merchantSettings,
@@ -19,12 +20,12 @@ export const Header: React.FC<{
     notifications,
     openNotificationCenter,
     userProfile,
-    isEmailAuthorizedAdmin,
+    isUserMasterAdmin,
     courierMissionsFilter,
     setCourierMissionsFilter,
   } = useApp();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const isUserSuperAdmin = Boolean(userProfile?.email && isEmailAuthorizedAdmin(userProfile.email));
+  const isUserSuperAdmin = isUserMasterAdmin;
 
   const effectiveNavRole: 'vendeur' | 'livreur' | 'admin' =
     currentView === 'admin_console'
@@ -276,10 +277,43 @@ export const Header: React.FC<{
                   </>
                 )}
                 {isUserSuperAdmin && (
-                  <div className="pt-3 mt-3 border-t border-amber-200 dark:border-amber-900/40">
-                    <p className="px-3 text-[10px] font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-1.5">Accès Super-Admin</p>
+                  <div className="pt-3 mt-3 border-t border-amber-200 dark:border-amber-900/40 space-y-1.5">
+                    <p className="px-3 text-[10px] font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-1">Accès Super-Admin</p>
+                    {effectiveNavRole !== 'vendeur' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCurrentRole('vendeur');
+                          setCurrentView('vendeur_dashboard');
+                          setIsMobileMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold bg-blue-50 text-blue-900 hover:bg-blue-100 border border-blue-200"
+                      >
+                        <span className="material-symbols-outlined text-base text-blue-600">storefront</span>
+                        <span>Espace Vendeur</span>
+                      </button>
+                    )}
+                    {effectiveNavRole !== 'livreur' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCurrentRole('livreur');
+                          setCurrentView('livreur_dashboard');
+                          setIsMobileMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-900 hover:bg-emerald-100 border border-emerald-200"
+                      >
+                        <span className="material-symbols-outlined text-base text-emerald-600">two_wheeler</span>
+                        <span>Espace Livreur</span>
+                      </button>
+                    )}
                     <button
-                      onClick={() => { setCurrentView('admin_console'); setIsMobileMenuOpen(false); }}
+                      type="button"
+                      onClick={() => {
+                        setCurrentRole('admin');
+                        setCurrentView('admin_console');
+                        setIsMobileMenuOpen(false);
+                      }}
                       className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold ${
                         currentView === 'admin_console'
                           ? 'bg-amber-500 text-slate-950 font-black'
@@ -288,7 +322,7 @@ export const Header: React.FC<{
                     >
                       <div className="flex items-center gap-2.5">
                         <span className="text-base">👑</span>
-                        <span>Console Administrateur</span>
+                        <span>Dashboard Admin</span>
                       </div>
                       <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
                     </button>

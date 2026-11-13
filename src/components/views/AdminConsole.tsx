@@ -30,8 +30,8 @@ const AdminSidebarContent: React.FC<{
   couriersCount: number;
   merchantsCount: number;
   disputesCount: number;
-  currentRole: 'vendeur' | 'livreur' | 'admin';
-  onReturnToUserDashboard: () => void;
+  onOpenVendorSpace: () => void;
+  onOpenCourierSpace: () => void;
 }> = ({
   activeTab,
   onSelectTab,
@@ -42,8 +42,8 @@ const AdminSidebarContent: React.FC<{
   couriersCount,
   merchantsCount,
   disputesCount,
-  currentRole,
-  onReturnToUserDashboard,
+  onOpenVendorSpace,
+  onOpenCourierSpace,
 }) => {
   const categories = [
     {
@@ -115,18 +115,29 @@ const AdminSidebarContent: React.FC<{
         )}
       </div>
 
-      {/* Return to User Dashboard CTA */}
-      <div className="p-3 border-b border-slate-800/80 bg-slate-950/40">
+      {/* Direct Switchers to Vendeur & Livreur Spaces */}
+      <div className="p-3 border-b border-slate-800/80 bg-slate-950/40 space-y-2">
         <button
           type="button"
           onClick={() => {
             if (onCloseMobile) onCloseMobile();
-            onReturnToUserDashboard();
+            onOpenVendorSpace();
           }}
           className="w-full py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95 cursor-pointer"
         >
-          <span className="material-symbols-outlined text-sm">space_dashboard</span>
-          <span>{currentRole === 'livreur' ? 'Espace Livreur' : 'Espace Vendeur'}</span>
+          <span className="material-symbols-outlined text-sm">storefront</span>
+          <span>Espace Vendeur</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (onCloseMobile) onCloseMobile();
+            onOpenCourierSpace();
+          }}
+          className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95 cursor-pointer"
+        >
+          <span className="material-symbols-outlined text-sm">two_wheeler</span>
+          <span>Espace Livreur</span>
         </button>
       </div>
 
@@ -913,7 +924,9 @@ export const AdminConsole: React.FC = () => {
             type="button"
             onClick={() => {
               if (userProfile) {
-                setCurrentView(currentRole === 'livreur' ? 'livreur_dashboard' : 'vendeur_dashboard');
+                const targetRole = userProfile.role === 'livreur' ? 'livreur' : 'vendeur';
+                setCurrentRole(targetRole);
+                setCurrentView(targetRole === 'livreur' ? 'livreur_dashboard' : 'vendeur_dashboard');
               } else {
                 setCurrentView('landing');
               }
@@ -926,6 +939,16 @@ export const AdminConsole: React.FC = () => {
       </div>
     );
   }
+
+  const handleOpenVendorSpace = () => {
+    setCurrentRole('vendeur');
+    setCurrentView('vendeur_dashboard');
+  };
+
+  const handleOpenCourierSpace = () => {
+    setCurrentRole('livreur');
+    setCurrentView('livreur_dashboard');
+  };
 
   return (
     <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans'] relative">
@@ -940,8 +963,8 @@ export const AdminConsole: React.FC = () => {
           couriersCount={couriers.length}
           merchantsCount={merchants.length}
           disputesCount={disputeCount}
-          currentRole={currentRole}
-          onReturnToUserDashboard={() => setCurrentView(currentRole === 'livreur' ? 'livreur_dashboard' : 'vendeur_dashboard')}
+          onOpenVendorSpace={handleOpenVendorSpace}
+          onOpenCourierSpace={handleOpenCourierSpace}
         />
       </div>
 
@@ -962,8 +985,8 @@ export const AdminConsole: React.FC = () => {
               couriersCount={couriers.length}
               merchantsCount={merchants.length}
               disputesCount={disputeCount}
-              currentRole={currentRole}
-              onReturnToUserDashboard={() => setCurrentView(currentRole === 'livreur' ? 'livreur_dashboard' : 'vendeur_dashboard')}
+              onOpenVendorSpace={handleOpenVendorSpace}
+              onOpenCourierSpace={handleOpenCourierSpace}
             />
           </div>
         </div>
@@ -1059,16 +1082,24 @@ export const AdminConsole: React.FC = () => {
               <span className="hidden lg:inline text-xs font-bold">E-mails</span>
             </button>
 
-            {/* Return to Merchant/Driver space */}
+            {/* Direct Switches to Vendeur & Livreur Spaces */}
             <button
-              onClick={() => setCurrentView(currentRole === 'livreur' ? 'livreur_dashboard' : 'vendeur_dashboard')}
-              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95 shrink-0"
-              title={`Basculer vers l'espace ${currentRole === 'livreur' ? 'Livreur' : 'Vendeur'}`}
+              type="button"
+              onClick={handleOpenVendorSpace}
+              className="px-2.5 sm:px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95 shrink-0"
+              title="Accéder à l'Espace Vendeur"
             >
-              <span className="material-symbols-outlined text-base">space_dashboard</span>
-              <span className="hidden md:inline">
-                {currentRole === 'livreur' ? 'Espace Livreur' : 'Espace Vendeur'}
-              </span>
+              <span className="material-symbols-outlined text-base">storefront</span>
+              <span className="hidden md:inline">Vendeur</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleOpenCourierSpace}
+              className="px-2.5 sm:px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95 shrink-0"
+              title="Accéder à l'Espace Livreur"
+            >
+              <span className="material-symbols-outlined text-base">two_wheeler</span>
+              <span className="hidden md:inline">Livreur</span>
             </button>
 
             {/* Admin Logout */}

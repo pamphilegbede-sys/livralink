@@ -6,6 +6,10 @@ import {
   sanitizeDuplicateOrderDraft,
   buildVendorDeliveryCsv,
   escapeCsvCell,
+  isVerifiedMasterAdminEmail,
+  canAccessVendorSpace,
+  canAccessCourierSpace,
+  canShowAdminDashboardButton,
 } from './src/utils/deliveryIsolation';
 import { doesOrderBelongToMerchant } from './src/utils/adminReconciliation';
 import { DeliveryOrder, Merchant } from './src/types';
@@ -278,6 +282,77 @@ async function runDataIsolationSecurityTest() {
   assert(vendorTargets.length === 2, 'Broadcast "vendeurs" targets 2 vendors');
   assert(courierTargets.length === 1, 'Broadcast "livreurs" targets 1 courier');
   assert(indTarget.length === 1 && indTarget[0].uid === vendorAUid, 'Broadcast "individual" targets specific user');
+
+  // 7. Test Master Admin (pamphile.gbede@gmail.com) Multi-Space Access & Exclusive Admin Dashboard Button
+  console.log('\n--- TEST 7: MASTER ADMIN MULTI-SPACE ACCESS & EXCLUSIVE ADMIN BUTTON ---');
+  assert(
+    isVerifiedMasterAdminEmail('pamphile.gbede@gmail.com', true) &&
+      isVerifiedMasterAdminEmail('Pamphile.Gbede@gmail.com', true),
+    'pamphile.gbede@gmail.com (verified, case-insensitive) is recognized as Master Admin'
+  );
+  assert(
+    !isVerifiedMasterAdminEmail('pamphile.gbede@gmail.com', false),
+    'Unverified email does NOT gain Master Admin access'
+  );
+  assert(
+    canAccessVendorSpace({
+      isAuthenticated: true,
+      profileRole: 'admin',
+      email: 'pamphile.gbede@gmail.com',
+      emailVerified: true,
+      isAdminAuthenticated: true,
+      currentRole: 'admin',
+    }),
+    'Master Admin with role="admin" & currentRole="admin" HAS direct access to Espace Vendeur'
+  );
+  assert(
+    canAccessCourierSpace({
+      isAuthenticated: true,
+      profileRole: 'admin',
+      email: 'pamphile.gbede@gmail.com',
+      emailVerified: true,
+      isAdminAuthenticated: true,
+      currentRole: 'admin',
+    }),
+    'Master Admin with role="admin" & currentRole="admin" HAS direct access to Espace Livreur'
+  );
+  assert(
+    canShowAdminDashboardButton('pamphile.gbede@gmail.com', true) &&
+      !canShowAdminDashboardButton('autre.admin@gmail.com', true) &&
+      !canShowAdminDashboardButton('vendeur@boutique.bj', true) &&
+      !canShowAdminDashboardButton('livreur@moto.bj', true),
+    'Dashboard Admin button is visible EXCLUSIVELY for verified pamphile.gbede@gmail.com'
+  );
+  assert(
+    !canAccessCourierSpace({
+      isAuthenticated: true,
+      profileRole: 'vendeur',
+      email: 'vendeur@boutique.bj',
+      emailVerified: true,
+      isAdminAuthenticated: false,
+      currentRole: 'vendeur',
+    }) &&
+      !canAccessVendorSpace({
+        isAuthenticated: true,
+        profileRole: 'livreur',
+        email: 'livreur@moto.bj',
+        emailVerified: true,
+        isAdminAuthenticated: false,
+        currentRole: 'livreur',
+      }),
+    'Regular Vendeur and Livreur accounts remain strictly blocked from cross-role spaces'
+  );
+  const masterVendorSpaceDeliveries = filterVendorDeliveries(mixedDeliveries, {
+    userProfile: { uid: 'master_uid', role: 'admin' },
+    firebaseUserUid: 'master_uid',
+    isAdminAuthenticated: true,
+    isUserMasterAdmin: true,
+    isDirectorModeActive: false,
+  });
+  assert(
+    masterVendorSpaceDeliveries.length === mixedDeliveries.length,
+    'Master Admin sees delivery information immediately in Espace Vendeur before pressing Dashboard Admin'
+  );
 
   console.log('\n======================================================');
   console.log(`SUMMARY: ${passedTests}/${totalTests} tests passed successfully!`);

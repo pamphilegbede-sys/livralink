@@ -61,6 +61,7 @@ import {
 import {
   DeliveryDraftData,
   isOrderOwnedByVendor,
+  isVerifiedMasterAdminEmail,
   sanitizeDuplicateOrderDraft,
 } from '../utils/deliveryIsolation';
 import { runDeliveryStepValidationTestSuite } from '../utils/deliveryValidationTests';
@@ -252,6 +253,7 @@ interface AppContextType {
   isEmailAuthorizedAdmin: (email: string) => boolean;
   addAuthorizedAdminEmail: (email: string) => { success: boolean; message: string };
   removeAuthorizedAdminEmail: (email: string) => { success: boolean; message: string };
+  isUserMasterAdmin: boolean;
   isAdminAuthenticated: boolean;
   adminLoginWithGoogle: (email: string, name?: string) => { success: boolean; message?: string; error?: string };
   adminLogout: () => Promise<void> | void;
@@ -400,6 +402,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
 
   const setCurrentView = (nextView: AppView) => {
+    if (nextView.startsWith('vendeur_')) {
+      setCurrentRole('vendeur');
+    } else if (nextView.startsWith('livreur_')) {
+      setCurrentRole('livreur');
+    } else if (nextView === 'admin_console') {
+      setCurrentRole('admin');
+    }
     if (nextView !== currentView) {
       setViewHistory((prev) => [...prev.slice(-30), currentView]);
       setCurrentViewState(nextView);
@@ -1134,15 +1143,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const isUserMasterAdmin = Boolean(
     firebaseUser &&
-    firebaseUser.emailVerified &&
-    (firebaseUser.email || userProfile?.email) &&
-    isEmailAuthorizedAdmin((firebaseUser.email || userProfile?.email || '').toLowerCase())
+    isVerifiedMasterAdminEmail(firebaseUser.email || userProfile?.email, firebaseUser.emailVerified)
   );
 
   const isAdminAuthenticated = Boolean(
     firebaseUser &&
     firebaseUser.emailVerified &&
-    (isUserMasterAdmin || (isAdminSessionUnlocked && userProfile?.role === 'admin'))
+    (isUserMasterAdmin || (isAdminSessionUnlocked && userProfile?.role === 'admin' && isEmailAuthorizedAdmin(firebaseUser.email || userProfile?.email || '')))
   );
 
   const addAuthorizedAdminEmail = (newEmail: string): { success: boolean; message: string } => {
@@ -1286,62 +1293,95 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         try {
           const profile = await getUserProfile(user.uid);
           const userEmail = (user.email || '').toLowerCase().trim();
-          const isMaster = Boolean(user.emailVerified && userEmail && isEmailAuthorizedAdmin(userEmail));
+          const isMaster = isVerifiedMasterAdminEmail(userEmail, user.emailVerified);
           let effectiveProfile: UserProfile;
+
+          const resolveMasterActiveRole = (fallback?: UserRole): UserRole => {
+            const activeViewNow = currentViewRef.current;
+            if (activeViewNow === 'login_vendeur' || activeViewNow.startsWith('vendeur_')) {
+              return 'vendeur';
+            }
+            if (activeViewNow === 'login_livreur' || activeViewNow.startsWith('livreur_')) {
+              return 'livreur';
+            }
+            if (activeViewNow === 'admin_console') {
+              return 'admin';
+            }
+            if (currentRoleRef.current === 'livreur' || fallback === 'livreur') {
+              return 'livreur';
+            }
+            return 'vendeur';
+          };
+
+          const initMerchantSettingsForUser = (prof: UserProfile) => {
+            let loadedMerchant: MerchantSettings | null = null;
+            try {
+              const saved = localStorage.getItem(`livralink_merchant_settings_${user.uid}`);
+              if (saved) loadedMerchant = JSON.parse(saved);
+            } catch {}
+            if (!loadedMerchant) {
+              loadedMerchant = createFreshMerchantSettings(prof);
+              try {
+                localStorage.setItem(`livralink_merchant_settings_${user.uid}`, JSON.stringify(loadedMerchant));
+              } catch {}
+            }
+            setMerchantSettings(loadedMerchant);
+          };
+
+          const initCourierSettingsForUser = (prof: UserProfile) => {
+            const isAccredited = Boolean(prof.isKycVerified || prof.kycStatus === 'valide' || isMaster);
+            let loadedCourier: CourierSettings | null = null;
+            try {
+              const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
+              if (saved) loadedCourier = JSON.parse(saved);
+            } catch {}
+            if (!loadedCourier) {
+              loadedCourier = createFreshCourierSettings({
+                ...prof,
+                isKycVerified: isAccredited,
+              });
+            }
+            if (!isAccredited) {
+              loadedCourier.isAvailable = false;
+            }
+            try {
+              localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loadedCourier));
+            } catch {}
+            setCourierSettings(loadedCourier);
+
+            setCouriers((prev) => {
+              const matched = prev.find(
+                (c) => c.id === user.uid || (c.email && c.email.toLowerCase() === (prof.email || '').toLowerCase())
+              );
+              if (matched) {
+                const updatedMatched = {
+                  ...matched,
+                  isKycVerified: isAccredited,
+                  status: isAccredited ? matched.status : ('hors_ligne' as const),
+                };
+                setSelectedCourier(updatedMatched);
+                return prev.map((c) => (c.id === updatedMatched.id ? updatedMatched : c));
+              }
+              const freshEntity = createFreshCourierEntity({
+                ...prof,
+                isKycVerified: isAccredited,
+              });
+              setSelectedCourier(freshEntity);
+              return [freshEntity, ...prev];
+            });
+          };
 
           if (profile) {
             effectiveProfile = profile;
             setUserProfile(profile);
-            setCurrentRole(profile.role);
-            if (profile.role === 'vendeur') {
-              let loadedMerchant: MerchantSettings | null = null;
-              try {
-                const saved = localStorage.getItem(`livralink_merchant_settings_${user.uid}`);
-                if (saved) loadedMerchant = JSON.parse(saved);
-              } catch {}
-              if (!loadedMerchant) {
-                loadedMerchant = createFreshMerchantSettings(profile);
-                try {
-                  localStorage.setItem(`livralink_merchant_settings_${user.uid}`, JSON.stringify(loadedMerchant));
-                } catch {}
-              }
-              setMerchantSettings(loadedMerchant);
-            } else if (profile.role === 'livreur') {
-              const isAccredited = Boolean(profile.isKycVerified || profile.kycStatus === 'valide');
-              let loadedCourier: CourierSettings | null = null;
-              try {
-                const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
-                if (saved) loadedCourier = JSON.parse(saved);
-              } catch {}
-              if (!loadedCourier) {
-                loadedCourier = createFreshCourierSettings(profile);
-              }
-              if (!isAccredited) {
-                loadedCourier.isAvailable = false;
-              }
-              try {
-                localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loadedCourier));
-              } catch {}
-              setCourierSettings(loadedCourier);
-
-              setCouriers((prev) => {
-                const matched = prev.find(
-                  (c) => c.id === user.uid || (c.email && c.email.toLowerCase() === (profile.email || '').toLowerCase())
-                );
-                if (matched) {
-                  const updatedMatched = {
-                    ...matched,
-                    isKycVerified: isAccredited,
-                    status: isAccredited ? matched.status : ('hors_ligne' as const),
-                  };
-                  setSelectedCourier(updatedMatched);
-                  return prev.map((c) => (c.id === updatedMatched.id ? updatedMatched : c));
-                }
-                const freshEntity = createFreshCourierEntity(profile);
-                setSelectedCourier(freshEntity);
-                return [freshEntity, ...prev];
-              });
-            } else if (profile.role === 'admin' && user.emailVerified) {
+            setCurrentRole(isMaster ? resolveMasterActiveRole(profile.role) : profile.role);
+            if (profile.role === 'vendeur' || isMaster) {
+              initMerchantSettingsForUser(profile);
+            }
+            if (profile.role === 'livreur' || isMaster) {
+              initCourierSettingsForUser(profile);
+            }
+            if ((profile.role === 'admin' && user.emailVerified) || isMaster) {
               setIsAdminSessionUnlocked(true);
             }
           } else {
@@ -1354,16 +1394,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               fullName: user.displayName || userEmail.split('@')[0] || 'Utilisateur',
               phone: user.phoneNumber || '',
               role: fallbackRole,
-              storeName: fallbackRole === 'vendeur' ? (user.displayName || 'Ma Boutique') : undefined,
-              vehicleType: fallbackRole === 'livreur' ? 'Moto 125cc' : undefined,
+              storeName: (fallbackRole === 'vendeur' || isMaster) ? (user.displayName || 'Ma Boutique') : undefined,
+              vehicleType: (fallbackRole === 'livreur' || isMaster) ? 'Moto 125cc' : undefined,
               createdAt: new Date().toISOString()
             };
             setUserProfile(effectiveProfile);
-            setCurrentRole(fallbackRole);
-            if (fallbackRole === 'vendeur') {
-              setMerchantSettings(createFreshMerchantSettings(effectiveProfile));
-            } else if (fallbackRole === 'livreur') {
-              setCourierSettings(createFreshCourierSettings(effectiveProfile));
+            setCurrentRole(isMaster ? resolveMasterActiveRole(fallbackRole) : fallbackRole);
+            if (fallbackRole === 'vendeur' || isMaster) {
+              initMerchantSettingsForUser(effectiveProfile);
+            }
+            if (fallbackRole === 'livreur' || isMaster) {
+              initCourierSettingsForUser(effectiveProfile);
             }
             if (isMaster) {
               setIsAdminSessionUnlocked(true);
@@ -1462,15 +1503,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Dismiss priority mission alert automatically if user is not logged in as courier or leaves courier space
   useEffect(() => {
     const isCourierActive =
-      (currentRole === 'livreur' || userProfile?.role === 'livreur') &&
-      (currentView.startsWith('livreur_') || currentRole === 'livreur') &&
+      (currentRole === 'livreur' || userProfile?.role === 'livreur' || isUserMasterAdmin) &&
+      currentView.startsWith('livreur_') &&
       firebaseUser != null &&
       userProfile != null;
 
     if (!isCourierActive) {
       setPriorityMissionAlert(null);
     }
-  }, [currentRole, currentView, firebaseUser, userProfile]);
+  }, [currentRole, currentView, firebaseUser, userProfile, isUserMasterAdmin]);
 
   // Explicit Firestore delivery retrieval strictly scoped by where('merchantId', '==', vendorUid) for vendors
   const fetchDeliveries = React.useCallback(async (vendorUidOverride?: string): Promise<DeliveryOrder[]> => {
@@ -1481,14 +1522,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return [];
     }
 
+    const isMasterAccount = isVerifiedMasterAdminEmail(
+      activeAuthUser.email || activeProfile?.email,
+      activeAuthUser.emailVerified
+    );
     const isVendorDirectorScope = Boolean(
       isDirectorModeActive && isAdminAuthenticated && currentRoleRef.current === 'vendeur' && (vendorUidOverride || directorTargetId)
     );
     const resolvedVendorUid = vendorUidOverride
       || (isVendorDirectorScope ? directorTargetId : null)
-      || (activeProfile?.role === 'vendeur' ? (activeProfile.uid || activeAuthUser.uid) : null);
+      || (!isMasterAccount && activeProfile?.role === 'vendeur' ? (activeProfile.uid || activeAuthUser.uid) : null);
 
-    if (resolvedVendorUid && (activeProfile?.role === 'vendeur' || isVendorDirectorScope || Boolean(vendorUidOverride))) {
+    if (resolvedVendorUid && ((!isMasterAccount && activeProfile?.role === 'vendeur') || isVendorDirectorScope || Boolean(vendorUidOverride))) {
       try {
         const deliveriesQuery = query(
           collection(db, 'deliveries'),
@@ -1549,7 +1594,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    if (activeProfile?.role === 'livreur') {
+    if (!isMasterAccount && activeProfile?.role === 'livreur') {
       try {
         const qPending = query(collection(db, 'deliveries'), where('status', '==', 'en_attente'));
         const qMine = query(collection(db, 'deliveries'), where('courierId', '==', activeAuthUser.uid));
@@ -1599,8 +1644,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const isVendorDirectorMode = Boolean(
       isDirectorModeActive && isAdminAuthenticated && currentRole === 'vendeur' && directorTargetId
     );
-    const isVendorUser = userProfile.role === 'vendeur' || isVendorDirectorMode;
-    const isCourierUser = !isVendorDirectorMode && userProfile.role === 'livreur';
+    const isVendorUser = (!isUserMasterAdmin && userProfile.role === 'vendeur') || isVendorDirectorMode;
+    const isCourierUser = !isVendorDirectorMode && !isUserMasterAdmin && userProfile.role === 'livreur';
     if (!isVendorUser && !isCourierUser) return;
 
     const currentUid = firebaseUser.uid;
@@ -1758,7 +1803,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         try { u(); } catch {}
       });
     };
-  }, [firebaseUser?.uid, firebaseUser?.emailVerified, userProfile?.role, isDirectorModeActive, isAdminAuthenticated, currentRole, directorTargetId]);
+  }, [firebaseUser?.uid, firebaseUser?.emailVerified, userProfile?.role, isUserMasterAdmin, isDirectorModeActive, isAdminAuthenticated, currentRole, directorTargetId]);
 
   // Contextual real-time Firestore listener for priority missions (strictly gated on authenticated courier/admin)
   useEffect(() => {
@@ -1778,9 +1823,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const data = change.doc.data();
             const missionId = data.id || data.orderId || change.doc.id;
 
+            const isMasterRef = isVerifiedMasterAdminEmail(
+              firebaseUserRef.current?.email || userProfileRef.current?.email,
+              firebaseUserRef.current?.emailVerified
+            );
             const isCourierActive =
-              (currentRoleRef.current === 'livreur' || userProfileRef.current?.role === 'livreur') &&
-              (currentViewRef.current.startsWith('livreur_') || currentRoleRef.current === 'livreur') &&
+              (currentRoleRef.current === 'livreur' || userProfileRef.current?.role === 'livreur' || isMasterRef) &&
+              currentViewRef.current.startsWith('livreur_') &&
               firebaseUserRef.current != null &&
               userProfileRef.current != null;
 
@@ -4390,6 +4439,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isEmailAuthorizedAdmin,
         addAuthorizedAdminEmail,
         removeAuthorizedAdminEmail,
+        isUserMasterAdmin,
         isAdminAuthenticated,
         adminLoginWithGoogle,
         adminLogout,

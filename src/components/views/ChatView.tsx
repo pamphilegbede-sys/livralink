@@ -20,7 +20,9 @@ export const ChatView: React.FC = () => {
     showToast,
     chatActiveTarget,
     setChatActiveTarget,
-    setCurrentView
+    setCurrentView,
+    isUserMasterAdmin,
+    isDirectorModeActive,
   } = useApp();
 
   const currentUserId = userProfile?.uid || (currentRole === 'vendeur' ? 'vendor-default' : 'courier-default');
@@ -108,7 +110,10 @@ export const ChatView: React.FC = () => {
       if (d.id === '#LL-4192') return;
 
       if (currentRole === 'vendeur') {
-        const isMyDelivery = Boolean(userProfile && isOrderOwnedByVendor(d, userProfile.uid || currentUserId));
+        const isMyDelivery = Boolean(
+          userProfile &&
+          (isOrderOwnedByVendor(d, userProfile.uid || currentUserId) || (isUserMasterAdmin && !isDirectorModeActive))
+        );
 
         if (!isMyDelivery) return;
 
@@ -131,7 +136,8 @@ export const ChatView: React.FC = () => {
         const isMyDelivery = Boolean(
           userProfile &&
           (d.courier?.id === (userProfile.uid || currentUserId) ||
-            (d.courier?.email && userProfile.email && d.courier.email.toLowerCase() === userProfile.email.toLowerCase()))
+            (d.courier?.email && userProfile.email && d.courier.email.toLowerCase() === userProfile.email.toLowerCase()) ||
+            (isUserMasterAdmin && !isDirectorModeActive))
         );
 
         if (!isMyDelivery) return;

@@ -9,6 +9,7 @@ import { UpdateNotificationBanner } from './components/common/UpdateNotification
 import { LandingPage } from './components/views/LandingPage';
 import { NotFoundView } from './components/views/NotFoundView';
 import { applySeoMetadata } from './config/seo';
+import { canAccessVendorSpace, canAccessCourierSpace } from './utils/deliveryIsolation';
 
 // Lazy-loaded Views for ultra-fast initial load & reduced bundle size
 const LoginVendeurPage = React.lazy(() => import('./components/views/LoginVendeurPage').then(m => ({ default: m.LoginVendeurPage })));
@@ -71,23 +72,30 @@ const MainAppRouter: React.FC = () => {
     closeChatModal,
     chatModalOrder,
     isAdminAuthenticated,
+    isUserMasterAdmin,
     isDirectorModeActive,
   } = useApp();
   const [deviceMode, setDeviceMode] = useState<'responsive' | 'mobile-mock'>('responsive');
 
   const isAuthenticated = Boolean(firebaseUser && userProfile);
-  const canAccessVendeur = Boolean(
-    isAuthenticated && (
-      userProfile?.role === 'vendeur' ||
-      (isAdminAuthenticated && (isDirectorModeActive || currentRole === 'vendeur'))
-    )
-  );
-  const canAccessLivreur = Boolean(
-    isAuthenticated && (
-      userProfile?.role === 'livreur' ||
-      (isAdminAuthenticated && (isDirectorModeActive || currentRole === 'livreur'))
-    )
-  );
+  const canAccessVendeur = canAccessVendorSpace({
+    isAuthenticated,
+    profileRole: userProfile?.role,
+    email: firebaseUser?.email || userProfile?.email,
+    emailVerified: firebaseUser?.emailVerified,
+    isAdminAuthenticated,
+    isDirectorModeActive,
+    currentRole,
+  });
+  const canAccessLivreur = canAccessCourierSpace({
+    isAuthenticated,
+    profileRole: userProfile?.role,
+    email: firebaseUser?.email || userProfile?.email,
+    emailVerified: firebaseUser?.emailVerified,
+    isAdminAuthenticated,
+    isDirectorModeActive,
+    currentRole,
+  });
 
   const effectiveView: AppView = (() => {
     if (currentView.startsWith('vendeur_') && !canAccessVendeur) return 'login_vendeur';
@@ -101,8 +109,8 @@ const MainAppRouter: React.FC = () => {
 
   const isCourierActive = Boolean(
     firebaseUser != null &&
-    userProfile?.role === 'livreur' &&
-    (currentRole === 'livreur' || currentView.startsWith('livreur_'))
+    (userProfile?.role === 'livreur' || isUserMasterAdmin) &&
+    currentView.startsWith('livreur_')
   );
 
   const renderActiveView = () => {

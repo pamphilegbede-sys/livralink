@@ -5,8 +5,7 @@ import { ForgotPasswordModal } from '../modals/ForgotPasswordModal';
 import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
 import { createFreshCourierSettings, createFreshCourierEntity } from '../../utils/userIsolation';
-
-const SUPER_ADMIN_EMAIL = 'pamphile.gbede@gmail.com';
+import { isVerifiedMasterAdminEmail } from '../../utils/deliveryIsolation';
 
 export const LoginLivreurPage: React.FC = () => {
   const { 
@@ -61,18 +60,9 @@ export const LoginLivreurPage: React.FC = () => {
     try {
       const { user, profile } = await loginWithEmailPassword(identifier, password, 'livreur');
       const resolvedRole = profile.role;
-      const isVerifiedSuperAdmin =
-        (user.email || '').toLowerCase().trim() === SUPER_ADMIN_EMAIL && user.emailVerified === true;
+      const isVerifiedSuperAdmin = isVerifiedMasterAdminEmail(user.email, user.emailVerified);
 
-      if (resolvedRole === 'admin' || isVerifiedSuperAdmin) {
-        setUserProfile(profile);
-        setCurrentRole('admin');
-        setCurrentView('admin_console');
-        showToast('Connexion Super-Admin confirmée.', 'success');
-        return;
-      }
-
-      if (resolvedRole !== 'livreur') {
+      if (resolvedRole !== 'livreur' && !isVerifiedSuperAdmin) {
         await logoutUser();
         setUserProfile(null);
         const msg =
@@ -88,14 +78,14 @@ export const LoginLivreurPage: React.FC = () => {
 
       setCurrentRole('livreur');
       setUserProfile(profile);
-      const isAccredited = Boolean(profile.isKycVerified || profile.kycStatus === 'valide');
+      const isAccredited = Boolean(profile.isKycVerified || profile.kycStatus === 'valide' || isVerifiedSuperAdmin);
       let loaded = null;
       try {
         const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
         if (saved) loaded = JSON.parse(saved);
       } catch {}
       if (!loaded) {
-        loaded = createFreshCourierSettings(profile);
+        loaded = createFreshCourierSettings({ ...profile, isKycVerified: isAccredited });
       }
       if (!isAccredited) {
         loaded.isAvailable = false;
@@ -104,9 +94,14 @@ export const LoginLivreurPage: React.FC = () => {
         localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loaded));
       } catch {}
       setCourierSettings(loaded);
-      syncCourierIdentity(profile);
+      syncCourierIdentity({ ...profile, isKycVerified: isAccredited });
       setCurrentView('livreur_dashboard');
-      showToast(`Bienvenue sur votre Espace Livreur, ${profile.fullName || user.displayName || 'Coursier'} !`, 'success');
+      showToast(
+        isVerifiedSuperAdmin
+          ? `Bienvenue sur votre Espace Livreur, ${profile.fullName || user.displayName || 'Super-Admin'} ! (Accès Admin actif)`
+          : `Bienvenue sur votre Espace Livreur, ${profile.fullName || user.displayName || 'Coursier'} !`,
+        'success'
+      );
     } catch (err: any) {
       const friendlyMsg = getFirebaseAuthErrorMessage(err);
       setErrorMessage(friendlyMsg);
@@ -122,18 +117,9 @@ export const LoginLivreurPage: React.FC = () => {
     try {
       const { user, profile, location } = await loginWithGoogle('livreur');
       const resolvedRole = profile.role;
-      const isVerifiedSuperAdmin =
-        (user.email || '').toLowerCase().trim() === SUPER_ADMIN_EMAIL && user.emailVerified === true;
+      const isVerifiedSuperAdmin = isVerifiedMasterAdminEmail(user.email, user.emailVerified);
 
-      if (resolvedRole === 'admin' || isVerifiedSuperAdmin) {
-        setUserProfile(profile);
-        setCurrentRole('admin');
-        setCurrentView('admin_console');
-        showToast('Connexion Google Super-Admin confirmée.', 'success');
-        return;
-      }
-
-      if (resolvedRole !== 'livreur') {
+      if (resolvedRole !== 'livreur' && !isVerifiedSuperAdmin) {
         await logoutUser();
         setUserProfile(null);
         const msg =
@@ -147,7 +133,7 @@ export const LoginLivreurPage: React.FC = () => {
 
       setCurrentRole('livreur');
       setUserProfile(profile);
-      const isAccredited = Boolean(profile.isKycVerified || profile.kycStatus === 'valide');
+      const isAccredited = Boolean(profile.isKycVerified || profile.kycStatus === 'valide' || isVerifiedSuperAdmin);
       let loaded = null;
       try {
         const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
@@ -156,6 +142,7 @@ export const LoginLivreurPage: React.FC = () => {
       if (!loaded) {
         loaded = createFreshCourierSettings({
           ...profile,
+          isKycVerified: isAccredited,
           locationCommune: location?.commune || profile.locationCommune,
           locationAddress: location?.address || profile.locationAddress,
           gpsCoordinates: location?.gpsCoordinates || profile.gpsCoordinates,
@@ -168,9 +155,14 @@ export const LoginLivreurPage: React.FC = () => {
         localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loaded));
       } catch {}
       setCourierSettings(loaded);
-      syncCourierIdentity(profile);
+      syncCourierIdentity({ ...profile, isKycVerified: isAccredited });
       setCurrentView('livreur_dashboard');
-      showToast(`Connexion Google réussie ! Bienvenue ${profile.fullName || user.displayName || 'Coursier'}.`, 'success');
+      showToast(
+        isVerifiedSuperAdmin
+          ? `Connexion Google réussie ! Bienvenue ${profile.fullName || user.displayName || 'Super-Admin'} (Espace Livreur & Admin actif).`
+          : `Connexion Google réussie ! Bienvenue ${profile.fullName || user.displayName || 'Coursier'}.`,
+        'success'
+      );
     } catch (err: any) {
       const errorMsg = getFirebaseAuthErrorMessage(err);
       setErrorMessage(errorMsg);

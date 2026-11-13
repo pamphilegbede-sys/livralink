@@ -11,6 +11,7 @@ import {
   createFreshMerchantEntity, 
   createFreshCourierEntity 
 } from '../../utils/userIsolation';
+import { isVerifiedMasterAdminEmail } from '../../utils/deliveryIsolation';
 import { sendWelcomeEmail } from '../../services/emailService';
 import { PrivacyPolicyModal } from '../modals/PrivacyPolicyModal';
 
@@ -157,7 +158,8 @@ export const RegisterPage: React.FC = () => {
     setErrorMessage(null);
     try {
       const { user, profile, isNewUser } = await loginWithGoogle(selectedRole);
-      if (!isNewUser && profile.role !== selectedRole) {
+      const isVerifiedSuperAdmin = isVerifiedMasterAdminEmail(user.email, user.emailVerified);
+      if (!isNewUser && profile.role !== selectedRole && !isVerifiedSuperAdmin) {
         await logoutUser();
         setUserProfile(null);
         const existingLabel = profile.role === 'livreur' ? 'Livreur' : profile.role === 'vendeur' ? 'Vendeur' : 'Administrateur';
@@ -167,9 +169,10 @@ export const RegisterPage: React.FC = () => {
         return;
       }
 
-      setCurrentRole(profile.role);
+      const targetRole = isVerifiedSuperAdmin ? selectedRole : profile.role;
+      setCurrentRole(targetRole);
       setUserProfile(profile);
-      if (profile.role === 'vendeur') {
+      if (targetRole === 'vendeur') {
         const freshMerchant = createFreshMerchantSettings(profile);
         setMerchantSettings(freshMerchant);
         try {
@@ -179,19 +182,25 @@ export const RegisterPage: React.FC = () => {
         const merchantEntity = createFreshMerchantEntity(profile);
         setMerchants((prev) => [merchantEntity, ...prev.filter((m) => m.id !== profile.uid)]);
         setCurrentView('vendeur_dashboard');
-      } else if (profile.role === 'livreur') {
-        const freshCourierSettings = createFreshCourierSettings(profile);
+      } else if (targetRole === 'livreur') {
+        const freshCourierSettings = createFreshCourierSettings({
+          ...profile,
+          isKycVerified: Boolean(profile.isKycVerified || isVerifiedSuperAdmin),
+        });
         setCourierSettings(freshCourierSettings);
         try {
           localStorage.setItem(`livralink_courier_settings_${profile.uid}`, JSON.stringify(freshCourierSettings));
         } catch {}
 
-        const courierEntity = createFreshCourierEntity(profile);
+        const courierEntity = createFreshCourierEntity({
+          ...profile,
+          isKycVerified: Boolean(profile.isKycVerified || isVerifiedSuperAdmin),
+        });
         setCouriers((prev) => [courierEntity, ...prev.filter((c) => c.id !== profile.uid)]);
         setSelectedCourier(courierEntity);
         setCurrentView('livreur_dashboard');
       } else {
-        setCurrentView('admin_console');
+        setCurrentView('landing');
       }
       showToast(`Inscription Google réussie ! Bienvenue ${profile.fullName || user.displayName || 'Utilisateur'}.`, 'success');
 
