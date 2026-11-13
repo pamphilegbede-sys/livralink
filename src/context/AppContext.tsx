@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User as FirebaseUser, onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from '../firebase/config';
 import { UserProfile, getUserProfile, logoutUser, detectAndSaveUserLocation } from '../firebase/authService';
+import { handleFirestoreError, OperationType } from '../firebase/firestoreService';
 import {
   UserRole,
   DeliveryOrder,
@@ -57,7 +58,17 @@ import {
   createFreshCourierSettings, 
   createFreshCourierEntity 
 } from '../utils/userIsolation';
+import {
+  DeliveryDraftData,
+  isOrderOwnedByVendor,
+  sanitizeDuplicateOrderDraft,
+} from '../utils/deliveryIsolation';
 import { runDeliveryStepValidationTestSuite } from '../utils/deliveryValidationTests';
+import {
+  normalizePathname,
+  resolveAppViewFromPathname,
+  VIEW_TO_PATH,
+} from '../config/seo';
 
 export type AppView =
   | 'landing'
@@ -75,7 +86,8 @@ export type AppView =
   | 'livreur_wallet'
   | 'livreur_settings'
   | 'livreur_chat'
-  | 'admin_console';
+  | 'admin_console'
+  | 'not_found';
 
 export type AdminTab =
   | 'overview'
@@ -141,6 +153,7 @@ interface AppContextType {
   setPricingRules: React.Dispatch<React.SetStateAction<PricingRule>>;
   
   // Interactive Actions
+  fetchDeliveries: (vendorUidOverride?: string) => Promise<DeliveryOrder[]>;
   createDelivery: (newOrder: Partial<DeliveryOrder>) => DeliveryOrder;
   acceptDelivery: (orderId: string, customCourier?: Courier) => void | Promise<void>;
   refuseDelivery: (orderId: string, reason?: string) => void;
@@ -167,6 +180,9 @@ interface AppContextType {
   // Admin Entity Management & Full Control
   deleteDelivery: (orderId: string) => void;
   updateDeliveryDetails: (orderId: string, updates: Partial<DeliveryOrder>) => void;
+  deliveryDraft: DeliveryDraftData | null;
+  setDeliveryDraft: React.Dispatch<React.SetStateAction<DeliveryDraftData | null>>;
+  duplicateDeliveryOrder: (orderId: string) => boolean;
   addCourier: (newCourier: Partial<Courier>) => void;
   updateCourier: (id: string, updates: Partial<Courier>) => void;
   deleteCourier: (id: string) => void;
@@ -262,6 +278,7 @@ interface AppContextType {
 
   // Director Mode (Prise de Contrôle Absolue des Pages Vendeurs et Livreurs)
   isDirectorModeActive: boolean;
+  directorTargetId: string | null;
   directorTargetName: string | null;
   impersonateMerchant: (merchantId: string) => void;
   impersonateCourier: (courierId: string) => void;
@@ -353,8 +370,26 @@ const clearAllSessionCaches = () => {
 const isAuthenticatedAppView = (view: AppView): boolean =>
   view.startsWith('vendeur_') || view.startsWith('livreur_') || view === 'admin_console';
 
+const syncBrowserUrlForView = (view: AppView, replace = false) => {
+  if (typeof window === 'undefined') return;
+  const targetPath = VIEW_TO_PATH[view];
+  if (!targetPath || view === 'not_found') return;
+  const currentPath = normalizePathname(window.location.pathname);
+  if (currentPath !== targetPath) {
+    try {
+      if (replace) {
+        window.history.replaceState({ view }, '', targetPath);
+      } else {
+        window.history.pushState({ view }, '', targetPath);
+      }
+    } catch {}
+  }
+};
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentView, setCurrentViewState] = useState<AppView>('landing');
+  const [currentView, setCurrentViewState] = useState<AppView>(() =>
+    typeof window !== 'undefined' ? resolveAppViewFromPathname(window.location.pathname) : 'landing'
+  );
   const [viewHistory, setViewHistory] = useState<AppView[]>([]);
   const [currentRole, setCurrentRole] = useState<UserRole>('vendeur');
   const [courierMissionsFilter, setCourierMissionsFilter] = useState<'all' | 'en_attente' | 'en_cours' | 'livree'>('all');
@@ -369,6 +404,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setViewHistory((prev) => [...prev.slice(-30), currentView]);
       setCurrentViewState(nextView);
     }
+    syncBrowserUrlForView(nextView, false);
     try {
       const uid = auth.currentUser?.uid || firebaseUser?.uid;
       if (uid && isAuthenticatedAppView(nextView)) {
@@ -378,6 +414,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     } catch {}
   };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handlePopState = () => {
+      const targetView = resolveAppViewFromPathname(window.location.pathname);
+      if (targetView.startsWith('vendeur_')) {
+        setCurrentRole('vendeur');
+      } else if (targetView.startsWith('livreur_')) {
+        setCurrentRole('livreur');
+      } else if (targetView === 'admin_console') {
+        setCurrentRole('admin');
+      }
+      setCurrentViewState(targetView);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   const navigateBack = () => {
     // Defense: If user is authenticated, ignore unauthenticated entry screens in back stack
@@ -401,15 +454,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       setCurrentViewState(prevView);
+      syncBrowserUrlForView(prevView, true);
     } else {
       if (currentRole === 'vendeur' && currentView !== 'vendeur_dashboard') {
         setCurrentViewState('vendeur_dashboard');
+        syncBrowserUrlForView('vendeur_dashboard', true);
       } else if (currentRole === 'livreur' && currentView !== 'livreur_dashboard') {
         setCurrentViewState('livreur_dashboard');
+        syncBrowserUrlForView('livreur_dashboard', true);
       } else if (currentRole === 'admin' && currentView !== 'admin_console') {
         setCurrentViewState('admin_console');
+        syncBrowserUrlForView('admin_console', true);
       } else if (!userProfile && !firebaseUser) {
         setCurrentViewState('landing');
+        syncBrowserUrlForView('landing', true);
       }
     }
   };
@@ -442,6 +500,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [selectedDelivery, setSelectedDelivery] = useState<DeliveryOrder | null>(deliveries[0] || null);
+  const [deliveryDraft, setDeliveryDraft] = useState<DeliveryDraftData | null>(null);
+  const lastAuthUidRef = React.useRef<string | null>(null);
   const [merchantSettings, setMerchantSettings] = useState<MerchantSettings>(INITIAL_MERCHANT_SETTINGS);
   const [courierSettings, setCourierSettings] = useState<CourierSettings>(INITIAL_COURIER_SETTINGS);
   const [kycRequests, setKycRequests] = useState<KYCUserRequest[]>(INITIAL_KYC_REQUESTS);
@@ -970,6 +1030,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Director Mode (Prise de Contrôle Absolue des Pages Vendeurs et Livreurs — exclusivement Super-Admin authentifié)
   const [isDirectorModeActive, setIsDirectorModeActive] = useState<boolean>(false);
+  const [directorTargetId, setDirectorTargetId] = useState<string | null>(null);
   const [directorTargetName, setDirectorTargetName] = useState<string | null>(null);
 
   const impersonateMerchant = (merchantId: string) => {
@@ -991,9 +1052,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
 
     setIsDirectorModeActive(true);
+    setDirectorTargetId(merchant.id);
     setDirectorTargetName(merchant.storeName);
+    setDeliveries((prev) => prev.filter((d) => isOrderOwnedByVendor(d, merchant.id)));
+    setSelectedDelivery((prev) => (prev && isOrderOwnedByVendor(prev, merchant.id) ? prev : null));
     setCurrentRole('vendeur');
     setCurrentViewState('vendeur_dashboard');
+    void fetchDeliveries(merchant.id);
     addAuditLog('system', `Prise de contrôle Directeur : ${merchant.storeName}`, `L'administrateur supervise directement l'espace de la boutique ${merchant.storeName} (${merchant.id})`);
     showToast(`👑 Mode Directeur Admin activé : Vous pilotez la boutique "${merchant.storeName}".`, 'success');
   };
@@ -1018,6 +1083,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
 
     setIsDirectorModeActive(true);
+    setDirectorTargetId(courier.id);
     setDirectorTargetName(courier.name);
     setCurrentRole('livreur');
     setCurrentViewState('livreur_dashboard');
@@ -1027,9 +1093,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const exitDirectorMode = () => {
     setIsDirectorModeActive(false);
+    setDirectorTargetId(null);
     setDirectorTargetName(null);
     setCurrentRole('admin');
     setCurrentViewState('admin_console');
+    void refreshAdminData(true);
     showToast(`Retour à la Console Administrateur.`, 'info');
   };
 
@@ -1143,9 +1211,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const adminLogout = async () => {
     clearAllSessionCaches();
+    lastAuthUidRef.current = null;
     setIsAdminSessionUnlocked(false);
     setIsDirectorModeActive(false);
+    setDirectorTargetId(null);
     setDirectorTargetName(null);
+    setDeliveryDraft(null);
     setPriorityMissionAlert(null);
     setAdminSyncWarnings([]);
     setDeliveries([]);
@@ -1191,6 +1262,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Listen to real Firebase Auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      const nextUid = user?.uid || null;
+      if (lastAuthUidRef.current !== nextUid) {
+        // Strict cross-account memory & cache purge on any account change
+        lastAuthUidRef.current = nextUid;
+        setDeliveries([]);
+        setSelectedDelivery(null);
+        setDeliveryDraft(null);
+        setNotifications([]);
+        setChatMessages([]);
+        setPriorityMissionAlert(null);
+        setIsDirectorModeActive(false);
+        setDirectorTargetId(null);
+        setDirectorTargetName(null);
+        notifiedMissionsRef.current.clear();
+        try {
+          localStorage.removeItem('livralink_notifications');
+        } catch {}
+      }
+
       setFirebaseUser(user);
       if (user) {
         try {
@@ -1298,12 +1388,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   if (canRestoreAdmin) {
                     setCurrentRole('admin');
                     setCurrentViewState('admin_console');
+                    syncBrowserUrlForView('admin_console', true);
                   } else if (canRestoreVendor) {
                     setCurrentRole('vendeur');
                     setCurrentViewState(savedView);
+                    syncBrowserUrlForView(savedView, true);
                   } else if (canRestoreCourier) {
                     setCurrentRole('livreur');
                     setCurrentViewState(savedView);
+                    syncBrowserUrlForView(savedView, true);
                   }
                 }
               }
@@ -1334,6 +1427,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSelectedDelivery(null);
         if (isAuthenticatedAppView(currentViewRef.current)) {
           setCurrentViewState('landing');
+          syncBrowserUrlForView('landing', true);
         }
       }
       setIsAuthLoading(false);
@@ -1378,51 +1472,282 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [currentRole, currentView, firebaseUser, userProfile]);
 
-  // Real-time Firestore deliveries listener for authenticated Vendors & Couriers
+  // Explicit Firestore delivery retrieval strictly scoped by where('merchantId', '==', vendorUid) for vendors
+  const fetchDeliveries = React.useCallback(async (vendorUidOverride?: string): Promise<DeliveryOrder[]> => {
+    const activeAuthUser = auth.currentUser || firebaseUserRef.current;
+    const activeProfile = userProfileRef.current;
+    if (!activeAuthUser) {
+      setDeliveries([]);
+      return [];
+    }
+
+    const isVendorDirectorScope = Boolean(
+      isDirectorModeActive && isAdminAuthenticated && currentRoleRef.current === 'vendeur' && (vendorUidOverride || directorTargetId)
+    );
+    const resolvedVendorUid = vendorUidOverride
+      || (isVendorDirectorScope ? directorTargetId : null)
+      || (activeProfile?.role === 'vendeur' ? (activeProfile.uid || activeAuthUser.uid) : null);
+
+    if (resolvedVendorUid && (activeProfile?.role === 'vendeur' || isVendorDirectorScope || Boolean(vendorUidOverride))) {
+      try {
+        const deliveriesQuery = query(
+          collection(db, 'deliveries'),
+          where('merchantId', '==', resolvedVendorUid)
+        );
+        const missionsQuery = query(
+          collection(db, 'priority_missions'),
+          where('merchantId', '==', resolvedVendorUid)
+        );
+
+        const [deliveriesSnap, missionsSnap] = await Promise.all([
+          getDocs(deliveriesQuery),
+          getDocs(missionsQuery),
+        ]);
+
+        const byNormId = new Map<string, DeliveryOrder>();
+        const nowMs = Date.now();
+        deliveriesRef.current.forEach((d) => {
+          if (isOrderOwnedByVendor(d, resolvedVendorUid)) {
+            const createdMs = d.createdAt ? new Date(d.createdAt).getTime() : 0;
+            if (createdMs > 0 && nowMs - createdMs < 15000) {
+              byNormId.set(d.id.replace(/^#/, ''), d);
+            }
+          }
+        });
+
+        missionsSnap.docs.forEach((docSnap) => {
+          const mapped = mapPriorityMissionToOrder(docSnap.data(), docSnap.id);
+          if (isOrderOwnedByVendor(mapped, resolvedVendorUid)) {
+            const norm = mapped.id.replace(/^#/, '');
+            if (norm) byNormId.set(norm, mapped);
+          }
+        });
+
+        deliveriesSnap.docs.forEach((docSnap) => {
+          const mapped = mapFirestoreDeliveryToOrder(docSnap.data(), docSnap.id);
+          if (isOrderOwnedByVendor(mapped, resolvedVendorUid)) {
+            const norm = mapped.id.replace(/^#/, '');
+            const prevOrd = byNormId.get(norm);
+            byNormId.set(
+              norm,
+              prevOrd
+                ? { ...prevOrd, ...mapped, timeline: mapped.timeline.length > 0 ? mapped.timeline : prevOrd.timeline }
+                : mapped
+            );
+          }
+        });
+
+        const scopedList = Array.from(byNormId.values());
+        setDeliveries(scopedList);
+        return scopedList;
+      } catch (err: any) {
+        if (err?.code === 'permission-denied' && activeAuthUser.emailVerified) {
+          handleFirestoreError(err, OperationType.LIST, 'deliveries');
+        }
+        console.warn('Erreur récupération livraisons vendeur:', err?.message || err);
+        return [];
+      }
+    }
+
+    if (activeProfile?.role === 'livreur') {
+      try {
+        const qPending = query(collection(db, 'deliveries'), where('status', '==', 'en_attente'));
+        const qMine = query(collection(db, 'deliveries'), where('courierId', '==', activeAuthUser.uid));
+        const [pendingSnap, mineSnap] = await Promise.all([getDocs(qPending), getDocs(qMine)]);
+        const merged = new Map<string, DeliveryOrder>();
+        pendingSnap.docs.forEach((d) => {
+          const mapped = mapFirestoreDeliveryToOrder(d.data(), d.id);
+          merged.set(mapped.id.replace(/^#/, ''), mapped);
+        });
+        mineSnap.docs.forEach((d) => {
+          const mapped = mapFirestoreDeliveryToOrder(d.data(), d.id);
+          merged.set(mapped.id.replace(/^#/, ''), mapped);
+        });
+        const list = Array.from(merged.values());
+        setDeliveries(list);
+        return list;
+      } catch (err: any) {
+        if (err?.code === 'permission-denied' && activeAuthUser.emailVerified) {
+          handleFirestoreError(err, OperationType.LIST, 'deliveries');
+        }
+        console.warn('Erreur récupération livraisons livreur:', err?.message || err);
+        return [];
+      }
+    }
+
+    if (isAdminAuthenticated) {
+      try {
+        const snap = await getDocs(collection(db, 'deliveries'));
+        const list = snap.docs.map((d) => mapFirestoreDeliveryToOrder(d.data(), d.id));
+        setDeliveries(list);
+        return list;
+      } catch (err: any) {
+        if (err?.code === 'permission-denied') {
+          handleFirestoreError(err, OperationType.LIST, 'deliveries');
+        }
+        console.warn('Erreur récupération livraisons admin:', err?.message || err);
+        return [];
+      }
+    }
+
+    return [];
+  }, [isAdminAuthenticated, isDirectorModeActive, directorTargetId]);
+
+  // Real-time Firestore deliveries listener for authenticated Vendors & Couriers (and Vendor Director Mode)
   useEffect(() => {
     if (!firebaseUser || !firebaseUser.emailVerified || !userProfile) return;
-    if (userProfile.role !== 'vendeur' && userProfile.role !== 'livreur') return;
+    const isVendorDirectorMode = Boolean(
+      isDirectorModeActive && isAdminAuthenticated && currentRole === 'vendeur' && directorTargetId
+    );
+    const isVendorUser = userProfile.role === 'vendeur' || isVendorDirectorMode;
+    const isCourierUser = !isVendorDirectorMode && userProfile.role === 'livreur';
+    if (!isVendorUser && !isCourierUser) return;
 
+    const currentUid = firebaseUser.uid;
+    const targetVendorUid = isVendorDirectorMode && directorTargetId ? directorTargetId : currentUid;
     const unsubs: Array<() => void> = [];
-    const mergeOrders = (incomingOrders: DeliveryOrder[]) => {
-      if (incomingOrders.length === 0) return;
-      setDeliveries((prev) => {
-        const byNormId = new Map<string, DeliveryOrder>();
-        prev.forEach((d) => byNormId.set(d.id.replace(/^#/, ''), d));
-        incomingOrders.forEach((ord) => {
-          const norm = ord.id.replace(/^#/, '');
-          const prevOrd = byNormId.get(norm);
-          byNormId.set(norm, prevOrd ? { ...prevOrd, ...ord, timeline: ord.timeline.length > 0 ? ord.timeline : prevOrd.timeline } : ord);
-        });
-        return Array.from(byNormId.values());
-      });
-    };
 
-    if (userProfile.role === 'vendeur') {
+    if (isVendorUser) {
+      const deliveriesMap = new Map<string, DeliveryOrder>();
+      const missionsMap = new Map<string, DeliveryOrder>();
+
+      const syncVendorDeliveries = () => {
+        const merged = new Map<string, DeliveryOrder>();
+        const nowMs = Date.now();
+        deliveriesRef.current.forEach((d) => {
+          if (isOrderOwnedByVendor(d, targetVendorUid)) {
+            const createdMs = d.createdAt ? new Date(d.createdAt).getTime() : 0;
+            if (createdMs > 0 && nowMs - createdMs < 15000) {
+              merged.set(d.id.replace(/^#/, ''), d);
+            }
+          }
+        });
+        missionsMap.forEach((ord, norm) => {
+          if (isOrderOwnedByVendor(ord, targetVendorUid)) {
+            merged.set(norm, ord);
+          }
+        });
+        deliveriesMap.forEach((ord, norm) => {
+          if (isOrderOwnedByVendor(ord, targetVendorUid)) {
+            const prevOrd = merged.get(norm);
+            merged.set(
+              norm,
+              prevOrd
+                ? { ...prevOrd, ...ord, timeline: ord.timeline.length > 0 ? ord.timeline : prevOrd.timeline }
+                : ord
+            );
+          }
+        });
+        setDeliveries(Array.from(merged.values()));
+      };
+
       try {
-        const q = query(collection(db, 'deliveries'), where('merchantId', '==', firebaseUser.uid));
+        const qDeliveries = query(
+          collection(db, 'deliveries'),
+          where('merchantId', '==', targetVendorUid)
+        );
+        const qMissions = query(
+          collection(db, 'priority_missions'),
+          where('merchantId', '==', targetVendorUid)
+        );
+
         unsubs.push(
           onSnapshot(
-            q,
-            (snap) => mergeOrders(snap.docs.map((d) => mapFirestoreDeliveryToOrder(d.data(), d.id))),
-            (err) => console.warn('Écouteur vendeur deliveries:', err?.message || err)
+            qDeliveries,
+            (snap) => {
+              deliveriesMap.clear();
+              snap.docs.forEach((d) => {
+                const ord = mapFirestoreDeliveryToOrder(d.data(), d.id);
+                if (isOrderOwnedByVendor(ord, targetVendorUid)) {
+                  deliveriesMap.set(ord.id.replace(/^#/, ''), ord);
+                }
+              });
+              syncVendorDeliveries();
+            },
+            (err: any) => {
+              if (err?.code === 'permission-denied') {
+                handleFirestoreError(err, OperationType.LIST, 'deliveries');
+              }
+              console.warn('Écouteur vendeur deliveries:', err?.message || err);
+            }
+          ),
+          onSnapshot(
+            qMissions,
+            (snap) => {
+              missionsMap.clear();
+              snap.docs.forEach((d) => {
+                const ord = mapPriorityMissionToOrder(d.data(), d.id);
+                if (isOrderOwnedByVendor(ord, targetVendorUid)) {
+                  missionsMap.set(ord.id.replace(/^#/, ''), ord);
+                }
+              });
+              syncVendorDeliveries();
+            },
+            (err: any) => {
+              if (err?.code === 'permission-denied') {
+                handleFirestoreError(err, OperationType.LIST, 'priority_missions');
+              }
+              console.warn('Écouteur vendeur priority_missions:', err?.message || err);
+            }
           )
         );
       } catch {}
-    } else if (userProfile.role === 'livreur') {
+    } else if (isCourierUser) {
+      const pendingMap = new Map<string, DeliveryOrder>();
+      const mineMap = new Map<string, DeliveryOrder>();
+
+      const syncCourierDeliveries = () => {
+        const merged = new Map<string, DeliveryOrder>();
+        pendingMap.forEach((ord, norm) => merged.set(norm, ord));
+        mineMap.forEach((ord, norm) => {
+          const prevOrd = merged.get(norm);
+          merged.set(
+            norm,
+            prevOrd
+              ? { ...prevOrd, ...ord, timeline: ord.timeline.length > 0 ? ord.timeline : prevOrd.timeline }
+              : ord
+          );
+        });
+        setDeliveries(Array.from(merged.values()));
+      };
+
       try {
         const qPending = query(collection(db, 'deliveries'), where('status', '==', 'en_attente'));
-        const qMine = query(collection(db, 'deliveries'), where('courierId', '==', firebaseUser.uid));
+        const qMine = query(collection(db, 'deliveries'), where('courierId', '==', currentUid));
         unsubs.push(
           onSnapshot(
             qPending,
-            (snap) => mergeOrders(snap.docs.map((d) => mapFirestoreDeliveryToOrder(d.data(), d.id))),
-            (err) => console.warn('Écouteur livreur pending deliveries:', err?.message || err)
+            (snap) => {
+              pendingMap.clear();
+              snap.docs.forEach((d) => {
+                const mapped = mapFirestoreDeliveryToOrder(d.data(), d.id);
+                pendingMap.set(mapped.id.replace(/^#/, ''), mapped);
+              });
+              syncCourierDeliveries();
+            },
+            (err: any) => {
+              if (err?.code === 'permission-denied') {
+                handleFirestoreError(err, OperationType.LIST, 'deliveries');
+              }
+              console.warn('Écouteur livreur pending deliveries:', err?.message || err);
+            }
           ),
           onSnapshot(
             qMine,
-            (snap) => mergeOrders(snap.docs.map((d) => mapFirestoreDeliveryToOrder(d.data(), d.id))),
-            (err) => console.warn('Écouteur livreur my deliveries:', err?.message || err)
+            (snap) => {
+              mineMap.clear();
+              snap.docs.forEach((d) => {
+                const mapped = mapFirestoreDeliveryToOrder(d.data(), d.id);
+                mineMap.set(mapped.id.replace(/^#/, ''), mapped);
+              });
+              syncCourierDeliveries();
+            },
+            (err: any) => {
+              if (err?.code === 'permission-denied') {
+                handleFirestoreError(err, OperationType.LIST, 'deliveries');
+              }
+              console.warn('Écouteur livreur my deliveries:', err?.message || err);
+            }
           )
         );
       } catch {}
@@ -1433,7 +1758,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         try { u(); } catch {}
       });
     };
-  }, [firebaseUser?.uid, firebaseUser?.emailVerified, userProfile?.role]);
+  }, [firebaseUser?.uid, firebaseUser?.emailVerified, userProfile?.role, isDirectorModeActive, isAdminAuthenticated, currentRole, directorTargetId]);
 
   // Contextual real-time Firestore listener for priority missions (strictly gated on authenticated courier/admin)
   useEffect(() => {
@@ -1539,7 +1864,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     remoteKyc?: KYCUserRequest[]
   ) => {
     let activeDeliveries = deliveriesRef.current;
-    if (Array.isArray(remoteDeliveries) && remoteDeliveries.length > 0) {
+    const isVendorDirectorScoped = Boolean(isDirectorModeActive && currentRoleRef.current === 'vendeur');
+    if (!isVendorDirectorScoped && Array.isArray(remoteDeliveries) && remoteDeliveries.length > 0) {
       setDeliveries((prev) => {
         const byNormId = new Map<string, DeliveryOrder>();
         prev.forEach((d) => byNormId.set(d.id.replace(/^#/, ''), d));
@@ -1748,7 +2074,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     if (!isAdminAuthenticated || !firebaseUser) return;
 
-    refreshAdminData(true);
+    if (!isDirectorModeActive) {
+      refreshAdminData(true);
+    }
 
     const unsubscribers: Array<() => void> = [];
     const appendSyncWarning = (label: string, err: any) => {
@@ -1772,39 +2100,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubscribers.push(unsubUsers);
     } catch {}
 
-    try {
-      const unsubDeliveries = onSnapshot(
-        collection(db, 'deliveries'),
-        (snapshot) => {
-          const remoteDeliveries = snapshot.docs.map((d) => mapFirestoreDeliveryToOrder(d.data(), d.id));
-          applyRemoteAdminSnapshot([], remoteDeliveries);
-        },
-        (err) => appendSyncWarning('Écouteur Admin deliveries', err)
-      );
-      unsubscribers.push(unsubDeliveries);
-    } catch {}
+    if (!isDirectorModeActive) {
+      try {
+        const unsubDeliveries = onSnapshot(
+          collection(db, 'deliveries'),
+          (snapshot) => {
+            if (isDirectorModeActive && currentRoleRef.current === 'vendeur') return;
+            const remoteDeliveries = snapshot.docs.map((d) => mapFirestoreDeliveryToOrder(d.data(), d.id));
+            applyRemoteAdminSnapshot([], remoteDeliveries);
+          },
+          (err) => appendSyncWarning('Écouteur Admin deliveries', err)
+        );
+        unsubscribers.push(unsubDeliveries);
+      } catch {}
 
-    try {
-      const unsubMissions = onSnapshot(
-        collection(db, 'priority_missions'),
-        (snapshot) => {
-          const remoteMissions = snapshot.docs.map((d) => mapPriorityMissionToOrder(d.data(), d.id));
-          setDeliveries((prev) => {
-            const byNormId = new Map<string, DeliveryOrder>();
-            prev.forEach((d) => byNormId.set(d.id.replace(/^#/, ''), d));
-            remoteMissions.forEach((pm) => {
-              const norm = pm.id.replace(/^#/, '');
-              if (!byNormId.has(norm)) {
-                byNormId.set(norm, pm);
-              }
+      try {
+        const unsubMissions = onSnapshot(
+          collection(db, 'priority_missions'),
+          (snapshot) => {
+            if (isDirectorModeActive && currentRoleRef.current === 'vendeur') return;
+            const remoteMissions = snapshot.docs.map((d) => mapPriorityMissionToOrder(d.data(), d.id));
+            setDeliveries((prev) => {
+              const byNormId = new Map<string, DeliveryOrder>();
+              prev.forEach((d) => byNormId.set(d.id.replace(/^#/, ''), d));
+              remoteMissions.forEach((pm) => {
+                const norm = pm.id.replace(/^#/, '');
+                if (!byNormId.has(norm)) {
+                  byNormId.set(norm, pm);
+                }
+              });
+              return Array.from(byNormId.values());
             });
-            return Array.from(byNormId.values());
-          });
-        },
-        (err) => appendSyncWarning('Écouteur Admin priority_missions', err)
-      );
-      unsubscribers.push(unsubMissions);
-    } catch {}
+          },
+          (err) => appendSyncWarning('Écouteur Admin priority_missions', err)
+        );
+        unsubscribers.push(unsubMissions);
+      } catch {}
+    }
 
     try {
       const unsubKyc = onSnapshot(
@@ -1825,7 +2157,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         } catch {}
       });
     };
-  }, [isAdminAuthenticated, firebaseUser?.uid]);
+  }, [isAdminAuthenticated, firebaseUser?.uid, isDirectorModeActive]);
 
   // Keep per-merchant order count & COD volume dynamically accurate when deliveries update
   useEffect(() => {
@@ -1914,11 +2246,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const logout = async () => {
     const prevRole = currentRole;
     clearAllSessionCaches();
+    lastAuthUidRef.current = null;
     setFirebaseUser(null);
     setUserProfile(null);
     setIsAdminSessionUnlocked(false);
     setIsDirectorModeActive(false);
+    setDirectorTargetId(null);
     setDirectorTargetName(null);
+    setDeliveryDraft(null);
     setPriorityMissionAlert(null);
     setAdminSyncWarnings([]);
     setDeliveries([]);
@@ -1938,12 +2273,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     const targetView: AppView = prevRole === 'livreur' ? 'login_livreur' : 'login_vendeur';
     setCurrentViewState(targetView);
+    syncBrowserUrlForView(targetView, true);
     showToast('Session déconnectée avec succès.', 'info');
   };
 
   const createDelivery = (newOrderData: Partial<DeliveryOrder>): DeliveryOrder => {
-    const nextNum = Math.floor(1000 + Math.random() * 9000);
-    const newId = `#LL-${nextNum}`;
+    const randPart = Math.floor(1000 + Math.random() * 9000);
+    const timePart = Date.now().toString(36).toUpperCase().slice(-4);
+    const newId = `#LL-${timePart}${randPart}`;
     const calculatedFee = typeof newOrderData.deliveryFee === 'number'
       ? newOrderData.deliveryFee
       : (newOrderData.pickupLocation?.coordinates && newOrderData.dropoffLocation?.coordinates
@@ -1953,7 +2290,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ))
           : 100);
     const codVal = typeof newOrderData.itemValueCOD === 'number' ? newOrderData.itemValueCOD : 0;
-    
+
     const clientName = newOrderData.clientName?.trim() || 'Client';
     const clientPhone = newOrderData.clientPhone?.trim() || '';
     const clientNote = newOrderData.clientNote?.trim() || '';
@@ -1961,6 +2298,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Ne pas forcer un livreur automatiquement si non spécifié : la course doit rester disponible pour tous les livreurs
     const courierObj = newOrderData.courier || undefined;
     const initialStatus: DeliveryStatus = newOrderData.status || (courierObj ? 'assignee' : 'en_attente');
+
+    const authenticatedMerchantUid =
+      (isDirectorModeActive && isAdminAuthenticated && directorTargetId)
+        ? directorTargetId
+        : (auth.currentUser?.uid || firebaseUser?.uid || userProfile?.uid);
+
+    const resolvedStoreName =
+      merchantSettings.storeName?.trim() ||
+      newOrderData.pickupLocation?.name?.trim() ||
+      userProfile?.storeName?.trim() ||
+      'Ma Boutique';
 
     const newOrder: DeliveryOrder = {
       id: newId,
@@ -1970,9 +2318,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       isClientVerified: Boolean(clientPhone),
       channel: newOrderData.channel || 'WhatsApp',
       pickupLocation: newOrderData.pickupLocation || {
-        name: merchantSettings.storeName || 'Boutique Vendeur',
-        address: merchantSettings.defaultPickupAddress || 'Haie Vive, Avenue Jean-Paul II, Cotonou',
-        commune: 'Cotonou - Haie Vive'
+        name: resolvedStoreName,
+        address: merchantSettings.defaultPickupAddress || merchantSettings.storeCommune || 'Cotonou',
+        commune: merchantSettings.storeCommune || 'Cotonou - Haie Vive'
       },
       dropoffLocation: newOrderData.dropoffLocation || {
         name: clientName,
@@ -1988,32 +2336,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       totalCustomerPayable: codVal + calculatedFee,
       courier: courierObj,
       status: initialStatus,
-      statusNote: newOrderData.statusNote || (courierObj 
+      statusNote: newOrderData.statusNote || (courierObj
         ? `Assignée à ${courierObj.name}`
         : `Course publiée • Disponible pour tous les livreurs de la zone`),
       createdAt: new Date().toISOString(),
       estimatedArrival: 'Dans ~20 min',
       otpCode: newOrderData.otpCode || Math.floor(1000 + Math.random() * 9000).toString(),
       otpGeneratedAt: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-      merchantId: userProfile?.uid,
+      merchantId: authenticatedMerchantUid,
       merchantEmail: userProfile?.email || merchantSettings.email,
-      merchantStoreName: merchantSettings.storeName,
+      merchantStoreName: resolvedStoreName,
       timeline: [
         { id: 't1', stepNumber: 1, title: 'Commande créée', description: 'Enregistrée avec succès', timestamp: 'Maintenant', status: 'completed' },
-        { 
-          id: 't2', 
-          stepNumber: 2, 
-          title: courierObj ? 'Livreur assigné' : 'Diffusion de la course', 
-          description: courierObj ? `Attribuée à ${courierObj.name}` : 'Diffusée en temps réel à tous les coursiers disponibles dans la zone', 
-          timestamp: 'Maintenant', 
-          status: 'completed' 
+        {
+          id: 't2',
+          stepNumber: 2,
+          title: courierObj ? 'Livreur assigné' : 'Diffusion de la course',
+          description: courierObj ? `Attribuée à ${courierObj.name}` : 'Diffusée en temps réel à tous les coursiers disponibles dans la zone',
+          timestamp: 'Maintenant',
+          status: 'completed'
         },
-        { 
-          id: 't3', 
-          stepNumber: 3, 
-          title: courierObj ? 'Mission acceptée' : 'En attente d\'acceptation', 
-          description: courierObj ? 'En attente de prise en charge' : 'En attente qu\'un coursier disponible accepte la course', 
-          status: 'active' 
+        {
+          id: 't3',
+          stepNumber: 3,
+          title: courierObj ? 'Mission acceptée' : 'En attente d\'acceptation',
+          description: courierObj ? 'En attente de prise en charge' : 'En attente qu\'un coursier disponible accepte la course',
+          status: 'active'
         },
         { id: 't4', stepNumber: 4, title: 'Colis récupéré', description: 'Point de collecte boutique', status: 'pending' },
         { id: 't5', stepNumber: 5, title: 'En cours de livraison', description: 'En transit vers client', status: 'pending' },
@@ -2021,12 +2369,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ]
     };
 
-    setDeliveries(prev => [newOrder, ...prev]);
+    if (!authenticatedMerchantUid) {
+      showToast('Authentification vendeur requise pour créer une livraison.', 'error');
+      return newOrder;
+    }
+
+    setDeliveries((prev) => {
+      const scopedPrev = isAdminAuthenticated && !isDirectorModeActive
+        ? prev
+        : prev.filter((d) => isOrderOwnedByVendor(d, authenticatedMerchantUid));
+      return [newOrder, ...scopedPrev];
+    });
     setSelectedDelivery(newOrder);
+    setDeliveryDraft(null);
     addAuditLog('system', 'Nouvelle course créée', `Commande ${newId} pour ${clientName} (${newOrder.dropoffLocation.commune})`);
 
     addNotification({
       type: 'order_created',
+      recipientId: authenticatedMerchantUid,
       title: `📦 Nouvelle livraison ${newId} créée`,
       message: `Destination : ${newOrder.dropoffLocation.commune} (${clientName}). Colis : ${itemDesc}.`,
       orderId: newId,
@@ -2050,16 +2410,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     // Sync to Firestore collections (strictly conforming to isValidDelivery & isValidPriorityMission rules)
-    const authenticatedMerchantUid = auth.currentUser?.uid || firebaseUser?.uid;
     const cleanDocId = newId.replace(/[^a-zA-Z0-9_-]/g, '');
 
-    if (authenticatedMerchantUid) {
+    if (auth.currentUser) {
       const firestoreDeliveryPayload: Record<string, any> = {
         id: newId,
         orderId: newId,
         merchantId: authenticatedMerchantUid,
         merchantEmail: newOrder.merchantEmail || userProfile?.email || '',
-        merchantStoreName: newOrder.merchantStoreName || newOrder.pickupLocation.name || 'Boutique Vendeur',
+        merchantStoreName: resolvedStoreName,
         clientName: newOrder.clientName,
         clientPhone: newOrder.clientPhone,
         clientNote: newOrder.clientNote || '',
@@ -2085,40 +2444,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       try {
-        setDoc(doc(db, 'deliveries', cleanDocId), firestoreDeliveryPayload).catch((err: any) => {
-          console.warn('Erreur synchro deliveries Firestore:', err?.message || err);
-        });
+        setDoc(doc(db, 'deliveries', cleanDocId), firestoreDeliveryPayload)
+          .then(() => {
+            if (userProfile?.role === 'vendeur' || (isDirectorModeActive && isAdminAuthenticated && currentRole === 'vendeur')) {
+              void fetchDeliveries(authenticatedMerchantUid);
+            }
+          })
+          .catch((err: any) => {
+            console.error('Erreur synchro deliveries Firestore:', err?.message || err);
+            if (err?.code === 'permission-denied') {
+              showToast('Synchro Firestore refusée : vérifiez la confirmation de votre email vendeur.', 'error');
+              if (auth.currentUser?.emailVerified) {
+                handleFirestoreError(err, OperationType.CREATE, `deliveries/${cleanDocId}`);
+              }
+            }
+          });
       } catch (err: any) {
         console.warn('Erreur synchro deliveries Firestore:', err);
       }
     }
 
     if (!courierObj || initialStatus === 'en_attente') {
-      if (!authenticatedMerchantUid) {
-        showToast('Session Firebase Auth non valide. Veuillez vous connecter pour créer une livraison.', 'error');
-        return newOrder;
-      }
-
-      try {
-        setDoc(doc(db, 'priority_missions', cleanDocId), {
-          id: newId,
-          orderId: newId,
-          merchantId: authenticatedMerchantUid,
-          storeName: newOrder.merchantStoreName || newOrder.pickupLocation.name || 'Boutique Vendeur',
-          pickupCommune: newOrder.pickupLocation.commune || 'Cotonou',
-          dropoffCommune: newOrder.dropoffLocation.commune || 'Cotonou',
-          fee: calculatedFee,
-          cod: codVal,
-          itemDescription: itemDesc,
-          status: 'en_attente',
-          createdAt: Date.now(),
-          urgency: 'high'
-        }).catch((err: any) => {
+      if (auth.currentUser) {
+        try {
+          setDoc(doc(db, 'priority_missions', cleanDocId), {
+            id: newId,
+            orderId: newId,
+            merchantId: authenticatedMerchantUid,
+            storeName: resolvedStoreName,
+            pickupCommune: newOrder.pickupLocation.commune || 'Cotonou',
+            dropoffCommune: newOrder.dropoffLocation.commune || 'Cotonou',
+            fee: calculatedFee,
+            cod: codVal,
+            itemDescription: itemDesc,
+            status: 'en_attente',
+            createdAt: Date.now(),
+            urgency: 'high'
+          }).catch((err: any) => {
+            console.error('Erreur synchro priority_missions:', err?.message || err);
+          });
+        } catch (err: any) {
           console.error('Erreur synchro priority_missions:', err?.message || err);
-          showToast('Erreur lors de la publication de la livraison sur le réseau.', 'error');
-        });
-      } catch (err: any) {
-        console.error('Erreur synchro priority_missions:', err?.message || err);
+        }
       }
     }
 
@@ -2545,7 +2912,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const assignCourierToDelivery = (orderId: string, courierId: string) => {
+    const activeUid = userProfile?.uid || firebaseUser?.uid;
+    const isSupervisory = isAdminAuthenticated || isDirectorModeActive;
+    const targetOrder = deliveriesRef.current.find(d => d.id === orderId);
+    if (!targetOrder) return;
+    if (!isSupervisory && !isOrderOwnedByVendor(targetOrder, activeUid)) {
+      showToast('Accès refusé : vous ne pouvez assigner que vos propres livraisons.', 'error');
+      return;
+    }
+
     const courier = couriers.find(c => c.id === courierId) || couriers[0];
+    if (!courier) return;
     setDeliveries(prev =>
       prev.map(ord => {
         if (ord.id === orderId) {
@@ -2564,6 +2941,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const generateNewOTP = (orderId: string): string => {
+    const activeUid = userProfile?.uid || firebaseUser?.uid;
+    const isSupervisory = isAdminAuthenticated || isDirectorModeActive;
+    const targetOrder = deliveriesRef.current.find(d => d.id === orderId);
+    if (!targetOrder || (!isSupervisory && !isOrderOwnedByVendor(targetOrder, activeUid))) {
+      showToast('Accès refusé : vous ne pouvez régénérer le code OTP que pour vos propres livraisons.', 'error');
+      return '';
+    }
+
     const newOtp = Math.floor(1000 + Math.random() * 9000).toString();
     const timestamp = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
     setDeliveries(prev =>
@@ -3269,12 +3654,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`Course ${orderId} supprimée avec succès.`, 'info');
   };
 
+  const duplicateDeliveryOrder = (orderId: string): boolean => {
+    const targetOrder = deliveriesRef.current.find((d) => d.id === orderId);
+    const activeUid = userProfile?.uid || firebaseUser?.uid;
+    const isSupervisory = isAdminAuthenticated || isDirectorModeActive;
+    const draft = sanitizeDuplicateOrderDraft(targetOrder, activeUid, isSupervisory);
+    if (!draft) {
+      showToast('Action non autorisée : vous ne pouvez dupliquer que vos propres livraisons.', 'error');
+      return false;
+    }
+    setDeliveryDraft(draft);
+    setCurrentView('vendeur_new_delivery');
+    showToast(`Modèle copié depuis ${targetOrder?.id}. Complétez ou publiez votre nouvelle course.`, 'info');
+    return true;
+  };
+
   const updateDeliveryDetails = (orderId: string, updates: Partial<DeliveryOrder>) => {
+    const activeUid = userProfile?.uid || firebaseUser?.uid;
+    const isSupervisory = isAdminAuthenticated || isDirectorModeActive;
+    const targetOrder = deliveriesRef.current.find((d) => d.id === orderId);
+
+    if (!targetOrder) return;
+    if (!isSupervisory && !isOrderOwnedByVendor(targetOrder, activeUid)) {
+      showToast('Accès refusé : vous ne pouvez modifier que vos propres commandes.', 'error');
+      return;
+    }
+
+    // Non-admin vendors may only update customer/amount fields while order is still pending
+    const safeUpdates: Partial<DeliveryOrder> = isSupervisory
+      ? updates
+      : {
+          ...(updates.clientName !== undefined ? { clientName: updates.clientName } : {}),
+          ...(updates.clientPhone !== undefined ? { clientPhone: updates.clientPhone } : {}),
+          ...(updates.itemValueCOD !== undefined ? { itemValueCOD: updates.itemValueCOD } : {}),
+          ...(updates.deliveryFee !== undefined ? { deliveryFee: updates.deliveryFee } : {}),
+        };
+
+    if (!isSupervisory && targetOrder.status !== 'en_attente') {
+      showToast('Modification verrouillée : cette course a déjà été prise en charge.', 'error');
+      return;
+    }
+
+    const nextCod = typeof safeUpdates.itemValueCOD === 'number' ? safeUpdates.itemValueCOD : targetOrder.itemValueCOD;
+    const nextFee = typeof safeUpdates.deliveryFee === 'number' ? safeUpdates.deliveryFee : targetOrder.deliveryFee;
+    const totalPayable = nextCod + nextFee;
+
     setDeliveries(prev =>
       prev.map(ord => {
         if (ord.id === orderId) {
-          const updated: DeliveryOrder = { ...ord, ...updates };
-          if (updates.status && updates.status !== ord.status) {
+          const updated: DeliveryOrder = {
+            ...ord,
+            ...safeUpdates,
+            merchantId: ord.merchantId, // immutable ownership
+            totalCustomerPayable: totalPayable,
+          };
+          if (isSupervisory && updates.status && updates.status !== ord.status) {
             updated.timeline = [
               ...ord.timeline,
               {
@@ -3292,7 +3726,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return ord;
       })
     );
-    addAuditLog('system', `Course modifiée ${orderId}`, `Détails de la course ${orderId} mis à jour par le Superviseur`);
+
+    if (auth.currentUser) {
+      const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
+      const firestorePatch: Record<string, any> = {
+        updatedAt: Date.now(),
+        totalCustomerPayable: totalPayable,
+      };
+      if (safeUpdates.clientName !== undefined) firestorePatch.clientName = safeUpdates.clientName;
+      if (safeUpdates.clientPhone !== undefined) firestorePatch.clientPhone = safeUpdates.clientPhone;
+      if (safeUpdates.itemValueCOD !== undefined) firestorePatch.itemValueCOD = safeUpdates.itemValueCOD;
+      if (safeUpdates.deliveryFee !== undefined) firestorePatch.deliveryFee = safeUpdates.deliveryFee;
+      if (isSupervisory && updates.status !== undefined) firestorePatch.status = updates.status;
+      if (isSupervisory && updates.statusNote !== undefined) firestorePatch.statusNote = updates.statusNote;
+      setDoc(doc(db, 'deliveries', cleanDocId), firestorePatch, { merge: true }).catch((err) =>
+        console.warn('Erreur synchro updateDeliveryDetails:', err?.message || err)
+      );
+    }
+
+    addAuditLog('system', `Course modifiée ${orderId}`, `Détails de la course ${orderId} mis à jour`);
     showToast(`Course ${orderId} mise à jour avec succès !`, 'success');
   };
 
@@ -3874,6 +4326,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSearchQuery,
         pricingRules,
         setPricingRules,
+        fetchDeliveries,
         createDelivery,
         acceptDelivery,
         refuseDelivery,
@@ -3888,6 +4341,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         resolveDispute,
         deleteDelivery,
         updateDeliveryDetails,
+        deliveryDraft,
+        setDeliveryDraft,
+        duplicateDeliveryOrder,
         addCourier,
         updateCourier,
         deleteCourier,
@@ -3954,6 +4410,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateFeatureFlag,
         resetFeatureFlagsToDefault,
         isDirectorModeActive,
+        directorTargetId,
         directorTargetName,
         impersonateMerchant,
         impersonateCourier,

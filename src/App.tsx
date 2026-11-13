@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { AppProvider, useApp } from './context/AppContext';
+import React, { useEffect, useState } from 'react';
+import { AppProvider, useApp, type AppView } from './context/AppContext';
 import { Toast } from './components/common/Toast';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { FullViewSkeleton } from './components/common/LoadingSkeleton';
@@ -7,6 +7,8 @@ import { PlatformBroadcastBanner } from './components/common/PlatformBroadcastBa
 import { PriorityMissionNotificationBanner } from './components/common/PriorityMissionNotificationBanner';
 import { UpdateNotificationBanner } from './components/common/UpdateNotificationBanner';
 import { LandingPage } from './components/views/LandingPage';
+import { NotFoundView } from './components/views/NotFoundView';
+import { applySeoMetadata } from './config/seo';
 
 // Lazy-loaded Views for ultra-fast initial load & reduced bundle size
 const LoginVendeurPage = React.lazy(() => import('./components/views/LoginVendeurPage').then(m => ({ default: m.LoginVendeurPage })));
@@ -73,6 +75,30 @@ const MainAppRouter: React.FC = () => {
   } = useApp();
   const [deviceMode, setDeviceMode] = useState<'responsive' | 'mobile-mock'>('responsive');
 
+  const isAuthenticated = Boolean(firebaseUser && userProfile);
+  const canAccessVendeur = Boolean(
+    isAuthenticated && (
+      userProfile?.role === 'vendeur' ||
+      (isAdminAuthenticated && (isDirectorModeActive || currentRole === 'vendeur'))
+    )
+  );
+  const canAccessLivreur = Boolean(
+    isAuthenticated && (
+      userProfile?.role === 'livreur' ||
+      (isAdminAuthenticated && (isDirectorModeActive || currentRole === 'livreur'))
+    )
+  );
+
+  const effectiveView: AppView = (() => {
+    if (currentView.startsWith('vendeur_') && !canAccessVendeur) return 'login_vendeur';
+    if (currentView.startsWith('livreur_') && !canAccessLivreur) return 'login_livreur';
+    return currentView;
+  })();
+
+  useEffect(() => {
+    applySeoMetadata(effectiveView);
+  }, [effectiveView]);
+
   const isCourierActive = Boolean(
     firebaseUser != null &&
     userProfile?.role === 'livreur' &&
@@ -87,20 +113,6 @@ const MainAppRouter: React.FC = () => {
     return (
       <React.Suspense fallback={<FullViewSkeleton label="Chargement instantané..." />}>
         {(() => {
-          const isAuthenticated = Boolean(firebaseUser && userProfile);
-          const canAccessVendeur = Boolean(
-            isAuthenticated && (
-              userProfile?.role === 'vendeur' ||
-              (isAdminAuthenticated && (isDirectorModeActive || currentRole === 'vendeur'))
-            )
-          );
-          const canAccessLivreur = Boolean(
-            isAuthenticated && (
-              userProfile?.role === 'livreur' ||
-              (isAdminAuthenticated && (isDirectorModeActive || currentRole === 'livreur'))
-            )
-          );
-
           switch (currentView) {
             case 'landing':
               return <LandingPage />;
@@ -134,8 +146,10 @@ const MainAppRouter: React.FC = () => {
               return canAccessLivreur ? <ChatView /> : <LoginLivreurPage />;
             case 'admin_console':
               return <AdminConsole />;
+            case 'not_found':
+              return <NotFoundView />;
             default:
-              return <LandingPage />;
+              return <NotFoundView />;
           }
         })()}
       </React.Suspense>

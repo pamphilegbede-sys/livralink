@@ -234,17 +234,14 @@ export const mapFirestoreDeliveryToOrder = (data: any, docId: string): DeliveryO
 };
 
 export const doesOrderBelongToMerchant = (order: DeliveryOrder, merchant: Merchant): boolean => {
-  if (order.merchantId && merchant.id && order.merchantId === merchant.id) return true;
+  if (order.merchantId) {
+    return Boolean(merchant.id && order.merchantId === merchant.id);
+  }
   if (
     order.merchantEmail &&
     merchant.email &&
     order.merchantEmail.toLowerCase().trim() === merchant.email.toLowerCase().trim()
   ) {
-    return true;
-  }
-  const orderStore = (order.merchantStoreName || order.pickupLocation?.name || '').toLowerCase().trim();
-  const merchantStore = (merchant.storeName || '').toLowerCase().trim();
-  if (orderStore && merchantStore && orderStore === merchantStore) {
     return true;
   }
   return false;

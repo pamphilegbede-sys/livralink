@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
+import { PrivacyPolicyModal } from '../modals/PrivacyPolicyModal';
 
 export const LandingPage: React.FC = () => {
   const { setCurrentView, setCurrentRole, viewHistory } = useApp();
+  const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState(false);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans'] selection:bg-blue-600 selection:text-white">
@@ -19,17 +21,21 @@ export const LandingPage: React.FC = () => {
                 className="bg-white border-slate-300"
               />
             )}
-            <button
-              type="button"
-              onClick={() => setCurrentView('landing')}
+            <a
+              href="/"
+              onClick={(e) => {
+                e.preventDefault();
+                setCurrentView('landing');
+              }}
+              aria-label="Accueil LivraLink"
               className="group min-h-[44px] flex items-center focus:outline-none transition-transform active:scale-95"
             >
               <LivraLinkLogo size="md" subtitle="CONNECT & DELIVER" />
-            </button>
+            </a>
           </div>
 
           {/* Center Navigation Links */}
-          <nav className="hidden md:flex items-center gap-6 text-sm font-semibold text-slate-600">
+          <nav aria-label="Navigation principale" className="hidden md:flex items-center gap-6 text-sm font-semibold text-slate-600">
             <a href="#comment-ca-marche" className="hover:text-blue-600 transition-colors">
               Comment ça marche
             </a>
@@ -74,7 +80,9 @@ export const LandingPage: React.FC = () => {
         </div>
       </header>
 
-      {/* 2. Hero Section */}
+      {/* 2. Main Content */}
+      <main id="main-content" className="flex-1">
+      {/* Hero Section */}
       <section className="py-12 md:py-20 px-4 sm:px-6 max-w-7xl mx-auto w-full">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
           {/* Left Hero Content */}
@@ -200,22 +208,26 @@ export const LandingPage: React.FC = () => {
                 </div>
                 <div className="flex gap-1.5">
                   <button
+                    type="button"
+                    aria-label="Appeler le coursier depuis votre espace vendeur"
                     onClick={() => {
                       setCurrentRole('vendeur');
                       setCurrentView('login_vendeur');
                     }}
                     className="p-2 bg-white border border-slate-200 rounded-xl text-blue-600 hover:bg-slate-50"
                   >
-                    <span className="material-symbols-outlined text-base">call</span>
+                    <span className="material-symbols-outlined text-base" aria-hidden="true">call</span>
                   </button>
                   <button
+                    type="button"
+                    aria-label="Contacter le coursier par messagerie"
                     onClick={() => {
                       setCurrentRole('vendeur');
                       setCurrentView('login_vendeur');
                     }}
                     className="p-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl hover:bg-emerald-100"
                   >
-                    <span className="material-symbols-outlined text-base">chat</span>
+                    <span className="material-symbols-outlined text-base" aria-hidden="true">chat</span>
                   </button>
                 </div>
               </div>
@@ -319,7 +331,7 @@ export const LandingPage: React.FC = () => {
           <div className="p-4 bg-white border border-slate-200 rounded-2xl space-y-1.5 shadow-xs">
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-full bg-amber-400"></span>
-              <h4 className="font-bold text-slate-900 text-sm">1. En attente</h4>
+              <h3 className="font-bold text-slate-900 text-sm">1. En attente</h3>
             </div>
             <p className="text-xs text-slate-500">Course générée, en cours de diffusion dans le rayon de collecte.</p>
           </div>
@@ -327,7 +339,7 @@ export const LandingPage: React.FC = () => {
           <div className="p-4 bg-white border border-slate-200 rounded-2xl space-y-1.5 shadow-xs">
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-full bg-blue-500"></span>
-              <h4 className="font-bold text-slate-900 text-sm">2. Assignée</h4>
+              <h3 className="font-bold text-slate-900 text-sm">2. Assignée</h3>
             </div>
             <p className="text-xs text-slate-500">Attribuée à un coursier précis dont le positionnement est idéal.</p>
           </div>
@@ -335,7 +347,7 @@ export const LandingPage: React.FC = () => {
           <div className="p-4 bg-white border border-slate-200 rounded-2xl space-y-1.5 shadow-xs">
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-full bg-purple-600"></span>
-              <h4 className="font-bold text-slate-900 text-sm">3. Acceptée</h4>
+              <h3 className="font-bold text-slate-900 text-sm">3. Acceptée</h3>
             </div>
             <p className="text-xs text-slate-500">Le coursier a validé la prise en charge et converge vers le point de retrait.</p>
           </div>
@@ -343,7 +355,7 @@ export const LandingPage: React.FC = () => {
           <div className="p-4 bg-white border border-slate-200 rounded-2xl space-y-1.5 shadow-xs">
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-full bg-amber-600"></span>
-              <h4 className="font-bold text-slate-900 text-sm">4. Colis récupéré</h4>
+              <h3 className="font-bold text-slate-900 text-sm">4. Colis récupéré</h3>
             </div>
             <p className="text-xs text-slate-500">Colis scanné au point d'enlèvement du vendeur ou hub logistique.</p>
           </div>
@@ -351,7 +363,7 @@ export const LandingPage: React.FC = () => {
           <div className="p-4 bg-blue-50/60 border-2 border-blue-300 rounded-2xl space-y-1.5 shadow-xs">
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-full bg-blue-600 animate-pulse"></span>
-              <h4 className="font-bold text-blue-900 text-sm">5. En cours de livraison</h4>
+              <h3 className="font-bold text-blue-900 text-sm">5. En cours de livraison</h3>
             </div>
             <p className="text-xs text-blue-800">Le coursier est sur la route de destination avec tracking actif.</p>
           </div>
@@ -359,7 +371,7 @@ export const LandingPage: React.FC = () => {
           <div className="p-4 bg-emerald-50/60 border-2 border-emerald-300 rounded-2xl space-y-1.5 shadow-xs">
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-full bg-emerald-600"></span>
-              <h4 className="font-bold text-emerald-900 text-sm">6. Livrée (POD validée)</h4>
+              <h3 className="font-bold text-emerald-900 text-sm">6. Livrée (POD validée)</h3>
             </div>
             <p className="text-xs text-emerald-800">Remise effectuée et clôturée avec preuve de photo ou signature.</p>
           </div>
@@ -367,7 +379,7 @@ export const LandingPage: React.FC = () => {
           <div className="p-4 bg-red-50/60 border border-red-200 rounded-2xl space-y-1.5 shadow-xs">
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-full bg-red-600"></span>
-              <h4 className="font-bold text-red-900 text-sm">7. Échec documenté</h4>
+              <h3 className="font-bold text-red-900 text-sm">7. Échec documenté</h3>
             </div>
             <p className="text-xs text-red-700">Motif précis obligatoirement renseigné (destinataire absent, numéro erroné).</p>
           </div>
@@ -474,17 +486,17 @@ export const LandingPage: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-center divide-y md:divide-y-0 md:divide-x divide-slate-200">
             <div className="space-y-2 pt-4 md:pt-0 px-4">
               <div className="text-5xl font-extrabold text-blue-600 tracking-tight">-85%</div>
-              <h4 className="font-bold text-slate-900 text-base">De temps passé au téléphone</h4>
+              <h3 className="font-bold text-slate-900 text-base">De temps passé au téléphone</h3>
               <p className="text-xs text-slate-500">Plus besoin d'appeler les coursiers : tout est visible en direct.</p>
             </div>
             <div className="space-y-2 pt-4 md:pt-0 px-4">
               <div className="text-5xl font-extrabold text-emerald-600 tracking-tight">99.2%</div>
-              <h4 className="font-bold text-slate-900 text-base">De litiges résolus sur-le-champ</h4>
+              <h3 className="font-bold text-slate-900 text-base">De litiges résolus sur-le-champ</h3>
               <p className="text-xs text-slate-500">Grâce à l'historique d'audit horodaté et la photo de preuve POD.</p>
             </div>
             <div className="space-y-2 pt-4 md:pt-0 px-4">
               <div className="text-5xl font-extrabold text-blue-700 tracking-tight">+40%</div>
-              <h4 className="font-bold text-slate-900 text-base">De livraisons réussies au 1er passage</h4>
+              <h3 className="font-bold text-slate-900 text-base">De livraisons réussies au 1er passage</h3>
               <p className="text-xs text-slate-500">Les coordonnées WhatsApp et les repères éliminent les adresses introuvables.</p>
             </div>
           </div>
@@ -509,7 +521,7 @@ export const LandingPage: React.FC = () => {
                   SK
                 </div>
                 <div>
-                  <h4 className="font-bold text-xs text-slate-900">Sarah Kouamé</h4>
+                  <h3 className="font-bold text-xs text-slate-900">Sarah Kouamé</h3>
                   <p className="text-[11px] text-slate-500">Fondatrice de @KouameFashion (35k abonnés)</p>
                 </div>
               </div>
@@ -525,7 +537,7 @@ export const LandingPage: React.FC = () => {
                   IT
                 </div>
                 <div>
-                  <h4 className="font-bold text-xs text-slate-900">Ibrahim Touré</h4>
+                  <h3 className="font-bold text-xs text-slate-900">Ibrahim Touré</h3>
                   <p className="text-[11px] text-slate-500">Coursier urbain indépendant (450+ courses)</p>
                 </div>
               </div>
@@ -568,23 +580,72 @@ export const LandingPage: React.FC = () => {
           </div>
         </div>
       </section>
+      </main>
 
       {/* 9. Footer */}
       <footer className="bg-white border-t border-slate-200 py-12 px-6">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6 text-xs text-slate-500">
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-slate-900">LivraLink</span>
-            <span>•</span>
-            <span>© 2025 LivraLink Technologies Inc. Tous droits réservés. Données sécurisées et cryptées bout-en-bout.</span>
+        <div className="max-w-7xl mx-auto space-y-6">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-6 text-xs text-slate-500">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-slate-900">LivraLink</span>
+              <span>•</span>
+              <span>© 2026 LivraLink Technologies. Tous droits réservés. Données sécurisées et chiffrées.</span>
+            </div>
+            <nav aria-label="Liens légaux et assistance" className="flex flex-wrap items-center gap-4">
+              <a
+                href="#confidentialite"
+                onClick={() => setIsPrivacyModalOpen(true)}
+                className="hover:text-blue-600 transition-colors"
+              >
+                Politique de confidentialité
+              </a>
+              <a
+                href="#cgu"
+                onClick={() => setIsPrivacyModalOpen(true)}
+                className="hover:text-blue-600 transition-colors"
+              >
+                Conditions d'utilisation
+              </a>
+              <a href="#support" className="hover:text-blue-600 transition-colors">
+                Support technique
+              </a>
+              <a href="#mentions" className="hover:text-blue-600 transition-colors">
+                Mentions légales
+              </a>
+            </nav>
           </div>
-          <div className="flex flex-wrap items-center gap-4">
-            <a href="#confidentialite" className="hover:text-blue-600">Politique de confidentialité</a>
-            <a href="#cgu" className="hover:text-blue-600">Conditions d'utilisation</a>
-            <a href="#support" className="hover:text-blue-600">Support technique</a>
-            <a href="#mentions" className="hover:text-blue-600">Mentions légales</a>
+
+          <div className="pt-5 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-[11px] text-slate-500">
+            <div id="confidentialite">
+              <strong className="text-slate-700 block mb-0.5">Confidentialité des données</strong>
+              <span>Protection conforme au Code du Numérique en République du Bénin (Loi n° 2017-20).</span>
+            </div>
+            <div id="cgu">
+              <strong className="text-slate-700 block mb-0.5">Conditions d'utilisation</strong>
+              <button
+                type="button"
+                onClick={() => setIsPrivacyModalOpen(true)}
+                className="text-blue-700 hover:underline font-semibold text-left"
+              >
+                Consulter les CGU et la politique de confidentialité
+              </button>
+            </div>
+            <div id="support">
+              <strong className="text-slate-700 block mb-0.5">Support technique</strong>
+              <span>Assistance vendeurs et coursiers disponible au 01 02 03 04.</span>
+            </div>
+            <div id="mentions">
+              <strong className="text-slate-700 block mb-0.5">Mentions légales</strong>
+              <span>LivraLink – Plateforme logistique urbaine connectée (Bénin).</span>
+            </div>
           </div>
         </div>
       </footer>
+
+      <PrivacyPolicyModal
+        isOpen={isPrivacyModalOpen}
+        onClose={() => setIsPrivacyModalOpen(false)}
+      />
     </div>
   );
 };

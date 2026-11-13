@@ -1,5 +1,14 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, deleteDoc } from 'firebase/firestore';
+import {
+  isOrderOwnedByVendor,
+  filterVendorDeliveries,
+  sanitizeDuplicateOrderDraft,
+  buildVendorDeliveryCsv,
+  escapeCsvCell,
+} from './src/utils/deliveryIsolation';
+import { doesOrderBelongToMerchant } from './src/utils/adminReconciliation';
+import { DeliveryOrder, Merchant } from './src/types';
 
 // Clean test script verifying data isolation & privacy rules
 async function runDataIsolationSecurityTest() {
@@ -80,32 +89,171 @@ async function runDataIsolationSecurityTest() {
   assert(vendorBConvs.length === 1 && vendorBConvs[0].id === 'conv_2', 'Vendor B sees only conversations where participant');
   assert(!vendorAConvs.some(c => c.id === 'conv_2'), 'Vendor A CANNOT view Vendor B chat');
 
-  // 4. Test Delivery Orders Isolation
-  console.log('\n--- TEST 4: DELIVERY ORDERS ISOLATION ---');
-  const deliveries = [
-    { id: '#LL-101', merchantId: vendorAUid, courierId: courierAUid, status: 'en_cours' },
-    { id: '#LL-102', merchantId: vendorBUid, courierId: null, status: 'en_attente' },
-  ];
+  // 4. Test Production Delivery Orders Isolation (Real Helpers)
+  console.log('\n--- TEST 4: STRICT MULTI-VENDOR DELIVERY ISOLATION (PRODUCTION HELPERS) ---');
+  const baseOrderTemplate: Omit<DeliveryOrder, 'id' | 'merchantId' | 'merchantEmail' | 'merchantStoreName' | 'clientName'> = {
+    clientPhone: '+229 97 00 00 01',
+    isClientVerified: true,
+    channel: 'WhatsApp',
+    pickupLocation: {
+      name: 'Ma Boutique', // Identical store name on purpose!
+      address: 'Haie Vive, Cotonou',
+      commune: 'Cotonou - Haie Vive',
+    },
+    dropoffLocation: {
+      name: 'Client Destination',
+      address: 'Akpakpa, Cotonou',
+      commune: 'Cotonou - Akpakpa',
+    },
+    itemDescription: 'Robe de soirée',
+    itemWeightKg: 1,
+    itemFormat: 'M',
+    isFragile: false,
+    itemValueCOD: 25000,
+    deliveryFee: 1000,
+    totalCustomerPayable: 26000,
+    status: 'en_attente',
+    createdAt: new Date().toISOString(),
+    otpCode: '4821',
+    timeline: [],
+  };
 
-  function getDeliveriesForUser(userUid: string, role: string) {
-    if (role === 'vendeur') {
-      return deliveries.filter(d => d.merchantId === userUid);
-    } else if (role === 'livreur') {
-      return deliveries.filter(d => d.courierId === userUid || d.status === 'en_attente');
-    }
-    return [];
-  }
+  const orderVendorA: DeliveryOrder = {
+    ...baseOrderTemplate,
+    id: '#LL-A1001',
+    clientName: 'Client Exclusif A',
+    merchantId: vendorAUid,
+    merchantEmail: 'shared-or-alias@boutique.bj',
+    merchantStoreName: 'Ma Boutique', // Same storeName as Vendor B!
+  };
 
-  const vendorADeliveries = getDeliveriesForUser(vendorAUid, 'vendeur');
-  const vendorBDeliveries = getDeliveriesForUser(vendorBUid, 'vendeur');
-  const courierADeliveries = getDeliveriesForUser(courierAUid, 'livreur');
+  const orderVendorB: DeliveryOrder = {
+    ...baseOrderTemplate,
+    id: '#LL-B2002',
+    clientName: 'Client Exclusif B',
+    merchantId: vendorBUid,
+    merchantEmail: 'shared-or-alias@boutique.bj', // Even with identical email/storeName, UID differs!
+    merchantStoreName: 'Ma Boutique',
+  };
 
-  assert(vendorADeliveries.length === 1 && vendorADeliveries[0].id === '#LL-101', 'Seller A sees only Seller A orders');
-  assert(vendorBDeliveries.length === 1 && vendorBDeliveries[0].id === '#LL-102', 'Seller B sees only Seller B orders');
-  assert(courierADeliveries.length === 2, 'Courier A sees assigned order plus open pending offers');
+  const unownedLegacyOrder: DeliveryOrder = {
+    ...baseOrderTemplate,
+    id: '#LL-LEGACY0',
+    clientName: 'Client Sans Propriétaire',
+    merchantId: undefined,
+    merchantStoreName: 'Ma Boutique',
+  };
 
-  // 5. Test Admin Broadcast Receiver Calculation & Security
-  console.log('\n--- TEST 5: ADMIN BROADCAST COMMUNICATIONS & RECIPIENTS ---');
+  const mixedDeliveries: DeliveryOrder[] = [orderVendorA, orderVendorB, unownedLegacyOrder];
+
+  const filteredForVendorA = filterVendorDeliveries(mixedDeliveries, {
+    userProfile: { uid: vendorAUid, role: 'vendeur' },
+    firebaseUserUid: vendorAUid,
+  });
+  const filteredForVendorB = filterVendorDeliveries(mixedDeliveries, {
+    userProfile: { uid: vendorBUid, role: 'vendeur' },
+    firebaseUserUid: vendorBUid,
+  });
+  const filteredForNewVendorC = filterVendorDeliveries(mixedDeliveries, {
+    userProfile: { uid: 'vendor_c_brand_new', role: 'vendeur' },
+    firebaseUserUid: 'vendor_c_brand_new',
+  });
+  const filteredUnauthenticated = filterVendorDeliveries(mixedDeliveries, {
+    userProfile: null,
+    firebaseUserUid: null,
+  });
+
+  assert(
+    filteredForVendorA.length === 1 && filteredForVendorA[0].id === '#LL-A1001',
+    'Vendor A sees ONLY order #LL-A1001 despite identical storeName/email and unowned legacy order'
+  );
+  assert(
+    filteredForVendorB.length === 1 && filteredForVendorB[0].id === '#LL-B2002',
+    'Vendor B sees ONLY order #LL-B2002 despite identical storeName/email and unowned legacy order'
+  );
+  assert(
+    filteredForNewVendorC.length === 0,
+    'Newly registered Vendor C with identical storeName sees 0 orders from other vendors'
+  );
+  assert(
+    filteredUnauthenticated.length === 0,
+    'Unauthenticated user receives 0 deliveries (no fail-open return true)'
+  );
+  assert(
+    !isOrderOwnedByVendor(orderVendorB, vendorAUid) && !isOrderOwnedByVendor(unownedLegacyOrder, vendorAUid),
+    'isOrderOwnedByVendor rejects foreign and unowned orders'
+  );
+
+  // Director mode isolation
+  const directorForVendorA = filterVendorDeliveries(mixedDeliveries, {
+    userProfile: { uid: 'admin_uid', role: 'admin' },
+    isAdminAuthenticated: true,
+    isDirectorModeActive: true,
+    directorTargetId: vendorAUid,
+    directorTargetName: 'Ma Boutique',
+  });
+  assert(
+    directorForVendorA.length === 1 && directorForVendorA[0].id === '#LL-A1001',
+    'Admin Director Mode filters strictly by directorTargetId when two boutiques share the same name'
+  );
+
+  // Admin reconciliation strictness
+  const merchantA: Merchant = {
+    id: vendorAUid,
+    storeName: 'Ma Boutique',
+    managerName: 'Alice',
+    phone: '+229 97 11 11 11',
+    email: 'alice@boutique.bj',
+    commune: 'Cotonou',
+    address: 'Haie Vive',
+    channel: 'WhatsApp',
+    totalOrders: 0,
+    totalVolumeFCFA: 0,
+    rating: 5,
+    status: 'actif',
+    isVerified: true,
+    createdAt: '2026-01-01',
+  };
+  assert(
+    doesOrderBelongToMerchant(orderVendorA, merchantA) && !doesOrderBelongToMerchant(orderVendorB, merchantA),
+    'doesOrderBelongToMerchant attributes order strictly by merchantId when store names collide'
+  );
+
+  // 5. Test 1-Click Duplicate Order Draft & CSV Export Isolation
+  console.log('\n--- TEST 5: DUPLICATE ORDER OWNERSHIP & ISOLATED CSV EXPORT ---');
+  const ownDraft = sanitizeDuplicateOrderDraft(orderVendorA, vendorAUid);
+  const stolenDraft = sanitizeDuplicateOrderDraft(orderVendorB, vendorAUid);
+
+  assert(
+    ownDraft !== null && ownDraft.clientName === 'Client Exclusif A' && ownDraft.dropoffCommune === 'Cotonou - Akpakpa',
+    'Vendor A can duplicate their own delivery order into a clean draft'
+  );
+  assert(
+    stolenDraft === null,
+    'Vendor A CANNOT duplicate Vendor B delivery order (returns null)'
+  );
+
+  const dangerousFormulaOrder: DeliveryOrder = {
+    ...orderVendorA,
+    id: '#LL-FORMULA',
+    clientName: '=HYPERLINK("http://evil.example","Click")',
+  };
+  const csvResult = buildVendorDeliveryCsv(
+    [dangerousFormulaOrder, orderVendorB], // Pass mixed orders to verify defensive filtering!
+    vendorAUid,
+    'Ma Boutique'
+  );
+  assert(
+    csvResult.exportedCount === 1 && !csvResult.csvContent.includes('Client Exclusif B'),
+    'CSV Export defensively strips foreign vendor orders even if passed in input array'
+  );
+  assert(
+    csvResult.csvContent.includes("'=HYPERLINK") && escapeCsvCell('+123').startsWith('"\'+'),
+    'CSV Export escapes spreadsheet formula injection payloads (=, +, -, @)'
+  );
+
+  // 6. Test Admin Broadcast Receiver Calculation & Security
+  console.log('\n--- TEST 6: ADMIN BROADCAST COMMUNICATIONS & RECIPIENTS ---');
   const allUsers = [
     { uid: vendorAUid, role: 'vendeur', email: 'venda@livralink.ci' },
     { uid: vendorBUid, role: 'vendeur', email: 'vendb@livralink.ci' },

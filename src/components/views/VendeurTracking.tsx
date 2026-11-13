@@ -6,6 +6,7 @@ import { MobileBottomNav } from '../common/MobileBottomNav';
 import { DeliveryOrder } from '../../types';
 import { GoogleMapDelivery } from '../maps/GoogleMapDelivery';
 import { getLocationForCommune } from '../../config/maps';
+import { filterVendorDeliveries } from '../../utils/deliveryIsolation';
 
 export const VendeurTracking: React.FC = () => {
   const {
@@ -17,54 +18,44 @@ export const VendeurTracking: React.FC = () => {
     showToast,
     setCurrentView,
     updateDeliveryStatus,
+    duplicateDeliveryOrder,
     generateNewOTP,
+    firebaseUser,
     userProfile,
-    merchantSettings,
+    isAdminAuthenticated,
     isDirectorModeActive,
+    directorTargetId,
     directorTargetName,
     openLivreurSearchModal,
     openRateLivreurModal,
   } = useApp();
 
-  // Isolation stricte des livraisons pour le suivi vendeur
-  const merchantDeliveries = deliveries.filter((d) => {
-    if (isDirectorModeActive && directorTargetName) {
-      return (
-        (d.pickupLocation?.name && d.pickupLocation.name.toLowerCase().includes(directorTargetName.toLowerCase())) ||
-        (d.merchantStoreName && d.merchantStoreName.toLowerCase().includes(directorTargetName.toLowerCase()))
-      );
-    }
-    if (userProfile?.role === 'vendeur') {
-      const isDemoAccount =
-        userProfile.email?.toLowerCase() === 'contact@glamchic-cotonou.bj' ||
-        userProfile.fullName === 'Sarah Kouamé';
-      if (isDemoAccount) {
-        return !d.merchantId || d.merchantId === userProfile.uid || d.pickupLocation.name.includes('Glam Chic');
-      }
-      return (
-        (d.merchantId && d.merchantId === userProfile.uid) ||
-        (d.merchantEmail && userProfile.email && d.merchantEmail.toLowerCase() === userProfile.email.toLowerCase()) ||
-        (merchantSettings.storeName && d.merchantStoreName && d.merchantStoreName.toLowerCase() === merchantSettings.storeName.toLowerCase()) ||
-        (merchantSettings.storeName && d.pickupLocation.name && d.pickupLocation.name.toLowerCase() === merchantSettings.storeName.toLowerCase())
-      );
-    }
-    return true;
+  // Isolation stricte des livraisons pour le suivi vendeur (par UID uniquement)
+  const merchantDeliveries = filterVendorDeliveries(deliveries, {
+    userProfile,
+    firebaseUserUid: firebaseUser?.uid,
+    isAdminAuthenticated,
+    isDirectorModeActive,
+    directorTargetId,
+    directorTargetName,
   });
 
-  const [activeCourseId, setActiveCourseId] = useState(selectedDelivery?.id || merchantDeliveries[0]?.id || '');
+  const [activeCourseId, setActiveCourseId] = useState(
+    merchantDeliveries.find((d) => d.id === selectedDelivery?.id)?.id || merchantDeliveries[0]?.id || ''
+  );
   const [activeFilter, setActiveFilter] = useState<'all' | 'en_attente' | 'en_cours' | 'terminees'>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Sync active course when selected delivery changes (e.g. after creating new order)
+  // Sync active course strictly within merchantDeliveries
   React.useEffect(() => {
-    if (selectedDelivery?.id) {
+    if (selectedDelivery?.id && merchantDeliveries.some((d) => d.id === selectedDelivery.id)) {
       setActiveCourseId(selectedDelivery.id);
-    } else if (merchantDeliveries[0]?.id && !activeCourseId) {
-      setActiveCourseId(merchantDeliveries[0].id);
+    } else if (!merchantDeliveries.some((d) => d.id === activeCourseId)) {
+      setActiveCourseId(merchantDeliveries[0]?.id || '');
     }
-  }, [selectedDelivery, merchantDeliveries]);
+  }, [selectedDelivery, merchantDeliveries, activeCourseId]);
 
-  const currentOrder = merchantDeliveries.find((d) => d.id === activeCourseId) || selectedDelivery || merchantDeliveries[0];
+  const currentOrder = merchantDeliveries.find((d) => d.id === activeCourseId) || merchantDeliveries[0];
 
   // Calcul dynamique des compteurs de statut pour les onglets
   const countAll = merchantDeliveries.length;
@@ -223,6 +214,15 @@ export const VendeurTracking: React.FC = () => {
                   >
                     <span className="material-symbols-outlined text-base">chat</span>
                     <span>WhatsApp</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => duplicateDeliveryOrder(currentOrder.id)}
+                    className="min-h-[44px] flex-1 sm:flex-initial px-3.5 py-2 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors active:scale-95 cursor-pointer"
+                    title="Créer une nouvelle course à partir de celle-ci"
+                  >
+                    <span className="material-symbols-outlined text-base">content_copy</span>
+                    <span>Dupliquer</span>
                   </button>
                   <button
                     type="button"

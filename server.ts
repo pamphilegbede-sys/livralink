@@ -2857,10 +2857,394 @@ app.get('/api/admin/sync-overview', requireAdminAuthorization as any, async (_re
   }
 });
 
+// =========================================================================
+// SEO TECHNIQUE : CANONICAL DOMAIN, ROBOTS.TXT, SITEMAP.XML, X-ROBOTS-TAG & 404
+// =========================================================================
+const getCanonicalBaseUrl = (req: Request): string => {
+  const configured = process.env.PUBLIC_SITE_URL || process.env.APP_URL || '';
+  const trimmed = configured.trim();
+  if (
+    trimmed &&
+    /^https?:\/\/.+/i.test(trimmed) &&
+    !trimmed.includes('MY_APP_URL')
+  ) {
+    return trimmed.replace(/\/+$/, '');
+  }
+  const forwardedProto = req.headers['x-forwarded-proto'];
+  const proto = (typeof forwardedProto === 'string' ? forwardedProto.split(',')[0].trim() : req.protocol) || 'http';
+  const host = req.get('host') || `localhost:${PORT}`;
+  return `${proto}://${host}`.replace(/\/+$/, '');
+};
+
+const normalizeSeoPath = (pathname: string): string => {
+  if (!pathname) return '/';
+  const cleaned = pathname.split('?')[0].split('#')[0];
+  if (cleaned.length > 1 && cleaned.endsWith('/')) {
+    return cleaned.slice(0, -1);
+  }
+  return cleaned || '/';
+};
+
+interface ServerSeoRouteInfo {
+  statusCode: number;
+  robots: 'index, follow' | 'noindex, nofollow';
+  title: string;
+  description: string;
+  isPublic: boolean;
+  canonicalPath: string | null;
+}
+
+const SERVER_SEO_ROUTES: Record<string, Omit<ServerSeoRouteInfo, 'statusCode'>> = {
+  '/': {
+    robots: 'index, follow',
+    title: 'LivraLink – Livraison connectée pour vendeurs et livreurs',
+    description:
+      'Connectez vos ventes WhatsApp, Instagram et TikTok aux coursiers urbains. Suivi en temps réel et preuve de livraison (POD) sécurisée avec LivraLink.',
+    isPublic: true,
+    canonicalPath: '/',
+  },
+  '/connexion-vendeur': {
+    robots: 'noindex, nofollow',
+    title: 'Connexion Vendeur – LivraLink',
+    description: 'Accédez à votre espace vendeur sécurisé LivraLink pour gérer vos expéditions.',
+    isPublic: false,
+    canonicalPath: null,
+  },
+  '/connexion-livreur': {
+    robots: 'noindex, nofollow',
+    title: 'Connexion Livreur – LivraLink',
+    description: 'Accédez à votre espace coursier sécurisé LivraLink pour consulter vos missions.',
+    isPublic: false,
+    canonicalPath: null,
+  },
+  '/inscription': {
+    robots: 'noindex, nofollow',
+    title: 'Créer un compte – LivraLink',
+    description: 'Inscrivez-vous en tant que vendeur ou livreur sur la plateforme LivraLink.',
+    isPublic: false,
+    canonicalPath: null,
+  },
+  '/espace-vendeur': {
+    robots: 'noindex, nofollow',
+    title: 'Espace Vendeur – LivraLink',
+    description: 'Tableau de bord privé vendeur LivraLink.',
+    isPublic: false,
+    canonicalPath: null,
+  },
+  '/espace-vendeur/nouvelle-livraison': {
+    robots: 'noindex, nofollow',
+    title: 'Nouvelle livraison – Espace Vendeur LivraLink',
+    description: 'Création de mission de livraison privée sur LivraLink.',
+    isPublic: false,
+    canonicalPath: null,
+  },
+  '/espace-vendeur/suivi': {
+    robots: 'noindex, nofollow',
+    title: 'Suivi des livraisons – Espace Vendeur LivraLink',
+    description: 'Suivi privé de vos livraisons en cours sur LivraLink.',
+    isPublic: false,
+    canonicalPath: null,
+  },
+  '/espace-vendeur/rapports': {
+    robots: 'noindex, nofollow',
+    title: 'Rapports et statistiques – Espace Vendeur LivraLink',
+    description: 'Rapports opérationnels privés vendeur LivraLink.',
+    isPublic: false,
+    canonicalPath: null,
+  },
+  '/espace-vendeur/parametres': {
+    robots: 'noindex, nofollow',
+    title: 'Paramètres vendeur – LivraLink',
+    description: 'Paramètres privés du compte vendeur LivraLink.',
+    isPublic: false,
+    canonicalPath: null,
+  },
+  '/espace-vendeur/messagerie': {
+    robots: 'noindex, nofollow',
+    title: 'Messagerie – Espace Vendeur LivraLink',
+    description: 'Messagerie privée vendeur LivraLink.',
+    isPublic: false,
+    canonicalPath: null,
+  },
+  '/espace-livreur': {
+    robots: 'noindex, nofollow',
+    title: 'Espace Livreur – LivraLink',
+    description: 'Tableau de bord privé coursier LivraLink.',
+    isPublic: false,
+    canonicalPath: null,
+  },
+  '/espace-livreur/missions': {
+    robots: 'noindex, nofollow',
+    title: 'Missions disponibles – Espace Livreur LivraLink',
+    description: 'Gestion privée des missions de livraison LivraLink.',
+    isPublic: false,
+    canonicalPath: null,
+  },
+  '/espace-livreur/portefeuille': {
+    robots: 'noindex, nofollow',
+    title: 'Gains et portefeuille – Espace Livreur LivraLink',
+    description: 'Suivi privé des revenus coursier LivraLink.',
+    isPublic: false,
+    canonicalPath: null,
+  },
+  '/espace-livreur/parametres': {
+    robots: 'noindex, nofollow',
+    title: 'Paramètres livreur – LivraLink',
+    description: 'Paramètres privés du compte livreur LivraLink.',
+    isPublic: false,
+    canonicalPath: null,
+  },
+  '/espace-livreur/messagerie': {
+    robots: 'noindex, nofollow',
+    title: 'Messagerie – Espace Livreur LivraLink',
+    description: 'Messagerie privée livreur LivraLink.',
+    isPublic: false,
+    canonicalPath: null,
+  },
+  '/admin': {
+    robots: 'noindex, nofollow',
+    title: 'Administration – LivraLink',
+    description: 'Console d’administration restreinte LivraLink.',
+    isPublic: false,
+    canonicalPath: null,
+  },
+};
+
+const resolveServerSeoRoute = (pathname: string): ServerSeoRouteInfo => {
+  const normalized = normalizeSeoPath(pathname);
+  const matched = SERVER_SEO_ROUTES[normalized];
+  if (matched) {
+    return {
+      statusCode: 200,
+      ...matched,
+    };
+  }
+  return {
+    statusCode: 404,
+    robots: 'noindex, nofollow',
+    title: 'Page introuvable (404) – LivraLink',
+    description: 'La page demandée est introuvable sur LivraLink.',
+    isPublic: false,
+    canonicalPath: null,
+  };
+};
+
+const escapeHtmlAttr = (val: string): string =>
+  val
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+const injectSeoIntoHtml = (rawHtml: string, req: Request): { html: string; seo: ServerSeoRouteInfo } => {
+  const baseUrl = getCanonicalBaseUrl(req);
+  const seo = resolveServerSeoRoute(req.path);
+  const normalizedPath = normalizeSeoPath(req.path);
+  const absoluteUrl = `${baseUrl}${normalizedPath === '/' ? '/' : normalizedPath}`;
+  const ogImageUrl = `${baseUrl}/og-image.jpg`;
+  const logoUrl = `${baseUrl}/icon.svg`;
+
+  let html = rawHtml
+    .replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeHtmlAttr(seo.title)}</title>`)
+    .replace(
+      /<meta\s+name="description"\s+content="[^"]*"\s*\/?>/i,
+      `<meta name="description" content="${escapeHtmlAttr(seo.description)}" />`
+    )
+    .replace(
+      /<meta\s+name="robots"\s+content="[^"]*"\s*\/?>/i,
+      `<meta name="robots" content="${seo.robots}" />`
+    )
+    .replace(
+      /<meta\s+property="og:title"\s+content="[^"]*"\s*\/?>/i,
+      `<meta property="og:title" content="${escapeHtmlAttr(seo.title)}" />`
+    )
+    .replace(
+      /<meta\s+property="og:description"\s+content="[^"]*"\s*\/?>/i,
+      `<meta property="og:description" content="${escapeHtmlAttr(seo.description)}" />`
+    )
+    .replace(
+      /<meta\s+property="og:url"\s+content="[^"]*"\s*\/?>/i,
+      `<meta property="og:url" content="${escapeHtmlAttr(absoluteUrl)}" />`
+    )
+    .replace(
+      /<meta\s+property="og:image"\s+content="[^"]*"\s*\/?>/i,
+      `<meta property="og:image" content="${escapeHtmlAttr(ogImageUrl)}" />`
+    )
+    .replace(
+      /<meta\s+name="twitter:title"\s+content="[^"]*"\s*\/?>/i,
+      `<meta name="twitter:title" content="${escapeHtmlAttr(seo.title)}" />`
+    )
+    .replace(
+      /<meta\s+name="twitter:description"\s+content="[^"]*"\s*\/?>/i,
+      `<meta name="twitter:description" content="${escapeHtmlAttr(seo.description)}" />`
+    )
+    .replace(
+      /<meta\s+name="twitter:image"\s+content="[^"]*"\s*\/?>/i,
+      `<meta name="twitter:image" content="${escapeHtmlAttr(ogImageUrl)}" />`
+    );
+
+  if (seo.canonicalPath) {
+    const canonicalAbs = `${baseUrl}${seo.canonicalPath}`;
+    const canonicalTag = `<link rel="canonical" href="${escapeHtmlAttr(canonicalAbs)}" />`;
+    if (/<link\s+rel="canonical"[^>]*>/i.test(html)) {
+      html = html.replace(/<link\s+rel="canonical"[^>]*>/i, canonicalTag);
+    } else {
+      html = html.replace(/<\/head>/i, `    ${canonicalTag}\n  </head>`);
+    }
+  } else {
+    html = html.replace(/<link\s+rel="canonical"[^>]*>\s*/i, '');
+  }
+
+  if (seo.isPublic) {
+    const homeUrl = `${baseUrl}/`;
+    const structuredData = {
+      '@context': 'https://schema.org',
+      '@graph': [
+        {
+          '@type': 'Organization',
+          '@id': `${homeUrl}#organization`,
+          name: 'LivraLink',
+          url: homeUrl,
+          logo: logoUrl,
+          description:
+            'Plateforme logistique urbaine connectée reliant les vendeurs du commerce social aux coursiers urbains.',
+        },
+        {
+          '@type': 'SoftwareApplication',
+          '@id': `${homeUrl}#software`,
+          name: 'LivraLink',
+          applicationCategory: 'BusinessApplication',
+          operatingSystem: 'Web, Android, iOS',
+          inLanguage: 'fr',
+          url: homeUrl,
+          image: ogImageUrl,
+          description:
+            'Plateforme SaaS de gestion, suivi en temps réel et preuve de livraison (POD) pour vendeurs WhatsApp, Instagram, TikTok et livreurs urbains.',
+          provider: {
+            '@id': `${homeUrl}#organization`,
+          },
+          featureList: [
+            'Création rapide de missions de livraison pour vendeurs social-commerce',
+            'Attribution aux livreurs urbains disponibles et suivi des 7 statuts normalisés',
+            'Preuve de livraison sécurisée (POD) par photo, code secret OTP et signature tactile',
+            'Estimation de trajet et itinéraire routier en temps réel',
+          ],
+        },
+      ],
+    };
+    html = html.replace(
+      /<script\s+id="livralink-jsonld"[^>]*>[\s\S]*?<\/script>/i,
+      `<script id="livralink-jsonld" type="application/ld+json">${JSON.stringify(structuredData)}</script>`
+    );
+  } else {
+    html = html.replace(/<script\s+id="livralink-jsonld"[^>]*>[\s\S]*?<\/script>\s*/i, '');
+  }
+
+  return { html, seo };
+};
+
+const isHtmlDocumentRequest = (req: Request): boolean => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return false;
+  const reqPath = req.path;
+  if (
+    reqPath.startsWith('/api/') ||
+    reqPath.startsWith('/assets/') ||
+    reqPath.startsWith('/src/') ||
+    reqPath.startsWith('/node_modules/') ||
+    reqPath.startsWith('/@') ||
+    reqPath.startsWith('/__') ||
+    reqPath === '/healthz' ||
+    reqPath === '/version.json' ||
+    reqPath === '/robots.txt' ||
+    reqPath === '/sitemap.xml'
+  ) {
+    return false;
+  }
+  if (/\.[a-zA-Z0-9]{1,12}$/.test(reqPath)) {
+    return false;
+  }
+  const accept = req.headers.accept || '';
+  return !accept || accept.includes('text/html') || accept.includes('*/*');
+};
+
+app.get('/robots.txt', (req: Request, res: Response) => {
+  const baseUrl = getCanonicalBaseUrl(req);
+  const robotsTxt = [
+    'User-agent: *',
+    'Allow: /',
+    'Allow: /assets/',
+    'Disallow: /api/',
+    'Disallow: /admin',
+    'Disallow: /espace-vendeur',
+    'Disallow: /espace-livreur',
+    'Disallow: /connexion-vendeur',
+    'Disallow: /connexion-livreur',
+    'Disallow: /inscription',
+    'Disallow: /healthz',
+    '',
+    `Sitemap: ${baseUrl}/sitemap.xml`,
+    '',
+  ].join('\n');
+
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.status(200).send(robotsTxt);
+});
+
+app.get('/sitemap.xml', (req: Request, res: Response) => {
+  const baseUrl = getCanonicalBaseUrl(req);
+  const lastMod = new Date().toISOString().split('T')[0];
+  const publicRoutes = Object.entries(SERVER_SEO_ROUTES).filter(([, meta]) => meta.isPublic);
+
+  const urlNodes = publicRoutes
+    .map(([routePath]) => {
+      const loc = `${baseUrl}${routePath === '/' ? '/' : routePath}`;
+      return [
+        '  <url>',
+        `    <loc>${loc}</loc>`,
+        `    <lastmod>${lastMod}</lastmod>`,
+        '    <changefreq>weekly</changefreq>',
+        '    <priority>1.0</priority>',
+        '  </url>',
+      ].join('\n');
+    })
+    .join('\n');
+
+  const xml = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    urlNodes,
+    '</urlset>',
+    '',
+  ].join('\n');
+
+  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.status(200).send(xml);
+});
+
 async function startServer() {
   const distPath = path.resolve(process.cwd(), 'dist');
   const hasDist = fs.existsSync(path.resolve(distPath, 'index.html'));
   const isProduction = process.env.NODE_ENV === 'production';
+
+  // Canonical trailing-slash normalization (301 redirect for non-root extensionless paths)
+  app.use((req: Request, res: Response, next) => {
+    if (
+      (req.method === 'GET' || req.method === 'HEAD') &&
+      req.path.length > 1 &&
+      req.path.endsWith('/') &&
+      !req.path.startsWith('/api/') &&
+      !req.path.startsWith('/@') &&
+      !req.path.startsWith('/src/')
+    ) {
+      const targetPath = req.path.slice(0, -1);
+      const queryIndex = req.originalUrl.indexOf('?');
+      const querySuffix = queryIndex !== -1 ? req.originalUrl.slice(queryIndex) : '';
+      return res.redirect(301, `${targetPath}${querySuffix}`);
+    }
+    next();
+  });
 
   if (isProduction && hasDist) {
     console.log(`[SERVER] Mode Production actif - Fichiers servis depuis: ${distPath}`);
@@ -2894,9 +3278,10 @@ async function startServer() {
       next();
     });
 
-    // 3. Serve root static files with intelligent Cache-Control discrimination
+    // 3. Serve root static files (excluding index.html so SEO handler handles document routes)
     app.use(
       express.static(distPath, {
+        index: false,
         setHeaders: (res, filePath) => {
           const lower = filePath.toLowerCase();
           if (
@@ -2920,16 +3305,20 @@ async function startServer() {
       })
     );
 
-    // 4. SPA Catch-all route: index.html is ALWAYS revalidated to ensure instant version pickup
+    // 4. SPA SEO-aware Document Catch-all: injects canonical, robots, X-Robots-Tag, JSON-LD, and real 404 status
+    const prodTemplate = fs.readFileSync(path.resolve(distPath, 'index.html'), 'utf-8');
     app.get('*', (req: Request, res: Response, next) => {
-      if (req.path.startsWith('/api/') || req.path === '/healthz' || req.path === '/version.json') {
+      if (!isHtmlDocumentRequest(req)) {
         return next();
       }
+      const { html, seo } = injectSeoIntoHtml(prodTemplate, req);
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
       res.setHeader('Surrogate-Control', 'no-store');
-      res.sendFile(path.resolve(distPath, 'index.html'));
+      res.setHeader('X-Robots-Tag', seo.robots);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.status(seo.statusCode).send(html);
     });
   } else {
     console.log('[SERVER] Mode Développement actif - Démarrage du middleware Vite.');
@@ -2939,8 +3328,29 @@ async function startServer() {
         hmr: false,
         ws: false,
       },
-      appType: 'spa',
+      appType: 'custom',
     });
+
+    app.get('*', async (req: Request, res: Response, next) => {
+      if (!isHtmlDocumentRequest(req)) {
+        return next();
+      }
+      try {
+        const rawTemplate = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf-8');
+        const transformedHtml = await vite.transformIndexHtml(req.originalUrl, rawTemplate);
+        const { html, seo } = injectSeoIntoHtml(transformedHtml, req);
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.setHeader('X-Robots-Tag', seo.robots);
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.status(seo.statusCode).send(html);
+      } catch (err) {
+        vite.ssrFixStacktrace(err as Error);
+        return next(err);
+      }
+    });
+
     app.use(vite.middlewares);
   }
 

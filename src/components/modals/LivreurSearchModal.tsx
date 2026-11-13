@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Courier } from '../../types';
+import { filterVendorDeliveries } from '../../utils/deliveryIsolation';
 
 interface LivreurSearchModalProps {
   isOpen: boolean;
@@ -22,7 +23,13 @@ export const LivreurSearchModal: React.FC<LivreurSearchModalProps> = ({
     openWhatsAppModal,
     showToast,
     setCurrentView,
-    merchantSettings
+    merchantSettings,
+    firebaseUser,
+    userProfile,
+    isAdminAuthenticated,
+    isDirectorModeActive,
+    directorTargetId,
+    directorTargetName,
   } = useApp();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -40,16 +47,27 @@ export const LivreurSearchModal: React.FC<LivreurSearchModalProps> = ({
     return Array.from(set);
   }, [couriers]);
 
+  const ownedDeliveries = useMemo(() => {
+    return filterVendorDeliveries(deliveries, {
+      userProfile,
+      firebaseUserUid: firebaseUser?.uid,
+      isAdminAuthenticated,
+      isDirectorModeActive,
+      directorTargetId,
+      directorTargetName,
+    });
+  }, [deliveries, userProfile, firebaseUser?.uid, isAdminAuthenticated, isDirectorModeActive, directorTargetId, directorTargetName]);
+
   // Orders eligible for direct assignment (status === 'en_attente')
   const pendingOrders = useMemo(() => {
-    return deliveries.filter(d => d.status === 'en_attente' || !d.courier);
-  }, [deliveries]);
+    return ownedDeliveries.filter(d => d.status === 'en_attente' || !d.courier);
+  }, [ownedDeliveries]);
 
   // Target order to assign if preSelectedOrderId is provided
   const targetOrder = useMemo(() => {
     if (!preSelectedOrderId) return pendingOrders[0] || null;
-    return deliveries.find(d => d.id === preSelectedOrderId) || pendingOrders[0] || null;
-  }, [preSelectedOrderId, deliveries, pendingOrders]);
+    return ownedDeliveries.find(d => d.id === preSelectedOrderId) || pendingOrders[0] || null;
+  }, [preSelectedOrderId, ownedDeliveries, pendingOrders]);
 
   // Filter and sort couriers
   const filteredCouriers = useMemo(() => {

@@ -9,6 +9,7 @@ import { PaginationControls } from '../common/PaginationControls';
 
 import { OnboardingGuideModal } from '../modals/OnboardingGuideModal';
 import { VendeurFAQSection } from '../vendeur/VendeurFAQSection';
+import { filterVendorDeliveries, buildVendorDeliveryCsv } from '../../utils/deliveryIsolation';
 
 export const VendeurDashboard: React.FC = () => {
   const {
@@ -18,11 +19,15 @@ export const VendeurDashboard: React.FC = () => {
     openWhatsAppModal,
     setIsPODModalOpen,
     updateDeliveryStatus,
+    duplicateDeliveryOrder,
     showToast,
+    firebaseUser,
     userProfile,
     merchantSettings,
     featureFlags,
+    isAdminAuthenticated,
     isDirectorModeActive,
+    directorTargetId,
     directorTargetName,
     openLivreurSearchModal,
     openRateLivreurModal,
@@ -38,23 +43,14 @@ export const VendeurDashboard: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 6;
 
-  // Isolation stricte des livraisons : chaque compte marchand voit exclusivement ses propres commandes
-  const merchantDeliveries = deliveries.filter((d) => {
-    if (isDirectorModeActive && directorTargetName) {
-      return (
-        (d.pickupLocation?.name && d.pickupLocation.name.toLowerCase().includes(directorTargetName.toLowerCase())) ||
-        (d.merchantStoreName && d.merchantStoreName.toLowerCase().includes(directorTargetName.toLowerCase()))
-      );
-    }
-    if (userProfile?.role === 'vendeur') {
-      return (
-        (d.merchantId && d.merchantId === userProfile.uid) ||
-        (d.merchantEmail && userProfile.email && d.merchantEmail.toLowerCase() === userProfile.email.toLowerCase()) ||
-        (merchantSettings.storeName && d.merchantStoreName && d.merchantStoreName.toLowerCase() === merchantSettings.storeName.toLowerCase()) ||
-        (merchantSettings.storeName && d.pickupLocation.name && d.pickupLocation.name.toLowerCase() === merchantSettings.storeName.toLowerCase())
-      );
-    }
-    return true;
+  // Isolation stricte des livraisons : chaque compte vendeur voit exclusivement ses propres commandes (par UID)
+  const merchantDeliveries = filterVendorDeliveries(deliveries, {
+    userProfile,
+    firebaseUserUid: firebaseUser?.uid,
+    isAdminAuthenticated,
+    isDirectorModeActive,
+    directorTargetId,
+    directorTargetName,
   });
 
   // Counters basés sur les livraisons propres à ce vendeur
@@ -137,6 +133,30 @@ export const VendeurDashboard: React.FC = () => {
   const handleReschedule = (orderId: string) => {
     updateDeliveryStatus(orderId, 'en_attente', 'Reprogrammation validée par le vendeur');
     showToast(`Course ${orderId} reprogrammée au statut En attente.`, 'success');
+  };
+
+  const handleExportCsv = () => {
+    const activeUid = userProfile?.uid || firebaseUser?.uid;
+    const { csvContent, exportedCount, filename } = buildVendorDeliveryCsv(
+      filteredDeliveries,
+      activeUid,
+      merchantSettings.storeName,
+      isAdminAuthenticated || isDirectorModeActive
+    );
+    if (exportedCount === 0) {
+      showToast('Aucune livraison personnelle à exporter pour les critères sélectionnés.', 'info');
+      return;
+    }
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(`Export CSV généré (${exportedCount} course${exportedCount > 1 ? 's' : ''}) !`, 'success');
   };
 
   const scrollToFAQ = () => {
@@ -372,12 +392,12 @@ export const VendeurDashboard: React.FC = () => {
                   />
                 </div>
                 <button
-                  onClick={() => showToast('Export CSV généré avec succès !', 'success')}
+                  onClick={handleExportCsv}
                   className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1 shrink-0 cursor-pointer"
-                  title="Exporter au format CSV"
+                  title="Télécharger mes livraisons au format CSV"
                 >
                   <span className="material-symbols-outlined text-sm">file_download</span>
-                  <span className="hidden sm:inline">Export</span>
+                  <span className="hidden sm:inline">Export CSV</span>
                 </button>
               </div>
             </div>
@@ -560,6 +580,14 @@ export const VendeurDashboard: React.FC = () => {
                                   Reprogrammer
                                 </button>
                               )}
+
+                              <button
+                                onClick={() => duplicateDeliveryOrder(order.id)}
+                                className="p-1.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 transition-colors cursor-pointer"
+                                title="Dupliquer cette commande pour un nouvel envoi"
+                              >
+                                <span className="material-symbols-outlined text-base">content_copy</span>
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -620,6 +648,15 @@ export const VendeurDashboard: React.FC = () => {
                             Preuve POD
                           </button>
                         )}
+
+                        <button
+                          onClick={() => duplicateDeliveryOrder(order.id)}
+                          className="px-2.5 py-1 rounded-md border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 text-xs font-medium flex items-center gap-1"
+                          title="Dupliquer cette commande"
+                        >
+                          <span className="material-symbols-outlined text-xs">content_copy</span>
+                          <span>Dupliquer</span>
+                        </button>
                       </div>
                     </article>
                   ))}

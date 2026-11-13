@@ -25,7 +25,10 @@ export const VendeurNewDelivery: React.FC = () => {
     setCurrentView,
     navigateBack,
     showToast,
-    merchantSettings
+    merchantSettings,
+    userProfile,
+    deliveryDraft,
+    setDeliveryDraft,
   } = useApp();
 
   // Active Wizard Step: 1 = Client, 2 = Colis & Trajet, 3 = Attribution Coursier
@@ -61,10 +64,16 @@ export const VendeurNewDelivery: React.FC = () => {
   const [destinationPos, setDestinationPos] = useState<LatLng | null>(null);
   const [mapActiveTarget, setMapActiveTarget] = useState<'origin' | 'destination'>('destination');
 
-  // Step 2: Colis & Trajet (automatiquement pré-rempli avec les coordonnées et l'adresse de la boutique)
-  const [pickupStoreName, setPickupStoreName] = useState(merchantSettings.storeName || 'Boutique Glam Chic Cotonou');
-  const [pickupAddress, setPickupAddress] = useState(merchantSettings.defaultPickupAddress || 'Haie Vive, Avenue Jean-Paul II, Cotonou, Bénin');
-  const [pickupCommune, setPickupCommune] = useState(merchantSettings.storeCommune || 'Cotonou - Haie Vive');
+  // Step 2: Colis & Trajet (automatiquement pré-rempli avec les coordonnées et l'adresse de la boutique active)
+  const [pickupStoreName, setPickupStoreName] = useState(
+    merchantSettings.storeName || userProfile?.storeName || ''
+  );
+  const [pickupAddress, setPickupAddress] = useState(
+    merchantSettings.defaultPickupAddress || merchantSettings.storeCommune || ''
+  );
+  const [pickupCommune, setPickupCommune] = useState(
+    merchantSettings.storeCommune || 'Cotonou - Haie Vive'
+  );
   const [dropoffCommune, setDropoffCommune] = useState('');
   const [dropoffAddress, setDropoffAddress] = useState('');
   const [itemDescription, setItemDescription] = useState('');
@@ -73,12 +82,38 @@ export const VendeurNewDelivery: React.FC = () => {
   const [isFragile, setIsFragile] = useState<boolean>(false);
   const [codAmount, setCodAmount] = useState<number | ''>('');
 
+  // Pré-remplissage sécurisé lors d'une duplication de course existante du vendeur
+  useEffect(() => {
+    if (!deliveryDraft) return;
+    setClientName(deliveryDraft.clientName || '');
+    setClientPhone(deliveryDraft.clientPhone || '');
+    setClientNote(deliveryDraft.clientNote || '');
+    setDropoffCommune(deliveryDraft.dropoffCommune || '');
+    setDropoffAddress(deliveryDraft.dropoffAddress || '');
+    if (deliveryDraft.dropoffCoordinates && deliveryDraft.dropoffCoordinates.length === 2) {
+      setDestinationPos({
+        lat: deliveryDraft.dropoffCoordinates[0],
+        lng: deliveryDraft.dropoffCoordinates[1],
+      });
+    } else if (deliveryDraft.dropoffCommune) {
+      const loc = getLocationForCommune(deliveryDraft.dropoffCommune);
+      setDestinationPos({ lat: loc.lat, lng: loc.lng });
+    }
+    setItemDescription(deliveryDraft.itemDescription || '');
+    setItemWeight(typeof deliveryDraft.itemWeightKg === 'number' ? deliveryDraft.itemWeightKg : '');
+    setItemFormat(deliveryDraft.itemFormat || 'M');
+    setIsFragile(Boolean(deliveryDraft.isFragile));
+    setCodAmount(typeof deliveryDraft.itemValueCOD === 'number' ? deliveryDraft.itemValueCOD : '');
+    setCurrentStep(1);
+    setDeliveryDraft(null);
+  }, [deliveryDraft, setDeliveryDraft]);
+
   // Charger la boutique par défaut et placer automatiquement le marqueur sur Google Maps
   const handleUseDefaultStore = () => {
     setPickupMode('store_default');
-    const storeName = merchantSettings.storeName || 'Boutique Glam Chic Cotonou';
+    const storeName = merchantSettings.storeName || userProfile?.storeName || 'Ma Boutique';
     const defaultCommune = merchantSettings.storeCommune || 'Cotonou - Haie Vive';
-    const defaultAddress = merchantSettings.defaultPickupAddress || 'Haie Vive, Avenue Jean-Paul II, Cotonou, Bénin';
+    const defaultAddress = merchantSettings.defaultPickupAddress || defaultCommune;
     const pos = getBoutiquePosition(merchantSettings);
 
     setPickupStoreName(storeName);
@@ -267,9 +302,9 @@ export const VendeurNewDelivery: React.FC = () => {
   const goToStep2 = () => {
     if (validateStep1()) {
       if (pickupMode === 'store_default') {
-        const storeName = merchantSettings.storeName || 'Boutique Glam Chic Cotonou';
+        const storeName = merchantSettings.storeName || userProfile?.storeName || 'Ma Boutique';
         const defaultCommune = merchantSettings.storeCommune || 'Cotonou - Haie Vive';
-        const defaultAddress = merchantSettings.defaultPickupAddress || 'Haie Vive, Avenue Jean-Paul II, Cotonou, Bénin';
+        const defaultAddress = merchantSettings.defaultPickupAddress || defaultCommune;
         const pos = getBoutiquePosition(merchantSettings);
 
         setPickupStoreName(storeName);

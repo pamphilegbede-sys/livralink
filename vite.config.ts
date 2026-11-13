@@ -63,7 +63,7 @@ export default defineConfig(() => {
       versionGeneratorPlugin(),
       VitePWA({
         registerType: 'prompt',
-        includeAssets: ['icon.svg', 'favicon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'sw-push.js'],
+        includeAssets: ['icon.svg', 'favicon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'og-image.jpg', 'sw-push.js'],
         manifest: {
           id: '/',
           name: 'LivraLink - Logistique Urbaine Connectée',
@@ -102,14 +102,14 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          globPatterns: ['**/*.{js,css,html,ico,png,jpg,svg,woff,woff2}'],
           globIgnores: ['**/version.json'],
           cleanupOutdatedCaches: true,
           clientsClaim: true,
           skipWaiting: true,
           importScripts: ['/sw-push.js'],
           navigateFallback: '/index.html',
-          navigateFallbackDenylist: [/^\/api\//, /^\/healthz/, /^\/version\.json/],
+          navigateFallbackDenylist: [/^\/api\//, /^\/healthz/, /^\/version\.json/, /^\/robots\.txt$/, /^\/sitemap\.xml$/],
           runtimeCaching: [
             {
               // Do NOT cache API calls

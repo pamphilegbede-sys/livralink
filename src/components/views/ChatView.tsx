@@ -4,6 +4,7 @@ import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
 import { ChatMessage, UserRole } from '../../types';
+import { isOrderOwnedByVendor } from '../../utils/deliveryIsolation';
 
 export const ChatView: React.FC = () => {
   const {
@@ -107,10 +108,7 @@ export const ChatView: React.FC = () => {
       if (d.id === '#LL-4192') return;
 
       if (currentRole === 'vendeur') {
-        const isMyDelivery = !userProfile ||
-          d.merchantId === currentUserId ||
-          (d.merchantEmail && userProfile.email && d.merchantEmail.toLowerCase() === userProfile.email.toLowerCase()) ||
-          (d.merchantStoreName && userProfile.storeName && d.merchantStoreName.toLowerCase() === userProfile.storeName.toLowerCase());
+        const isMyDelivery = Boolean(userProfile && isOrderOwnedByVendor(d, userProfile.uid || currentUserId));
 
         if (!isMyDelivery) return;
 
@@ -130,10 +128,11 @@ export const ChatView: React.FC = () => {
           });
         }
       } else if (currentRole === 'livreur') {
-        const isMyDelivery = !userProfile ||
-          d.courier?.id === currentUserId ||
-          (d.courier?.email && userProfile.email && d.courier.email.toLowerCase() === userProfile.email.toLowerCase()) ||
-          (d.courier?.name && userProfile.fullName && d.courier.name.toLowerCase() === userProfile.fullName.toLowerCase());
+        const isMyDelivery = Boolean(
+          userProfile &&
+          (d.courier?.id === (userProfile.uid || currentUserId) ||
+            (d.courier?.email && userProfile.email && d.courier.email.toLowerCase() === userProfile.email.toLowerCase()))
+        );
 
         if (!isMyDelivery) return;
 

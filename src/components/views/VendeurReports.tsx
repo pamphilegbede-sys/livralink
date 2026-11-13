@@ -3,35 +3,30 @@ import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
+import { filterVendorDeliveries, buildVendorDeliveryCsv } from '../../utils/deliveryIsolation';
 
 export const VendeurReports: React.FC = () => {
-  const { 
-    deliveries, 
+  const {
+    deliveries,
     showToast,
+    firebaseUser,
     userProfile,
     merchantSettings,
+    isAdminAuthenticated,
     isDirectorModeActive,
+    directorTargetId,
     directorTargetName,
   } = useApp();
   const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month' | 'year'>('week');
 
-  // Isolation stricte des livraisons pour les rapports
-  const merchantDeliveries = deliveries.filter((d) => {
-    if (isDirectorModeActive && directorTargetName) {
-      return (
-        (d.pickupLocation?.name && d.pickupLocation.name.toLowerCase().includes(directorTargetName.toLowerCase())) ||
-        (d.merchantStoreName && d.merchantStoreName.toLowerCase().includes(directorTargetName.toLowerCase()))
-      );
-    }
-    if (userProfile?.role === 'vendeur') {
-      return (
-        (d.merchantId && d.merchantId === userProfile.uid) ||
-        (d.merchantEmail && userProfile.email && d.merchantEmail.toLowerCase() === userProfile.email.toLowerCase()) ||
-        (merchantSettings.storeName && d.merchantStoreName && d.merchantStoreName.toLowerCase() === merchantSettings.storeName.toLowerCase()) ||
-        (merchantSettings.storeName && d.pickupLocation.name && d.pickupLocation.name.toLowerCase() === merchantSettings.storeName.toLowerCase())
-      );
-    }
-    return true;
+  // Isolation stricte des livraisons pour les rapports (par UID uniquement)
+  const merchantDeliveries = filterVendorDeliveries(deliveries, {
+    userProfile,
+    firebaseUserUid: firebaseUser?.uid,
+    isAdminAuthenticated,
+    isDirectorModeActive,
+    directorTargetId,
+    directorTargetName,
   });
 
   const totalOrders = merchantDeliveries.length;
@@ -71,10 +66,27 @@ export const VendeurReports: React.FC = () => {
   };
 
   const handleExportExcel = () => {
-    showToast('Génération du fichier Excel (XLSX)...', 'info');
-    setTimeout(() => {
-      showToast('Fichier Excel exporté !', 'success');
-    }, 1000);
+    const activeUid = userProfile?.uid || firebaseUser?.uid;
+    const { csvContent, exportedCount, filename } = buildVendorDeliveryCsv(
+      merchantDeliveries,
+      activeUid,
+      merchantSettings.storeName,
+      isAdminAuthenticated || isDirectorModeActive
+    );
+    if (exportedCount === 0) {
+      showToast('Aucune expédition à exporter pour le moment.', 'info');
+      return;
+    }
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(`Fichier CSV/Excel exporté (${exportedCount} course${exportedCount > 1 ? 's' : ''}) !`, 'success');
   };
 
   return (

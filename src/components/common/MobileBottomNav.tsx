@@ -1,5 +1,6 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
+import { filterVendorDeliveries } from '../../utils/deliveryIsolation';
 
 export const MobileBottomNav: React.FC = () => {
   const {
@@ -10,7 +11,12 @@ export const MobileBottomNav: React.FC = () => {
     adminActiveTab,
     setAdminActiveTab,
     deliveries,
+    firebaseUser,
     userProfile,
+    isAdminAuthenticated,
+    isDirectorModeActive,
+    directorTargetId,
+    directorTargetName,
     setCourierMissionsFilter,
   } = useApp();
   const [isAdminHubOpen, setIsAdminHubOpen] = React.useState(false);
@@ -26,9 +32,17 @@ export const MobileBottomNav: React.FC = () => {
       ? userProfile.role
       : currentRole;
 
+  const vendorDeliveries = filterVendorDeliveries(deliveries, {
+    userProfile,
+    firebaseUserUid: firebaseUser?.uid,
+    isAdminAuthenticated,
+    isDirectorModeActive,
+    directorTargetId,
+    directorTargetName,
+  });
   const activeDeliveriesCount = deliveries.filter((d) => d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere').length;
   const pendingDeliveriesCount = deliveries.filter((d) => d.status === 'en_attente' || !d.courier).length;
-  const navDeliveriesBadgeCount = effectiveNavRole === 'vendeur' ? deliveries.length : pendingDeliveriesCount;
+  const navDeliveriesBadgeCount = effectiveNavRole === 'vendeur' ? vendorDeliveries.length : pendingDeliveriesCount;
 
   const adminModules = [
     { id: 'overview', label: 'Synthèse & KPIs', icon: 'dashboard', color: 'text-amber-400 bg-amber-500/10' },
