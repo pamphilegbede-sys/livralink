@@ -219,6 +219,9 @@ export interface AppNotification {
   timestamp: string;
   isRead: boolean;
   orderId?: string;
+  orderDocId?: string;
+  senderId?: string;
+  recipientId?: string;
   roleTarget?: 'all' | 'vendeur' | 'livreur' | 'admin';
   actionView?: string;
 }

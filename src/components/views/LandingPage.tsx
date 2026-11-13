@@ -4,7 +4,7 @@ import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
 
 export const LandingPage: React.FC = () => {
-  const { setCurrentView, setCurrentRole, viewHistory, userProfile, firebaseUser } = useApp();
+  const { setCurrentView, setCurrentRole, viewHistory } = useApp();
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 font-['Plus_Jakarta_Sans'] selection:bg-blue-600 selection:text-white">
@@ -104,11 +104,7 @@ export const LandingPage: React.FC = () => {
               <button
                 onClick={() => {
                   setCurrentRole('vendeur');
-                  if (userProfile || firebaseUser) {
-                    setCurrentView('vendeur_dashboard');
-                  } else {
-                    setCurrentView('login_vendeur');
-                  }
+                  setCurrentView('login_vendeur');
                 }}
                 className="py-3.5 px-6 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-blue-600/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
@@ -118,11 +114,7 @@ export const LandingPage: React.FC = () => {
               <button
                 onClick={() => {
                   setCurrentRole('livreur');
-                  if (userProfile || firebaseUser) {
-                    setCurrentView('livreur_dashboard');
-                  } else {
-                    setCurrentView('login_livreur');
-                  }
+                  setCurrentView('login_livreur');
                 }}
                 className="py-3.5 px-6 bg-white hover:bg-slate-50 text-slate-800 border-2 border-slate-300 rounded-xl font-bold text-sm shadow-xs active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
@@ -210,7 +202,7 @@ export const LandingPage: React.FC = () => {
                   <button
                     onClick={() => {
                       setCurrentRole('vendeur');
-                      setCurrentView('vendeur_tracking');
+                      setCurrentView('login_vendeur');
                     }}
                     className="p-2 bg-white border border-slate-200 rounded-xl text-blue-600 hover:bg-slate-50"
                   >
@@ -219,7 +211,7 @@ export const LandingPage: React.FC = () => {
                   <button
                     onClick={() => {
                       setCurrentRole('vendeur');
-                      setCurrentView('vendeur_tracking');
+                      setCurrentView('login_vendeur');
                     }}
                     className="p-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl hover:bg-emerald-100"
                   >
@@ -422,7 +414,7 @@ export const LandingPage: React.FC = () => {
               <button
                 onClick={() => {
                   setCurrentRole('vendeur');
-                  setCurrentView('vendeur_dashboard');
+                  setCurrentView('login_vendeur');
                 }}
                 className="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md transition-all active:scale-95"
               >
@@ -461,7 +453,7 @@ export const LandingPage: React.FC = () => {
               <button
                 onClick={() => {
                   setCurrentRole('livreur');
-                  setCurrentView('livreur_dashboard');
+                  setCurrentView('login_livreur');
                 }}
                 className="w-full py-3 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs shadow-md transition-all active:scale-95"
               >
@@ -558,7 +550,7 @@ export const LandingPage: React.FC = () => {
             <button
               onClick={() => {
                 setCurrentRole('vendeur');
-                setCurrentView('vendeur_dashboard');
+                setCurrentView('register');
               }}
               className="py-3.5 px-6 bg-white hover:bg-slate-50 text-blue-700 font-bold text-xs rounded-xl shadow-md transition-all active:scale-95"
             >

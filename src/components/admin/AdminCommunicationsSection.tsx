@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
+import { auth } from '../../firebase/config';
 
 export interface AnnouncementRecord {
   id: string;
@@ -40,11 +41,12 @@ export const AdminCommunicationsSection: React.FC = () => {
   const fetchAnnouncementsHistory = async () => {
     setIsLoadingHistory(true);
     try {
-      const res = await fetch('/api/admin/announcements', {
-        headers: {
-          'x-admin-secret': 'livralink_super_admin_2026_key',
-        },
-      });
+      const headers: Record<string, string> = {};
+      if (auth.currentUser) {
+        const token = await auth.currentUser.getIdToken();
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+      }
+      const res = await fetch('/api/admin/announcements', { headers });
       const data = await res.json();
       if (res.ok && data.success && Array.isArray(data.announcements)) {
         setAnnouncementsHistory(data.announcements);

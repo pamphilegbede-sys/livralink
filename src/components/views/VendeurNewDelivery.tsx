@@ -11,6 +11,9 @@ import {
   RATE_PER_KM_FCFA,
   BENIN_DEPARTMENTS,
   ALL_BENIN_COMMUNES,
+  RouteEstimationResult,
+  estimateFallbackDurationMinutes,
+  formatTravelDuration,
 } from '../../config/maps';
 
 export const VendeurNewDelivery: React.FC = () => {
@@ -137,13 +140,33 @@ export const VendeurNewDelivery: React.FC = () => {
     }
   };
 
-  // Calcul dynamique de la distance et du tarif (100 FCFA par kilomètre)
+  const [routeEstimate, setRouteEstimate] = useState<RouteEstimationResult | null>(null);
+
+  useEffect(() => {
+    if (!originPos || !destinationPos) {
+      setRouteEstimate(null);
+    }
+  }, [originPos, destinationPos]);
+
+  // Calcul dynamique de la distance (Google Maps Routes en priorité, repli Haversine), du temps de trajet et du tarif (100 FCFA/km)
   const distanceKm = useMemo(() => {
     if (originPos && destinationPos) {
-      return calculateDistanceKm(originPos, destinationPos);
+      return routeEstimate?.distanceKm ?? calculateDistanceKm(originPos, destinationPos);
     }
     return 0;
-  }, [originPos, destinationPos]);
+  }, [originPos, destinationPos, routeEstimate]);
+
+  const estimatedDurationText = useMemo(() => {
+    if (originPos && destinationPos) {
+      return (
+        routeEstimate?.durationText ||
+        formatTravelDuration(
+          estimateFallbackDurationMinutes(distanceKm, routeEstimate?.travelMode || 'DRIVING')
+        )
+      );
+    }
+    return '--';
+  }, [originPos, destinationPos, distanceKm, routeEstimate]);
 
   const deliveryFee = useMemo(() => {
     if (originPos && destinationPos) {
@@ -924,6 +947,7 @@ export const VendeurNewDelivery: React.FC = () => {
                         }}
                         activeTarget={mapActiveTarget}
                         onActiveTargetChange={setMapActiveTarget}
+                        onRouteCalculated={setRouteEstimate}
                         heightClass="h-[270px]"
                       />
 
@@ -941,9 +965,12 @@ export const VendeurNewDelivery: React.FC = () => {
                           </span>
                         </div>
                         <div className="col-span-2 sm:col-span-1">
-                          <span className="text-[10px] text-slate-500 font-semibold block">Durée estimée</span>
-                          <span className="text-sm font-bold text-slate-800">
-                            {originPos && destinationPos ? `~${Math.round(distanceKm * 3.5 + 4)} min` : '--'}
+                          <span className="text-[10px] text-slate-500 font-semibold block">
+                            Temps de trajet estimé {routeEstimate?.source === 'google_routes' ? '(Google Maps)' : ''}
+                          </span>
+                          <span className="text-sm font-extrabold text-indigo-800 flex items-center gap-1">
+                            <span className="material-symbols-outlined text-sm text-indigo-600">schedule</span>
+                            <span>{originPos && destinationPos ? `~${estimatedDurationText}` : '--'}</span>
                           </span>
                         </div>
                       </div>
@@ -1204,6 +1231,12 @@ export const VendeurNewDelivery: React.FC = () => {
                       <strong className="text-slate-900 font-mono">{numericCod.toLocaleString('fr-FR')} FCFA</strong>
                     </div>
                     <div className="flex flex-wrap justify-between items-center gap-1 text-xs">
+                      <span className="text-slate-600">Trajet &amp; Durée estimée :</span>
+                      <strong className="text-indigo-700 font-bold">
+                        {distanceKm} km • ~{estimatedDurationText}
+                      </strong>
+                    </div>
+                    <div className="flex flex-wrap justify-between items-center gap-1 text-xs">
                       <span className="text-slate-600">Frais livraison standard :</span>
                       <strong className="text-slate-900 font-mono">{deliveryFee.toLocaleString('fr-FR')} FCFA</strong>
                     </div>
@@ -1286,74 +1319,37 @@ export const VendeurNewDelivery: React.FC = () => {
                 </div>
               </div>
 
-              {/* Right Column: Live GPS Map + Couriers Fleet in Zone */}
+              {/* Right Column: Live Google Maps Route Preview + Couriers Fleet in Zone */}
               <div className="lg:col-span-7 space-y-5">
-                {/* Vector Map Preview */}
-                <div className="relative w-full h-[240px] sm:h-[300px] rounded-3xl overflow-hidden border border-slate-200 bg-[#edf1fa] shadow-sm select-none">
-                  <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="xMidYMid slice" viewBox="0 0 600 380">
-                    <defs>
-                      <pattern id="mapGridNew" width="40" height="40" patternUnits="userSpaceOnUse">
-                        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e2e8f2" strokeWidth="1" />
-                      </pattern>
-                    </defs>
-
-                    <rect width="600" height="380" fill="#eef2f8" />
-                    <rect width="600" height="380" fill="url(#mapGridNew)" />
-
-                    {/* Laguna Ebrié / Cotonou Nokoue */}
-                    <path d="M 0 320 Q 180 300 310 330 T 600 350 L 600 380 L 0 380 Z" fill="#d7e5fa" />
-
-                    {/* Main roads */}
-                    <path d="M -10 120 C 140 130 260 90 380 95 C 460 98 520 130 610 120" stroke="#cbd5e6" strokeWidth="16" fill="none" />
-                    <path d="M -10 120 C 140 130 260 90 380 95 C 460 98 520 130 610 120" stroke="#ffffff" strokeWidth="12" fill="none" />
-
-                    <path d="M 140 0 L 150 280 L 170 380" stroke="#cbd5e6" strokeWidth="14" fill="none" />
-                    <path d="M 140 0 L 150 280 L 170 380" stroke="#ffffff" strokeWidth="10" fill="none" />
-
-                    <path d="M 380 0 L 375 220 L 410 380" stroke="#cbd5e6" strokeWidth="16" fill="none" />
-                    <path d="M 380 0 L 375 220 L 410 380" stroke="#ffffff" strokeWidth="12" fill="none" />
-
-                    {/* Route line */}
-                    <path
-                      d="M 150 120 L 280 140 L 420 220"
-                      fill="none"
-                      stroke="#2563eb"
-                      strokeWidth="4"
-                      strokeDasharray="6 6"
-                      className="animate-[pulse_1.5s_infinite]"
-                    />
-
-                    {/* Pins */}
-                    <circle cx="150" cy="120" r="8" fill="#2563eb" />
-                    <circle cx="150" cy="120" r="3" fill="#ffffff" />
-
-                    <circle cx="420" cy="220" r="8" fill="#10b981" />
-                    <circle cx="420" cy="220" r="3" fill="#ffffff" />
-
-                    <circle cx="280" cy="140" r="6" fill="#f59e0b" />
-                  </svg>
-
-                  {/* Overlays on Map */}
-                  <div className="absolute top-3 left-3 bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-full shadow-xs border border-slate-200 text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
-                    <span>Zone {dropoffCommune || 'Bénin'} : {couriers.length} livreurs connectés</span>
+                {/* Visualisation Google Maps & Estimation temps de trajet */}
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-slate-700">
+                    <span className="flex items-center gap-1.5 text-blue-700">
+                      <span className="material-symbols-outlined text-base">map</span>
+                      <span>Visualisation du trajet &amp; Temps estimé (Google Maps)</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200 text-[11px]">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                      <span>
+                        Zone {dropoffCommune || 'Bénin'} : {couriers.length} livreurs • ~{estimatedDurationText}
+                      </span>
+                    </span>
                   </div>
-
-                  {/* Departure marker */}
-                  <div className="absolute top-16 left-6 z-10">
-                    <div className="bg-blue-600 text-white rounded-xl px-2.5 py-1 shadow-md text-[10px] font-bold flex items-center gap-1">
-                      <span className="material-symbols-outlined text-xs">store</span>
-                      <span>Départ : {pickupStoreName || 'Boutique'}</span>
-                    </div>
-                  </div>
-
-                  {/* Destination marker */}
-                  <div className="absolute bottom-10 right-6 z-10">
-                    <div className="bg-emerald-600 text-white rounded-xl px-2.5 py-1 shadow-md text-[10px] font-bold flex items-center gap-1">
-                      <span className="material-symbols-outlined text-xs">home_pin</span>
-                      <span>Client : {clientName || 'Destinataire'} ({dropoffCommune})</span>
-                    </div>
-                  </div>
+                  <GoogleMapDelivery
+                    origin={
+                      originPos ||
+                      getLocationForCommune(pickupCommune || pickupAddress || 'Cotonou - Haie Vive')
+                    }
+                    destination={
+                      destinationPos ||
+                      getLocationForCommune(dropoffCommune || dropoffAddress || 'Cotonou - Cadjehoun')
+                    }
+                    originLabel={`Retrait : ${pickupStoreName || 'Boutique'}`}
+                    destinationLabel={`Livraison : ${clientName || 'Client'} (${dropoffCommune || 'Bénin'})`}
+                    interactive={false}
+                    onRouteCalculated={setRouteEstimate}
+                    heightClass="h-[260px] sm:h-[300px]"
+                  />
                 </div>
 
                 {/* Available Couriers Fleet List */}

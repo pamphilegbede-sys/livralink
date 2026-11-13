@@ -2,11 +2,33 @@ import React from 'react';
 import { useApp } from '../../context/AppContext';
 
 export const MobileBottomNav: React.FC = () => {
-  const { currentView, setCurrentView, currentRole, setCurrentRole, adminActiveTab, setAdminActiveTab, deliveries } = useApp();
+  const {
+    currentView,
+    setCurrentView,
+    currentRole,
+    setCurrentRole,
+    adminActiveTab,
+    setAdminActiveTab,
+    deliveries,
+    userProfile,
+    setCourierMissionsFilter,
+  } = useApp();
   const [isAdminHubOpen, setIsAdminHubOpen] = React.useState(false);
+
+  const effectiveNavRole: 'vendeur' | 'livreur' | 'admin' =
+    currentView === 'admin_console'
+      ? 'admin'
+      : currentView.startsWith('vendeur_')
+      ? 'vendeur'
+      : currentView.startsWith('livreur_')
+      ? 'livreur'
+      : userProfile?.role === 'vendeur' || userProfile?.role === 'livreur'
+      ? userProfile.role
+      : currentRole;
 
   const activeDeliveriesCount = deliveries.filter((d) => d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere').length;
   const pendingDeliveriesCount = deliveries.filter((d) => d.status === 'en_attente' || !d.courier).length;
+  const navDeliveriesBadgeCount = effectiveNavRole === 'vendeur' ? deliveries.length : pendingDeliveriesCount;
 
   const adminModules = [
     { id: 'overview', label: 'Synthèse & KPIs', icon: 'dashboard', color: 'text-amber-400 bg-amber-500/10' },
@@ -22,13 +44,13 @@ export const MobileBottomNav: React.FC = () => {
     { id: 'security', label: 'Sécurité Whitelist', icon: 'shield_person', color: 'text-rose-400 bg-rose-500/10' },
   ];
 
-  if (currentRole === 'admin') {
+  if (effectiveNavRole === 'admin') {
     return (
       <>
         {/* Admin Quick Hub Drawer / Bottom Sheet */}
         {isAdminHubOpen && (
           <div
-            className="fixed inset-0 z-50 md:hidden bg-slate-950/80 backdrop-blur-sm flex flex-col justify-end"
+            className="fixed inset-0 z-50 sm:hidden bg-slate-950/80 backdrop-blur-sm flex flex-col justify-end"
             onClick={() => setIsAdminHubOpen(false)}
           >
             <div
@@ -122,7 +144,7 @@ export const MobileBottomNav: React.FC = () => {
 
         <nav
           aria-label="Navigation principale mobile Admin"
-          className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 text-white backdrop-blur-md border-t border-slate-700 md:hidden pb-safe shadow-lg"
+          className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 text-white backdrop-blur-md border-t border-slate-700 sm:hidden pb-safe shadow-lg"
         >
           <div className="max-w-md mx-auto grid grid-cols-5 h-14 text-center">
             <button
@@ -216,12 +238,12 @@ export const MobileBottomNav: React.FC = () => {
   return (
     <nav
       aria-label="Navigation principale mobile"
-      className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 text-slate-800 dark:text-slate-100 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 md:hidden pb-safe shadow-lg transition-colors"
+      className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 text-slate-800 dark:text-slate-100 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 sm:hidden pb-safe shadow-lg transition-colors"
     >
       <div className="max-w-md mx-auto grid grid-cols-5 h-14">
         {/* Destination 1: Tableau de bord */}
         <button
-          onClick={() => setCurrentView(currentRole === 'vendeur' ? 'vendeur_dashboard' : 'livreur_dashboard')}
+          onClick={() => setCurrentView(effectiveNavRole === 'vendeur' ? 'vendeur_dashboard' : 'livreur_dashboard')}
           className={`flex flex-col items-center justify-center py-1 transition-colors ${
             currentView === 'vendeur_dashboard' || currentView === 'livreur_dashboard'
               ? 'text-blue-600 dark:text-blue-400 font-bold'
@@ -234,7 +256,14 @@ export const MobileBottomNav: React.FC = () => {
 
         {/* Destination 2: Expéditions / Courses */}
         <button
-          onClick={() => setCurrentView(currentRole === 'vendeur' ? 'vendeur_tracking' : 'livreur_missions')}
+          onClick={() => {
+            if (effectiveNavRole === 'vendeur') {
+              setCurrentView('vendeur_tracking');
+            } else {
+              setCourierMissionsFilter('en_cours');
+              setCurrentView('livreur_missions');
+            }
+          }}
           className={`flex flex-col items-center justify-center py-1 transition-colors relative ${
             currentView === 'vendeur_tracking' || currentView === 'livreur_missions'
               ? 'text-blue-600 dark:text-blue-400 font-bold'
@@ -243,15 +272,17 @@ export const MobileBottomNav: React.FC = () => {
         >
           <div className="relative">
             <span className="material-symbols-outlined text-[20px]">local_shipping</span>
-            <span className="absolute -top-1 -right-2 bg-blue-600 text-white text-[9px] font-bold px-1 rounded-full">
-              {currentRole === 'vendeur' ? deliveries.length : (pendingDeliveriesCount || 1)}
-            </span>
+            {navDeliveriesBadgeCount > 0 && (
+              <span className="absolute -top-1 -right-2 bg-blue-600 text-white text-[9px] font-bold px-1 rounded-full">
+                {navDeliveriesBadgeCount}
+              </span>
+            )}
           </div>
-          <span className="text-[10px] mt-0.5">{currentRole === 'vendeur' ? 'Livraisons' : 'Courses'}</span>
+          <span className="text-[10px] mt-0.5">{effectiveNavRole === 'vendeur' ? 'Livraisons' : 'Mes livr.'}</span>
         </button>
 
-        {/* Destination 3: Créer (FAB Center for Merchant / SOS for Courier) */}
-        {currentRole === 'vendeur' ? (
+        {/* Destination 3: Créer (FAB Center for Merchant / Missions disponibles for Courier) */}
+        {effectiveNavRole === 'vendeur' ? (
           <button
             onClick={() => setCurrentView('vendeur_new_delivery')}
             className="flex flex-col items-center justify-center text-blue-600 dark:text-blue-400 py-1 transition-transform active:scale-95"
@@ -263,7 +294,10 @@ export const MobileBottomNav: React.FC = () => {
           </button>
         ) : (
           <button
-            onClick={() => setCurrentView('livreur_missions')}
+            onClick={() => {
+              setCourierMissionsFilter('en_attente');
+              setCurrentView('livreur_missions');
+            }}
             className="flex flex-col items-center justify-center text-emerald-600 dark:text-emerald-400 py-1 transition-transform active:scale-95"
           >
             <div className="w-10 h-10 -mt-4 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-lg ring-4 ring-white dark:ring-slate-900">
@@ -275,10 +309,10 @@ export const MobileBottomNav: React.FC = () => {
 
         {/* Destination 4: Messagerie Directe Chat */}
         <button
-          onClick={() => setCurrentView(currentRole === 'vendeur' ? 'vendeur_chat' : 'livreur_chat')}
+          onClick={() => setCurrentView(effectiveNavRole === 'vendeur' ? 'vendeur_chat' : 'livreur_chat')}
           className={`flex flex-col items-center justify-center py-1 transition-colors relative ${
-            currentView === 'vendeur_chat' || currentView === 'livreur_chat' 
-              ? 'text-blue-600 dark:text-blue-400 font-bold' 
+            currentView === 'vendeur_chat' || currentView === 'livreur_chat'
+              ? 'text-blue-600 dark:text-blue-400 font-bold'
               : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
           }`}
         >
@@ -291,7 +325,7 @@ export const MobileBottomNav: React.FC = () => {
 
         {/* Destination 5: Profil / Réglages */}
         <button
-          onClick={() => setCurrentView(currentRole === 'vendeur' ? 'vendeur_settings' : 'livreur_settings')}
+          onClick={() => setCurrentView(effectiveNavRole === 'vendeur' ? 'vendeur_settings' : 'livreur_settings')}
           className={`flex flex-col items-center justify-center py-1 transition-colors ${
             currentView === 'vendeur_settings' || currentView === 'livreur_settings'
               ? 'text-blue-600 dark:text-blue-400 font-bold'

@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
+import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
-import { BackButton } from '../common/BackButton';
 import { DeliveryOrder } from '../../types';
 import { GoogleMapDelivery } from '../maps/GoogleMapDelivery';
 import { getLocationForCommune } from '../../config/maps';
@@ -16,8 +16,6 @@ export const VendeurTracking: React.FC = () => {
     setIsPODModalOpen,
     showToast,
     setCurrentView,
-    setCurrentRole,
-    acceptDelivery,
     updateDeliveryStatus,
     generateNewOTP,
     userProfile,
@@ -137,16 +135,21 @@ export const VendeurTracking: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col min-h-[100dvh] w-full overflow-x-clip bg-[#faf8ff] dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans']">
-      {/* Top Header */}
-      <Header
-        title="Mes Livraisons"
-        subtitle="Suivi temps réel, traçabilité GPS et gestion des colis expédiés"
-        showReturn
-      />
+    <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans']">
+      {/* Sidebar Desktop */}
+      <Sidebar />
 
-      {/* Scrollable Canvas */}
-      <main className="flex-1 p-3.5 sm:p-5 md:p-8 space-y-6 pb-28 md:pb-12 max-w-7xl mx-auto w-full">
+      {/* Main Content Wrapper */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#faf8ff] dark:bg-slate-950">
+        {/* Top Header */}
+        <Header
+          title="Mes Livraisons"
+          subtitle="Suivi temps réel, traçabilité GPS et gestion des colis expédiés"
+          showReturn
+        />
+
+        {/* Scrollable Canvas */}
+        <main className="flex-1 overflow-y-auto custom-scrollbar p-3.5 sm:p-5 md:p-8 space-y-6 pb-28 md:pb-12 max-w-7xl mx-auto w-full">
           {/* Header Action Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs">
             <div className="flex items-center gap-3">
@@ -604,18 +607,6 @@ export const VendeurTracking: React.FC = () => {
                           <span className="material-symbols-outlined text-sm">person_search</span>
                           <span>Rechercher &amp; Assigner un livreur</span>
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCurrentRole('livreur');
-                            setCurrentView('livreur_dashboard');
-                            showToast('Bascule sur l\'espace livreur pour accepter la course', 'info');
-                          }}
-                          className="w-full py-2 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 font-bold text-xs rounded-xl shadow-2xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          <span className="material-symbols-outlined text-sm">two_wheeler</span>
-                          <span>Voir &amp; Accepter côté livreur</span>
-                        </button>
                       </div>
                     </div>
                   )}
@@ -970,5 +961,6 @@ export const VendeurTracking: React.FC = () => {
         {/* Mobile Bottom Navigation */}
         <MobileBottomNav />
       </div>
+    </div>
   );
 };

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { registerWithEmailPassword, loginWithGoogle, getFirebaseAuthErrorMessage } from '../../firebase/authService';
+import { registerWithEmailPassword, loginWithGoogle, logoutUser, getFirebaseAuthErrorMessage } from '../../firebase/authService';
 import { BENIN_DEPARTMENTS, getLocationForCommune } from '../../config/maps';
 import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
@@ -26,7 +26,6 @@ export const RegisterPage: React.FC = () => {
     setSelectedCourier,
     setMerchants,
     showToast, 
-    openTestModal 
   } = useApp();
   const [selectedRole, setSelectedRole] = useState<'vendeur' | 'livreur'>(currentRole === 'livreur' ? 'livreur' : 'vendeur');
   const [fullName, setFullName] = useState('');
@@ -41,29 +40,6 @@ export const RegisterPage: React.FC = () => {
   const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const fillTestRegister = (
-    name: string,
-    mail: string,
-    pass: string,
-    tel: string,
-    role: 'vendeur' | 'livreur',
-    commune?: string,
-    address?: string
-  ) => {
-    setSelectedRole(role);
-    setFullName(name);
-    setEmail(mail);
-    setPassword(pass);
-    setConfirmPassword(pass);
-    setPhone(tel);
-    if (role === 'vendeur') {
-      setStoreName(name);
-      setStoreCommune(commune || 'Cotonou - Haie Vive');
-      setStoreAddress(address || 'Avenue Jean-Paul II, Cotonou');
-    }
-    setErrorMessage(null);
-  };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -162,15 +138,6 @@ export const RegisterPage: React.FC = () => {
         setCurrentView('livreur_dashboard');
         showToast(`Compte Livreur créé avec succès ! Bienvenue ${profile.fullName}.`, 'success');
       }
-
-      // Automatically send official Welcome Email (Gmail SMTP / logged to Outbox)
-      sendWelcomeEmail({
-        email: email.trim(),
-        fullName: fullName.trim(),
-        role: selectedRole,
-        storeName: selectedRole === 'vendeur' ? (storeName.trim() || fullName.trim()) : undefined,
-        phone: phone.trim()
-      }).catch(err => console.warn('Erreur envoi email bienvenue:', err));
     } catch (err: any) {
       const friendlyMsg = getFirebaseAuthErrorMessage(err);
       setErrorMessage(friendlyMsg);
@@ -181,45 +148,60 @@ export const RegisterPage: React.FC = () => {
   };
 
   const handleGoogleRegister = async () => {
+    if (!acceptTerms) {
+      setErrorMessage("Veuillez d'abord cocher l'acceptation de la Politique de Confidentialité et des CGU.");
+      showToast("Veuillez accepter la politique de confidentialité.", 'error');
+      return;
+    }
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const { user, profile } = await loginWithGoogle(selectedRole);
-      setCurrentRole(selectedRole);
-      if (profile) {
-        setUserProfile(profile);
-        if (selectedRole === 'vendeur') {
-          const freshMerchant = createFreshMerchantSettings(profile);
-          setMerchantSettings(freshMerchant);
-          try {
-            localStorage.setItem(`livralink_merchant_settings_${profile.uid}`, JSON.stringify(freshMerchant));
-          } catch {}
-
-          const merchantEntity = createFreshMerchantEntity(profile);
-          setMerchants((prev) => [merchantEntity, ...prev.filter((m) => m.id !== profile.uid)]);
-        } else {
-          const freshCourierSettings = createFreshCourierSettings(profile);
-          setCourierSettings(freshCourierSettings);
-          try {
-            localStorage.setItem(`livralink_courier_settings_${profile.uid}`, JSON.stringify(freshCourierSettings));
-          } catch {}
-
-          const courierEntity = createFreshCourierEntity(profile);
-          setCouriers((prev) => [courierEntity, ...prev.filter((c) => c.id !== profile.uid)]);
-          setSelectedCourier(courierEntity);
-        }
+      const { user, profile, isNewUser } = await loginWithGoogle(selectedRole);
+      if (!isNewUser && profile.role !== selectedRole) {
+        await logoutUser();
+        setUserProfile(null);
+        const existingLabel = profile.role === 'livreur' ? 'Livreur' : profile.role === 'vendeur' ? 'Vendeur' : 'Administrateur';
+        const msg = `Ce compte Google existe déjà en tant que ${existingLabel}. Veuillez vous connecter depuis l'espace correspondant.`;
+        setErrorMessage(msg);
+        showToast(msg, 'error');
+        return;
       }
-      setCurrentView(selectedRole === 'vendeur' ? 'vendeur_dashboard' : 'livreur_dashboard');
-      showToast(`Inscription Google réussie ! Bienvenue ${profile?.fullName || user.displayName || 'Utilisateur'}.`, 'success');
 
-      // Send welcome email if Google email is present
-      if (user.email) {
+      setCurrentRole(profile.role);
+      setUserProfile(profile);
+      if (profile.role === 'vendeur') {
+        const freshMerchant = createFreshMerchantSettings(profile);
+        setMerchantSettings(freshMerchant);
+        try {
+          localStorage.setItem(`livralink_merchant_settings_${profile.uid}`, JSON.stringify(freshMerchant));
+        } catch {}
+
+        const merchantEntity = createFreshMerchantEntity(profile);
+        setMerchants((prev) => [merchantEntity, ...prev.filter((m) => m.id !== profile.uid)]);
+        setCurrentView('vendeur_dashboard');
+      } else if (profile.role === 'livreur') {
+        const freshCourierSettings = createFreshCourierSettings(profile);
+        setCourierSettings(freshCourierSettings);
+        try {
+          localStorage.setItem(`livralink_courier_settings_${profile.uid}`, JSON.stringify(freshCourierSettings));
+        } catch {}
+
+        const courierEntity = createFreshCourierEntity(profile);
+        setCouriers((prev) => [courierEntity, ...prev.filter((c) => c.id !== profile.uid)]);
+        setSelectedCourier(courierEntity);
+        setCurrentView('livreur_dashboard');
+      } else {
+        setCurrentView('admin_console');
+      }
+      showToast(`Inscription Google réussie ! Bienvenue ${profile.fullName || user.displayName || 'Utilisateur'}.`, 'success');
+
+      if (isNewUser && user.email) {
         sendWelcomeEmail({
           email: user.email,
-          fullName: profile?.fullName || user.displayName || 'Utilisateur',
+          fullName: profile.fullName || user.displayName || 'Utilisateur',
           role: selectedRole,
-          storeName: selectedRole === 'vendeur' ? (profile?.storeName || user.displayName || 'Ma Boutique') : undefined,
-          phone: profile?.phone || ''
+          storeName: selectedRole === 'vendeur' ? (profile.storeName || user.displayName || 'Ma Boutique') : undefined,
+          phone: profile.phone || ''
         }).catch(err => console.warn('Erreur email bienvenue Google:', err));
       }
     } catch (err: any) {
@@ -306,10 +288,7 @@ export const RegisterPage: React.FC = () => {
                 <div className="grid grid-cols-2 gap-2.5">
                   <button
                     type="button"
-                    onClick={() => {
-                      setSelectedRole('vendeur');
-                      if (!fullName) setFullName('Sarah Kouamé');
-                    }}
+                    onClick={() => setSelectedRole('vendeur')}
                     className={`min-h-[80px] p-3 rounded-xl border text-left flex flex-col justify-between transition-all ${
                       selectedRole === 'vendeur'
                         ? 'border-2 border-blue-600 bg-blue-50/50 shadow-2xs ring-2 ring-blue-600/10'
@@ -336,10 +315,7 @@ export const RegisterPage: React.FC = () => {
 
                   <button
                     type="button"
-                    onClick={() => {
-                      setSelectedRole('livreur');
-                      if (!fullName) setFullName('Ibrahim Touré');
-                    }}
+                    onClick={() => setSelectedRole('livreur')}
                     className={`min-h-[80px] p-3 rounded-xl border text-left flex flex-col justify-between transition-all ${
                       selectedRole === 'livreur'
                         ? 'border-2 border-emerald-600 bg-emerald-50/50 shadow-2xs ring-2 ring-emerald-600/10'

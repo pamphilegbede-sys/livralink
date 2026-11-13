@@ -3,8 +3,8 @@ import {
   signInWithEmailAndPassword,
   signOut,
   confirmPasswordReset,
-  verifyPasswordResetCode,
   updateProfile,
+  sendEmailVerification,
   signInWithPopup,
   GoogleAuthProvider,
   User as FirebaseUser,
@@ -41,7 +41,6 @@ export interface UserProfile {
   updatedAt?: any;
 }
 
-// 7 Comprehensive Test Profiles (3 Sellers + 4 Delivery Drivers)
 export interface TestProfile {
   id: number;
   name: string;
@@ -56,58 +55,14 @@ export interface TestProfile {
 }
 
 export const ALL_TEST_PROFILES: TestProfile[] = [];
-
-// Compatibility alias
 export const FIVE_TEST_PROFILES = ALL_TEST_PROFILES;
 
-// Local fallback database for seamless offline & testing reliability
-const LOCAL_USERS_KEY = 'livralink_registered_users_v2';
+const LEGACY_LOCAL_USERS_KEY = 'livralink_registered_users_v2';
 
-export const getStoredUsers = (): Record<string, { profile: UserProfile; passwordHash: string }> => {
+export const clearLegacyAuthCache = () => {
   try {
-    const raw = localStorage.getItem(LOCAL_USERS_KEY);
-    let users: Record<string, { profile: UserProfile; passwordHash: string }> = raw ? JSON.parse(raw) : {};
-
-    // Auto-seed test profiles if not yet populated
-    let changed = false;
-    for (const testUser of ALL_TEST_PROFILES) {
-      const emailKey = testUser.email.toLowerCase().trim();
-      if (!users[emailKey]) {
-        users[emailKey] = {
-          profile: {
-            uid: `test_uid_${testUser.id}`,
-            email: emailKey,
-            fullName: testUser.name,
-            phone: testUser.phone,
-            role: testUser.role,
-            vehicleType: testUser.vehicleType,
-            storeName: testUser.storeName,
-            createdAt: new Date().toISOString(),
-          },
-          passwordHash: btoa(testUser.password),
-        };
-        changed = true;
-      }
-    }
-
-    if (changed) {
-      localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(users));
-    }
-
-    return users;
-  } catch {
-    return {};
-  }
-};
-
-export const saveStoredUser = (email: string, profile: UserProfile, passwordHash: string) => {
-  try {
-    const current = getStoredUsers();
-    current[email.toLowerCase().trim()] = { profile, passwordHash };
-    localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(current));
-  } catch (err) {
-    console.warn('LocalStorage save error:', err);
-  }
+    localStorage.removeItem(LEGACY_LOCAL_USERS_KEY);
+  } catch {}
 };
 
 /**
@@ -162,9 +117,6 @@ export const getFirebaseAuthErrorMessage = (error: any): string => {
   if (code === 'auth/network-request-failed') {
     return 'Erreur de connexion réseau avec Firebase. Vérifiez votre accès Internet.';
   }
-  if (code === 'auth/popup-closed-by-user') {
-    return 'La fenêtre de connexion Google a été fermée avant la validation.';
-  }
   if (rawMsg.includes('INVALID_EMAIL')) {
     return 'Format d\'adresse e-mail invalide.';
   }
@@ -209,7 +161,105 @@ export const validateAuthInputs = (
 };
 
 /**
- * Register a new user with Firebase Authentication and save their profile in Firestore.
+ * Builds a strict Firestore `users/{uid}` document payload conforming 100% to `firestore.rules` `isValidUser()`.
+ */
+export const buildFirestoreUserPayload = (
+  profile: UserProfile,
+  createdAtValue: any = serverTimestamp()
+): Record<string, any> => {
+  const safeName = (profile.fullName || profile.email?.split('@')[0] || 'Utilisateur LivraLink').trim().slice(0, 128);
+  const normalizedName = safeName.length >= 2 ? safeName : `${safeName}_ll`.slice(0, 128);
+  const safeEmail = (profile.email || '').trim().toLowerCase().slice(0, 128);
+  const safePhone = (profile.phone || '').trim().slice(0, 32);
+  const roleStr = String(profile.role || '');
+  const safeRole = roleStr === 'livreur' ? 'livreur' : roleStr === 'client' ? 'client' : roleStr === 'admin' ? 'admin' : 'vendeur';
+
+  const payload: Record<string, any> = {
+    uid: profile.uid,
+    email: safeEmail,
+    fullName: normalizedName,
+    phone: safePhone,
+    role: safeRole,
+    isKycVerified: false,
+    kycStatus: 'non_soumis',
+    createdAt: createdAtValue,
+  };
+
+  if (typeof profile.avatarUrl === 'string' && profile.avatarUrl.trim()) {
+    payload.avatarUrl = profile.avatarUrl.trim().slice(0, 1000);
+  }
+  if (typeof profile.storeName === 'string' && profile.storeName.trim()) {
+    payload.storeName = profile.storeName.trim().slice(0, 128);
+  }
+  if (typeof profile.storeCommune === 'string' && profile.storeCommune.trim()) {
+    payload.storeCommune = profile.storeCommune.trim().slice(0, 128);
+  }
+  if (typeof profile.storeAddress === 'string' && profile.storeAddress.trim()) {
+    payload.storeAddress = profile.storeAddress.trim().slice(0, 256);
+  }
+  if (
+    Array.isArray(profile.storeCoordinates) &&
+    profile.storeCoordinates.length === 2 &&
+    Number.isFinite(profile.storeCoordinates[0]) &&
+    Number.isFinite(profile.storeCoordinates[1])
+  ) {
+    payload.storeCoordinates = [profile.storeCoordinates[0], profile.storeCoordinates[1]];
+  }
+  if (typeof profile.vehicleType === 'string' && profile.vehicleType.trim()) {
+    payload.vehicleType = profile.vehicleType.trim().slice(0, 64);
+  }
+  if (typeof profile.gpsCoordinates === 'string' && profile.gpsCoordinates.trim()) {
+    payload.gpsCoordinates = profile.gpsCoordinates.trim().slice(0, 64);
+  }
+  if (typeof profile.locationCommune === 'string' && profile.locationCommune.trim()) {
+    payload.locationCommune = profile.locationCommune.trim().slice(0, 128);
+  }
+  if (typeof profile.locationAddress === 'string' && profile.locationAddress.trim()) {
+    payload.locationAddress = profile.locationAddress.trim().slice(0, 256);
+  }
+  if (typeof profile.locationLat === 'number' && Number.isFinite(profile.locationLat)) {
+    payload.locationLat = profile.locationLat;
+  }
+  if (typeof profile.locationLng === 'number' && Number.isFinite(profile.locationLng)) {
+    payload.locationLng = profile.locationLng;
+  }
+  if (typeof profile.locationUpdatedAt === 'string' && profile.locationUpdatedAt.trim()) {
+    payload.locationUpdatedAt = profile.locationUpdatedAt.trim().slice(0, 64);
+  }
+
+  return payload;
+};
+
+const syncUserProfileWithBackend = async (firebaseUserObj: FirebaseUser | null, profile: UserProfile): Promise<boolean> => {
+  if (!firebaseUserObj || typeof firebaseUserObj.getIdToken !== 'function') return false;
+  try {
+    const idToken = await firebaseUserObj.getIdToken();
+    const res = await fetch('/api/users/sync-profile', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({
+        fullName: profile.fullName,
+        phone: profile.phone,
+        role: profile.role,
+        storeName: profile.storeName,
+        storeCommune: profile.storeCommune,
+        storeAddress: profile.storeAddress,
+        storeCoordinates: profile.storeCoordinates,
+        vehicleType: profile.vehicleType,
+        avatarUrl: profile.avatarUrl,
+      }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Register a new user strictly with Firebase Authentication and save their profile in Firestore.
  */
 export const registerWithEmailPassword = async (
   email: string,
@@ -223,7 +273,7 @@ export const registerWithEmailPassword = async (
     storeAddress?: string;
     storeCoordinates?: [number, number];
   }
-): Promise<{ user: Partial<FirebaseUser>; profile: UserProfile }> => {
+): Promise<{ user: FirebaseUser; profile: UserProfile }> => {
   const validation = validateAuthInputs(email, password, fullName, phone);
   if (!validation.isValid) {
     throw new Error(validation.error!);
@@ -233,113 +283,74 @@ export const registerWithEmailPassword = async (
   const cleanName = fullName.trim();
   const cleanPhone = phone.trim();
 
-  // POINT 8: Contrôle d'accès strict pour le rôle Administrateur
-  if (role === 'admin' && cleanEmail !== 'pamphile.gbede@gmail.com') {
-    throw new Error('La création d\'un compte administrateur est soumise à une autorisation stricte.');
+  // Never allow client self-registration as admin
+  if (role === 'admin') {
+    throw new Error('La création d\'un compte administrateur via inscription publique est interdite.');
   }
+  const safeRole: UserRole = role === 'livreur' ? 'livreur' : 'vendeur';
 
-  // POINT 8: Unicité stricte de l'adresse e-mail (vérification pré-inscription)
-  const stored = getStoredUsers();
-  if (stored[cleanEmail]) {
-    const existingRole = stored[cleanEmail].profile?.role === 'vendeur' ? 'Vendeur' : stored[cleanEmail].profile?.role === 'livreur' ? 'Livreur' : 'Admin';
-    const err: any = new Error(`Cette adresse e-mail est déjà associée à un compte LivraLink (${existingRole}). Un e-mail ne peut appartenir qu'à un seul compte.`);
-    err.code = 'auth/email-already-in-use';
-    throw err;
-  }
-
-  let createdUid = '';
-  let authUser: Partial<FirebaseUser> | null = null;
+  // 1. Official Firebase Auth registration (propagate real errors — never invent fake UIDs)
+  const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+  const authUser = userCredential.user;
+  const createdUid = authUser.uid;
 
   try {
-    // 1. Attempt official Firebase Auth registration
-    const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
-    authUser = userCredential.user;
-    createdUid = userCredential.user.uid;
-
-    // Update display name
-    await updateProfile(userCredential.user, { displayName: cleanName });
-  } catch (firebaseErr: any) {
-    console.warn('Firebase Auth Registration notice:', firebaseErr);
-
-    // If email already in use on Firebase Auth
-    if (firebaseErr?.code === 'auth/email-already-in-use') {
-      const err: any = new Error('Cette adresse e-mail est déjà enregistrée sur LivraLink. Veuillez vous connecter ou réinitialiser votre mot de passe.');
-      err.code = 'auth/email-already-in-use';
-      throw err;
-    }
-
-    createdUid = 'user_' + Math.random().toString(36).substring(2, 11);
-    authUser = {
-      uid: createdUid,
-      email: cleanEmail,
-      displayName: cleanName,
-      emailVerified: false,
-    };
+    await updateProfile(authUser, { displayName: cleanName });
+  } catch (profileUpdateErr) {
+    console.warn('Notice mise à jour displayName Firebase Auth:', profileUpdateErr);
   }
 
-  // 2. Prepare Profile Data (NEVER CONTAINS PASSWORD)
+  // Send verification link via Firebase Auth (best-effort)
+  sendEmailVerification(authUser).catch((verifyErr) => {
+    console.warn('Notice envoi e-mail de vérification Firebase:', verifyErr);
+  });
+
+  // 2. Prepare Profile Data (never stores password)
   const profileData: UserProfile = {
     uid: createdUid,
     email: cleanEmail,
     fullName: cleanName,
     phone: cleanPhone,
-    role: role,
-    storeName: role === 'vendeur' ? (extraFields?.storeName?.trim() || cleanName) : undefined,
-    storeCommune: role === 'vendeur' ? extraFields?.storeCommune?.trim() : undefined,
-    storeAddress: role === 'vendeur' ? extraFields?.storeAddress?.trim() : undefined,
-    storeCoordinates: role === 'vendeur' ? extraFields?.storeCoordinates : undefined,
-    vehicleType: role === 'livreur' ? 'Moto 125cc' : undefined,
+    role: safeRole,
+    storeName: safeRole === 'vendeur' ? (extraFields?.storeName?.trim() || cleanName) : undefined,
+    storeCommune: safeRole === 'vendeur' ? extraFields?.storeCommune?.trim() : undefined,
+    storeAddress: safeRole === 'vendeur' ? extraFields?.storeAddress?.trim() : undefined,
+    storeCoordinates: safeRole === 'vendeur' ? extraFields?.storeCoordinates : undefined,
+    vehicleType: safeRole === 'livreur' ? 'Moto 125cc' : undefined,
+    isKycVerified: false,
+    kycStatus: 'non_soumis',
     createdAt: new Date().toISOString(),
   };
 
-  // 3. Save to Firestore `users/{uid}`
+  // 3. Save to Firestore `users/{uid}` strictly conforming to firestore.rules
+  let clientWriteOk = false;
   try {
-    const firestorePayload: any = {
-      uid: createdUid,
-      email: cleanEmail,
-      fullName: cleanName,
-      phone: cleanPhone,
-      role: role,
-      createdAt: serverTimestamp(),
-    };
-
-    if (profileData.storeName) {
-      firestorePayload.storeName = profileData.storeName;
-    }
-    if (profileData.storeCommune) {
-      firestorePayload.storeCommune = profileData.storeCommune;
-    }
-    if (profileData.storeAddress) {
-      firestorePayload.storeAddress = profileData.storeAddress;
-    }
-    if (profileData.storeCoordinates) {
-      firestorePayload.storeCoordinates = profileData.storeCoordinates;
-    }
-    if (profileData.vehicleType) {
-      firestorePayload.vehicleType = profileData.vehicleType;
-    }
-
+    const firestorePayload = buildFirestoreUserPayload(profileData, serverTimestamp());
     await setDoc(doc(db, 'users', createdUid), firestorePayload);
+    clientWriteOk = true;
   } catch (firestoreErr) {
-    console.warn('Note: Le document utilisateur Firestore n\'a pas pu être écrit immédiatement:', firestoreErr);
+    console.warn('Avertissement écriture directe Firestore users/{uid}:', firestoreErr);
   }
 
-  // 4. Cache user profile locally for instant resilience
-  saveStoredUser(cleanEmail, profileData, btoa(password));
+  // Backup server-side sync via verified Firebase ID token
+  const backendSyncOk = await syncUserProfileWithBackend(authUser, profileData);
+  if (!clientWriteOk && !backendSyncOk) {
+    console.warn('Attention: profil créé dans Firebase Auth mais synchronisation Firestore en attente.');
+  }
 
-  // POINT 3: Envoi automatique de l'e-mail de bienvenue après inscription réussie
-  if (role === 'vendeur' || role === 'livreur') {
+  // 4. Send automated Welcome Email once
+  if (safeRole === 'vendeur' || safeRole === 'livreur') {
     sendWelcomeEmail({
       email: cleanEmail,
       fullName: cleanName,
-      role: role,
+      role: safeRole,
       storeName: profileData.storeName,
       vehicleType: profileData.vehicleType,
       phone: cleanPhone,
     }).catch((err) => console.warn('Erreur envoi email bienvenue inscription:', err));
   }
 
-  return { user: authUser!, profile: profileData };
+  return { user: authUser, profile: profileData };
 };
 
 // -------------------------------------------------------------------------
@@ -372,7 +383,7 @@ export const recordFailedLoginAttempt = (email: string): { locked: boolean; wait
   const record = loginAttemptTracker.get(clean) || { attempts: 0, lockedUntil: 0 };
   record.attempts += 1;
   if (record.attempts >= 5) {
-    record.lockedUntil = Date.now() + 15 * 60 * 1000; // 15-minute temporary security lockout
+    record.lockedUntil = Date.now() + 15 * 60 * 1000;
     loginAttemptTracker.set(clean, record);
     return { locked: true, waitMinutes: 15 };
   }
@@ -408,23 +419,21 @@ export const toggleUserMFA = async (
 };
 
 /**
- * Login an existing user with Firebase Authentication and retrieve their Firestore profile.
- * Strictly verifies that the email and password are valid and that the account exists.
- * Implements anti-brute force attempt counter.
+ * Login strictly via Firebase Authentication and retrieve the authoritative Firestore profile.
  */
 export const loginWithEmailPassword = async (
   email: string,
   password: string,
   fallbackRole: UserRole = 'vendeur'
-): Promise<{ user: Partial<FirebaseUser>; profile: UserProfile | null }> => {
+): Promise<{ user: FirebaseUser; profile: UserProfile }> => {
   const validation = validateAuthInputs(email, password);
   if (!validation.isValid) {
     throw new Error(validation.error!);
   }
 
   const cleanEmail = email.trim().toLowerCase();
+  const safeFallbackRole: UserRole = fallbackRole === 'livreur' ? 'livreur' : 'vendeur';
 
-  // Enforce anti-brute force lock
   const bruteCheck = checkLoginBruteForce(cleanEmail);
   if (!bruteCheck.allowed) {
     const err: any = new Error(`Compte temporairement verrouillé suite à trop de tentatives infructueuses. Veuillez patienter ${bruteCheck.waitMinutes} minute(s).`);
@@ -432,193 +441,38 @@ export const loginWithEmailPassword = async (
     throw err;
   }
 
-  let authUser: Partial<FirebaseUser> | null = null;
-  let profile: UserProfile | null = null;
-
+  let userCredential;
   try {
-    // 1. Try real Firebase Auth sign in
-    const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
-    authUser = userCredential.user;
-
-    // 2. Fetch profile from Firestore
-    profile = await getUserProfile(userCredential.user.uid);
-    if (!profile) {
-      // Build profile from authenticated user info
-      profile = {
-        uid: userCredential.user.uid,
-        email: cleanEmail,
-        fullName: userCredential.user.displayName || cleanEmail.split('@')[0],
-        phone: userCredential.user.phoneNumber || '+229 97 00 00 00',
-        role: fallbackRole,
-        storeName: fallbackRole === 'vendeur' ? userCredential.user.displayName || cleanEmail.split('@')[0] : undefined,
-        vehicleType: fallbackRole === 'livreur' ? 'Moto 125cc' : undefined,
-        createdAt: new Date().toISOString(),
-      };
-      saveStoredUser(cleanEmail, profile, btoa(password));
-    }
+    userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
   } catch (firebaseErr: any) {
-    console.warn('Firebase Auth Login note:', firebaseErr);
-
-    // If explicit wrong password from Firebase Auth
-    if (firebaseErr?.code === 'auth/wrong-password') {
-      const err: any = new Error('Mot de passe incorrect. Veuillez vérifier votre mot de passe.');
-      err.code = 'auth/wrong-password';
-      throw err;
-    }
-
-    // If explicit user-not-found from Firebase Auth
-    if (firebaseErr?.code === 'auth/user-not-found') {
-      // Check if user exists in local registered store or pre-configured test profiles
-      const stored = getStoredUsers();
-      const storedUser = stored[cleanEmail];
-      const testMatch = ALL_TEST_PROFILES.find((p) => p.email.toLowerCase() === cleanEmail);
-
-      if (storedUser) {
-        if (storedUser.passwordHash === btoa(password)) {
-          profile = storedUser.profile;
-          authUser = {
-            uid: profile.uid,
-            email: profile.email,
-            displayName: profile.fullName,
-          };
-        } else {
-          const err: any = new Error('Mot de passe incorrect. Veuillez vérifier votre saisie.');
-          err.code = 'auth/wrong-password';
-          throw err;
-        }
-      } else if (testMatch) {
-        if (testMatch.password === password) {
-          profile = {
-            uid: `test_uid_${testMatch.id}`,
-            email: testMatch.email,
-            fullName: testMatch.name,
-            phone: testMatch.phone,
-            role: testMatch.role,
-            vehicleType: testMatch.vehicleType,
-            storeName: testMatch.storeName,
-            createdAt: new Date().toISOString(),
-          };
-          authUser = {
-            uid: profile.uid,
-            email: profile.email,
-            displayName: profile.fullName,
-          };
-          saveStoredUser(cleanEmail, profile, btoa(password));
-        } else {
-          const err: any = new Error('Mot de passe incorrect. Veuillez vérifier votre saisie.');
-          err.code = 'auth/wrong-password';
-          throw err;
-        }
-      } else {
-        // User does not exist! REJECT STRICTLY!
-        const err: any = new Error('Aucun compte trouvé avec cette adresse e-mail. Cet utilisateur n\'existe pas. Veuillez vous inscrire ou vérifier votre saisie.');
-        err.code = 'auth/user-not-found';
-        throw err;
-      }
-    } else if (firebaseErr?.code === 'auth/invalid-credential') {
-      // Check stored users and test profiles
-      const stored = getStoredUsers();
-      const storedUser = stored[cleanEmail];
-      const testMatch = ALL_TEST_PROFILES.find((p) => p.email.toLowerCase() === cleanEmail);
-
-      if (storedUser) {
-        if (storedUser.passwordHash === btoa(password)) {
-          profile = storedUser.profile;
-          authUser = {
-            uid: profile.uid,
-            email: profile.email,
-            displayName: profile.fullName,
-          };
-        } else {
-          const err: any = new Error('Mot de passe incorrect. Veuillez vérifier votre mot de passe.');
-          err.code = 'auth/wrong-password';
-          throw err;
-        }
-      } else if (testMatch) {
-        if (testMatch.password === password) {
-          profile = {
-            uid: `test_uid_${testMatch.id}`,
-            email: testMatch.email,
-            fullName: testMatch.name,
-            phone: testMatch.phone,
-            role: testMatch.role,
-            vehicleType: testMatch.vehicleType,
-            storeName: testMatch.storeName,
-            createdAt: new Date().toISOString(),
-          };
-          authUser = {
-            uid: profile.uid,
-            email: profile.email,
-            displayName: profile.fullName,
-          };
-          saveStoredUser(cleanEmail, profile, btoa(password));
-        } else {
-          const err: any = new Error('Mot de passe incorrect. Veuillez vérifier votre saisie.');
-          err.code = 'auth/wrong-password';
-          throw err;
-        }
-      } else {
-        // User does not exist or credentials invalid! REJECT STRICTLY!
-        const err: any = new Error('Identifiants invalides. Aucun compte trouvé avec cet e-mail ou mot de passe incorrect.');
-        err.code = 'auth/invalid-credential';
-        throw err;
-      }
-    } else {
-      // For network failure or other exceptions: check if user exists in local accounts
-      const stored = getStoredUsers();
-      const storedUser = stored[cleanEmail];
-      const testMatch = ALL_TEST_PROFILES.find((p) => p.email.toLowerCase() === cleanEmail);
-
-      if (storedUser) {
-        if (storedUser.passwordHash === btoa(password)) {
-          profile = storedUser.profile;
-          authUser = {
-            uid: profile.uid,
-            email: profile.email,
-            displayName: profile.fullName,
-          };
-        } else {
-          const err: any = new Error('Mot de passe incorrect. Veuillez vérifier votre saisie.');
-          err.code = 'auth/wrong-password';
-          throw err;
-        }
-      } else if (testMatch) {
-        if (testMatch.password === password) {
-          profile = {
-            uid: `test_uid_${testMatch.id}`,
-            email: testMatch.email,
-            fullName: testMatch.name,
-            phone: testMatch.phone,
-            role: testMatch.role,
-            vehicleType: testMatch.vehicleType,
-            storeName: testMatch.storeName,
-            createdAt: new Date().toISOString(),
-          };
-          authUser = {
-            uid: profile.uid,
-            email: profile.email,
-            displayName: profile.fullName,
-          };
-          saveStoredUser(cleanEmail, profile, btoa(password));
-        } else {
-          const err: any = new Error('Mot de passe incorrect. Veuillez vérifier votre saisie.');
-          err.code = 'auth/wrong-password';
-          throw err;
-        }
-      } else {
-        // Account definitely does not exist! REJECT STRICTLY!
-        const err: any = new Error('Aucun compte trouvé avec cette adresse e-mail. Cet utilisateur n\'existe pas. Veuillez vous inscrire.');
-        err.code = 'auth/user-not-found';
-        throw err;
-      }
-    }
+    recordFailedLoginAttempt(cleanEmail);
+    throw firebaseErr;
   }
 
-  if (!authUser || !profile) {
-    recordFailedLoginAttempt(cleanEmail);
-    const err: any = new Error('Échec de la connexion. Veuillez vérifier votre adresse e-mail et votre mot de passe.');
-    err.code = 'auth/invalid-credential';
-    throw err;
+  const authUser = userCredential.user;
+  let profile = await getUserProfile(authUser.uid);
+
+  if (!profile) {
+    profile = {
+      uid: authUser.uid,
+      email: cleanEmail,
+      fullName: authUser.displayName || cleanEmail.split('@')[0],
+      phone: authUser.phoneNumber || '',
+      role: safeFallbackRole,
+      storeName: safeFallbackRole === 'vendeur' ? `Boutique ${authUser.displayName || cleanEmail.split('@')[0]}` : undefined,
+      vehicleType: safeFallbackRole === 'livreur' ? 'Moto 125cc' : undefined,
+      isKycVerified: false,
+      kycStatus: 'non_soumis',
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      await setDoc(doc(db, 'users', authUser.uid), buildFirestoreUserPayload(profile, serverTimestamp()), { merge: true });
+    } catch (backfillErr) {
+      console.warn('Backfill Firestore loginWithEmailPassword notice:', backfillErr);
+    }
+    syncUserProfileWithBackend(authUser, profile).catch(() => {});
+  } else {
+    syncUserProfileWithBackend(authUser, profile).catch(() => {});
   }
 
   recordSuccessfulLogin(cleanEmail);
@@ -626,7 +480,7 @@ export const loginWithEmailPassword = async (
 };
 
 /**
- * Détecte la position GPS de l'utilisateur et la synchronise dans Firestore (users/{uid}) et le stockage local.
+ * Détecte la position GPS de l'utilisateur et la synchronise dans Firestore (users/{uid}).
  */
 export const detectAndSaveUserLocation = async (
   userId?: string,
@@ -634,17 +488,10 @@ export const detectAndSaveUserLocation = async (
 ): Promise<DetectedUserLocation> => {
   const detected = await detectUserGeolocation();
 
-  // Enregistrement local instantané
-  try {
-    localStorage.setItem('livralink_user_detected_location', JSON.stringify(detected));
-  } catch (e) {
-    console.warn('LocalStorage location notice:', e);
-  }
-
-  // Enregistrement dans Firestore si un identifiant utilisateur est actif
-  if (userId) {
+  if (userId && auth.currentUser && auth.currentUser.uid === userId) {
     try {
       const userDocRef = doc(db, 'users', userId);
+      const existingSnap = await getDoc(userDocRef);
       const updateData: any = {
         gpsCoordinates: detected.gpsCoordinates,
         locationCommune: detected.commune,
@@ -659,7 +506,18 @@ export const detectAndSaveUserLocation = async (
         updateData.storeAddress = detected.address;
       }
 
-      await setDoc(userDocRef, updateData, { merge: true });
+      if (existingSnap.exists()) {
+        await setDoc(userDocRef, updateData, { merge: true });
+      } else if (userProfile?.email && userProfile?.fullName && userProfile?.role) {
+        await setDoc(
+          userDocRef,
+          buildFirestoreUserPayload({
+            ...userProfile,
+            ...updateData,
+          }, serverTimestamp()),
+          { merge: true }
+        );
+      }
     } catch (firestoreErr) {
       console.warn('Firestore location update notice:', firestoreErr);
     }
@@ -672,18 +530,16 @@ let isGoogleAuthInProgress = false;
 
 /**
  * Real Firebase Google Sign-In (Popup Flow)
- * Authentifie l'utilisateur via Google. Si le conteneur iframe ou le navigateur restreint les popups
- * ou renvoie popup-closed-by-user / unauthorized-domain, authentifie de façon fluide et fiable
- * le compte Google vérifié (Pamphile Gbede) sans afficher d'erreur "Connexion annulée".
- * Détecte et enregistre automatiquement la position géographique de l'utilisateur dès la connexion.
+ * Authentifie strictement l'utilisateur via Google et retourne le profil réel Firestore.
  */
 export const loginWithGoogle = async (
   desiredRole: UserRole = 'vendeur'
-): Promise<{ user: FirebaseUser; profile: UserProfile; location?: DetectedUserLocation }> => {
+): Promise<{ user: FirebaseUser; profile: UserProfile; isNewUser: boolean; location?: DetectedUserLocation }> => {
   if (isGoogleAuthInProgress) {
-    console.warn('Google Sign-In déjà en cours...');
+    throw new Error('Une fenêtre de connexion Google est déjà ouverte. Veuillez la finaliser ou patienter.');
   }
 
+  const safeDesiredRole: UserRole = desiredRole === 'livreur' ? 'livreur' : 'vendeur';
   isGoogleAuthInProgress = true;
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
@@ -692,88 +548,54 @@ export const loginWithGoogle = async (
   try {
     const result = await signInWithPopup(auth, provider);
     user = result.user;
-  } catch (popupErr: any) {
-    console.warn('Firebase signInWithPopup error or blocked popup:', popupErr);
-    if (
-      popupErr?.code === 'auth/popup-blocked' ||
-      popupErr?.code === 'auth/popup-closed-by-user' ||
-      popupErr?.code === 'auth/unauthorized-domain' ||
-      popupErr?.message?.includes('popup-blocked')
-    ) {
-      if (auth.currentUser) {
-        user = auth.currentUser;
-      } else {
-        const googleUserEmail = 'pamphile.gbede@gmail.com';
-        user = {
-          uid: 'google_user_pamphile_gbede',
-          email: googleUserEmail,
-          displayName: 'Pamphile Gbede',
-          photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
-          emailVerified: true,
-          phoneNumber: '+229 97 00 00 00',
-        } as FirebaseUser;
-      }
-    } else {
-      throw popupErr;
-    }
   } finally {
     setTimeout(() => {
       isGoogleAuthInProgress = false;
     }, 500);
   }
 
-  // Retrieve or create profile
   let profile = await getUserProfile(user.uid);
+  const isNewUser = !profile;
 
   if (!profile) {
     const userEmail = (user.email || '').toLowerCase().trim();
-    const userName = user.displayName || (desiredRole === 'vendeur' ? 'Marchand LivraLink' : 'Livreur LivraLink');
+    const userName = user.displayName || (safeDesiredRole === 'vendeur' ? 'Marchand LivraLink' : 'Livreur LivraLink');
     profile = {
       uid: user.uid,
       email: userEmail,
       fullName: userName,
-      phone: user.phoneNumber || '+229 97 00 00 00',
-      role: desiredRole,
+      phone: user.phoneNumber || '',
+      role: safeDesiredRole,
       avatarUrl: user.photoURL || undefined,
-      vehicleType: desiredRole === 'livreur' ? 'Moto Honda 150cc Pro' : undefined,
-      storeName: desiredRole === 'vendeur' ? `Boutique ${userName}` : undefined,
-      isKycVerified: desiredRole === 'vendeur', // Sellers do not require driver KYC; livreurs need KYC verification
-      kycStatus: desiredRole === 'vendeur' ? 'valide' : 'non_soumis',
+      vehicleType: safeDesiredRole === 'livreur' ? 'Moto 125cc' : undefined,
+      storeName: safeDesiredRole === 'vendeur' ? `Boutique ${userName}` : undefined,
+      isKycVerified: false,
+      kycStatus: 'non_soumis',
       createdAt: new Date().toISOString(),
     };
 
     try {
-      await setDoc(doc(db, 'users', user.uid), {
-        uid: user.uid,
-        email: profile.email,
-        fullName: profile.fullName,
-        phone: profile.phone,
-        role: desiredRole,
-        avatarUrl: profile.avatarUrl || null,
-        storeName: profile.storeName || null,
-        vehicleType: profile.vehicleType || null,
-        isKycVerified: profile.isKycVerified ?? false,
-        kycStatus: profile.kycStatus || 'non_soumis',
-        createdAt: serverTimestamp(),
-      });
+      const firestorePayload = buildFirestoreUserPayload(profile, serverTimestamp());
+      await setDoc(doc(db, 'users', user.uid), firestorePayload);
     } catch (err) {
       console.warn('Erreur Firestore création profil Google:', err);
     }
 
-    saveStoredUser(profile.email, profile, btoa('google_oauth_token'));
+    await syncUserProfileWithBackend(user, profile);
+  } else {
+    syncUserProfileWithBackend(user, profile).catch(() => {});
   }
 
-  // Détection automatique de la position géographique de l'utilisateur à la connexion et enregistrement
   let detectedLocation: DetectedUserLocation | undefined;
   try {
-    detectedLocation = await detectAndSaveUserLocation(user.uid!, profile);
+    detectedLocation = await detectAndSaveUserLocation(user.uid, profile);
     profile.gpsCoordinates = detectedLocation.gpsCoordinates;
     profile.locationCommune = detectedLocation.commune;
     profile.locationAddress = detectedLocation.address;
     profile.locationLat = detectedLocation.lat;
     profile.locationLng = detectedLocation.lng;
     profile.locationUpdatedAt = detectedLocation.detectedAt;
-    if (desiredRole === 'vendeur' && !profile.storeCommune) {
+    if (profile.role === 'vendeur' && !profile.storeCommune) {
       profile.storeCommune = detectedLocation.commune;
       profile.storeAddress = detectedLocation.address;
     }
@@ -781,12 +603,11 @@ export const loginWithGoogle = async (
     console.warn('Notice détection position connexion:', locErr);
   }
 
-  return { user, profile, location: detectedLocation };
+  return { user, profile, isNewUser, location: detectedLocation };
 };
 
 /**
  * Request a 6-digit Password Reset Code (Step 1 of the secure recovery flow).
- * Calls server API to generate a cryptographically random code, hash it, and dispatch it via Gmail SMTP.
  */
 export const requestPasswordResetCode = async (
   email: string
@@ -797,7 +618,6 @@ export const requestPasswordResetCode = async (
     throw new Error(validation.error!);
   }
 
-  // 1. Call secure server API to generate code and dispatch via Gmail SMTP
   const res = await fetch('/api/auth/send-reset-code', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -819,8 +639,6 @@ export const requestPasswordResetCode = async (
 
 /**
  * Verify Reset Code and Set New Password (Step 2 of the recovery flow).
- * Verifies the 6-digit code with the server (hash comparison, attempts count, expiration)
- * and updates credentials securely.
  */
 export const verifyResetCodeAndSetPassword = async (
   email: string,
@@ -842,7 +660,6 @@ export const verifyResetCodeAndSetPassword = async (
     throw new Error('Le nouveau mot de passe doit comporter au moins 6 caractères.');
   }
 
-  // 1. Validate code with server
   const verifyRes = await fetch('/api/auth/verify-reset-code', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -857,7 +674,6 @@ export const verifyResetCodeAndSetPassword = async (
 
   const resetToken = verifyData.resetToken;
 
-  // 2. Commit password reset on server with single-use resetToken
   if (resetToken) {
     const resetRes = await fetch('/api/auth/reset-password', {
       method: 'POST',
@@ -870,7 +686,6 @@ export const verifyResetCodeAndSetPassword = async (
     }
   }
 
-  // 3. Attempt Firebase official confirmation if an oobCode action token was provided
   if (cleanCode.length > 10) {
     try {
       await confirmPasswordReset(auth, cleanCode, newPassword);
@@ -879,60 +694,19 @@ export const verifyResetCodeAndSetPassword = async (
     }
   }
 
-  // 4. Update password in local storage & profile
-  const stored = getStoredUsers();
-  let userEntry = stored[cleanEmail];
-
-  if (!userEntry) {
-    const testMatch = ALL_TEST_PROFILES.find((p) => p.email.toLowerCase() === cleanEmail);
-    if (testMatch) {
-      userEntry = {
-        profile: {
-          uid: `test_uid_${testMatch.id}`,
-          email: testMatch.email,
-          fullName: testMatch.name,
-          phone: testMatch.phone,
-          role: testMatch.role,
-          vehicleType: testMatch.vehicleType,
-          storeName: testMatch.storeName,
-          createdAt: new Date().toISOString(),
-        },
-        passwordHash: btoa(newPassword),
-      };
-    } else {
-      userEntry = {
-        profile: {
-          uid: 'usr_' + Math.random().toString(36).substring(2, 10),
-          email: cleanEmail,
-          fullName: cleanEmail.split('@')[0],
-          phone: '+229 97 00 00 00',
-          role: 'livreur',
-          createdAt: new Date().toISOString(),
-        },
-        passwordHash: btoa(newPassword),
-      };
-    }
-  }
-
-  saveStoredUser(cleanEmail, userEntry.profile, btoa(newPassword));
-
   return {
     success: true,
     message: 'Votre mot de passe a été réinitialisé avec succès.',
-    role: userEntry.profile.role,
+    role: (verifyData.role as UserRole) || 'vendeur',
   };
 };
 
-/**
- * Standard alias for compatibility.
- */
 export const resetPassword = async (email: string) => {
   return requestPasswordResetCode(email);
 };
 
 /**
- * Administrator Direct Password Reset
- * Allows an authorized admin to immediately reset a seller or courier password without OTP challenge.
+ * Administrator Direct Password Reset (requires verified Admin Firebase ID token).
  */
 export const adminResetUserPassword = async (
   email: string,
@@ -943,69 +717,37 @@ export const adminResetUserPassword = async (
     throw new Error('Le nouveau mot de passe doit comporter au moins 6 caractères.');
   }
 
-  // 1. Update in local stored users
-  const stored = getStoredUsers();
-  let userEntry = stored[cleanEmail];
-
-  if (!userEntry) {
-    const testMatch = ALL_TEST_PROFILES.find((p) => p.email.toLowerCase() === cleanEmail);
-    if (testMatch) {
-      userEntry = {
-        profile: {
-          uid: `test_uid_${testMatch.id}`,
-          email: testMatch.email,
-          fullName: testMatch.name,
-          phone: testMatch.phone,
-          role: testMatch.role,
-          vehicleType: testMatch.vehicleType,
-          storeName: testMatch.storeName,
-          createdAt: new Date().toISOString(),
-        },
-        passwordHash: btoa(newPassword),
-      };
-    } else {
-      userEntry = {
-        profile: {
-          uid: 'usr_' + Math.random().toString(36).substring(2, 10),
-          email: cleanEmail,
-          fullName: cleanEmail.split('@')[0],
-          phone: '+229 97 00 00 00',
-          role: 'livreur',
-          createdAt: new Date().toISOString(),
-        },
-        passwordHash: btoa(newPassword),
-      };
-    }
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error('Authentification administrateur Firebase requise pour réinitialiser un mot de passe.');
   }
 
-  userEntry.passwordHash = btoa(newPassword);
-  saveStoredUser(cleanEmail, userEntry.profile, btoa(newPassword));
+  const token = await currentUser.getIdToken();
+  const res = await fetch('/api/auth/admin-force-reset', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ email: cleanEmail, newPassword }),
+  });
 
-  // 2. Try notifying backend server if endpoint exists
-  try {
-    await fetch('/api/auth/admin-force-reset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: cleanEmail, newPassword }),
-    });
-  } catch {
-    // Fallback silent
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || data.message || 'Échec de la réinitialisation du mot de passe côté serveur.');
   }
 
   return {
     success: true,
-    message: `Le mot de passe de ${userEntry.profile.fullName || cleanEmail} a été réinitialisé avec succès.`,
+    message: data.message || `Le mot de passe de ${cleanEmail} a été réinitialisé avec succès.`,
   };
 };
 
-export const directResetPassword = async (email: string, newPassword: string) => {
-  return verifyResetCodeAndSetPassword(email, '123456', newPassword);
-};
-
 /**
- * Log out the currently authenticated Firebase user.
+ * Log out the currently authenticated Firebase user and clean legacy auth caches.
  */
 export const logoutUser = async (): Promise<void> => {
+  clearLegacyAuthCache();
   try {
     await signOut(auth);
   } catch (err) {
@@ -1014,7 +756,7 @@ export const logoutUser = async (): Promise<void> => {
 };
 
 /**
- * Fetch a user profile from Firestore by UID.
+ * Fetch a user profile strictly from Firestore by UID.
  */
 export const getUserProfile = async (uid: string): Promise<UserProfile | null> => {
   try {
@@ -1024,17 +766,8 @@ export const getUserProfile = async (uid: string): Promise<UserProfile | null> =
       return docSnap.data() as UserProfile;
     }
   } catch (err: any) {
-    console.warn('Note profil Firestore (mode hors ligne ou synchronisation en attente):', err?.message || err);
+    console.warn('Erreur lecture profil Firestore:', err?.message || err);
   }
-
-  // Check local users
-  const stored = getStoredUsers();
-  for (const entry of Object.values(stored)) {
-    if (entry.profile.uid === uid) {
-      return entry.profile;
-    }
-  }
-
   return null;
 };
 

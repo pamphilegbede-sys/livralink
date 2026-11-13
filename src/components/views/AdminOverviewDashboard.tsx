@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp, AdminTab } from '../../context/AppContext';
+import { buildMerchantReportSummaries, formatShortDateFr } from '../../utils/adminReconciliation';
 
 interface AdminOverviewDashboardProps {
   onNavigateTab?: (tab: AdminTab) => void;
@@ -12,11 +13,13 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
     merchants,
     kycRequests,
     auditLogs,
-    featureFlags,
     pricingRules,
     setAdminActiveTab,
     createDelivery,
     showToast,
+    refreshAdminData,
+    isSyncingAdminData,
+    adminSyncWarnings,
   } = useApp();
 
   const navigateToTab = (tab: AdminTab) => {
@@ -28,7 +31,7 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
   };
 
   const [timeframe, setTimeframe] = useState<'today' | '7days' | 'month' | 'all'>('today');
-  const [activityFeedFilter, setActivityFeedFilter] = useState<'all' | 'delivery' | 'finance' | 'security'>('all');
+  const [activityFeedFilter, setActivityFeedFilter] = useState<'all' | 'delivery' | 'finance' | 'security' | 'user'>('all');
 
   // Indicators
   const activeDeliveries = useMemo(() => {
@@ -84,6 +87,14 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
       .slice(0, 5);
   }, [deliveries]);
 
+  const merchantReports = useMemo(() => {
+    return buildMerchantReportSummaries(merchants, deliveries);
+  }, [merchants, deliveries]);
+
+  const newMerchantsTodayCount = useMemo(() => {
+    return merchantReports.filter((r) => r.registeredToday).length;
+  }, [merchantReports]);
+
   const activityEvents = useMemo(() => {
     const events: Array<{
       id: string;
@@ -95,15 +106,34 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
       rawDate: number;
     }> = [];
 
+    merchants.forEach((m, idx) => {
+      const parsedDate = m.createdAt ? new Date(m.createdAt).getTime() : NaN;
+      const rawDate = Number.isNaN(parsedDate) ? Date.now() - idx * 7200000 : parsedDate;
+      events.push({
+        id: `merchant-reg-${m.id}-${idx}`,
+        category: 'user',
+        title: `Nouveau vendeur inscrit · ${m.storeName}`,
+        subtitle: `${m.managerName} (${m.email || m.phone}) · ${m.commune} · ${m.totalOrders} courses`,
+        time: formatShortDateFr(m.createdAt),
+        statusText: m.status.toUpperCase(),
+        rawDate,
+      });
+    });
+
     deliveries.forEach((d, idx) => {
+      const parsedDeliveryTs = d.createdAt ? new Date(d.createdAt).getTime() : NaN;
+      const formattedDeliveryTime =
+        d.createdAt && /^\d{1,2}:\d{2}/.test(d.createdAt.trim())
+          ? d.createdAt.trim()
+          : formatShortDateFr(d.createdAt);
       events.push({
         id: `deliv-${d.id}-${idx}`,
         category: 'delivery',
         title: `Course ${d.id} · ${d.status === 'livree' ? 'Livrée (POD)' : d.status === 'en_cours' ? 'En livraison' : 'En attente'}`,
         subtitle: `${d.pickupLocation.commune} ➔ ${d.dropoffLocation.commune} (${(d.itemValueCOD || 0).toLocaleString('fr-FR')} FCFA)`,
-        time: d.createdAt ? new Date(d.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '10:45',
+        time: formattedDeliveryTime || '—',
         statusText: d.status.toUpperCase(),
-        rawDate: d.createdAt ? new Date(d.createdAt).getTime() : Date.now() - idx * 3600000,
+        rawDate: Number.isNaN(parsedDeliveryTs) ? Date.now() - idx * 3600000 : parsedDeliveryTs,
       });
     });
 
@@ -113,7 +143,7 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
         category: log.type === 'pricing' ? 'finance' : log.type === 'security' || log.type === 'system' ? 'security' : 'user',
         title: log.title,
         subtitle: log.details,
-        time: log.timestamp || '12:00',
+        time: log.timestamp || '—',
         statusText: log.type.toUpperCase(),
         rawDate: Date.now() - (idx + 1) * 1800000,
       });
@@ -124,9 +154,9 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
         if (activityFeedFilter === 'all') return true;
         return ev.category === activityFeedFilter;
       })
-      .sort((a, b) => b.rawDate - a.rawDate)
-      .slice(0, 6);
-  }, [deliveries, auditLogs, activityFeedFilter]);
+      .sort((a, b) => (Number.isNaN(b.rawDate) ? 0 : b.rawDate) - (Number.isNaN(a.rawDate) ? 0 : a.rawDate))
+      .slice(0, 8);
+  }, [merchants, deliveries, auditLogs, activityFeedFilter]);
 
   const handleQuickSimulateCourse = () => {
     const newCourse = createDelivery({
@@ -207,6 +237,17 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
 
           <button
             type="button"
+            onClick={() => refreshAdminData(false)}
+            disabled={isSyncingAdminData}
+            className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 font-medium text-xs shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+            title="Synchroniser les comptes inscrits et rapports depuis Firebase"
+          >
+            <span className={`material-symbols-outlined text-base ${isSyncingAdminData ? 'animate-spin' : ''}`}>sync</span>
+            <span>{isSyncingAdminData ? 'Synchro...' : 'Synchroniser'}</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handleQuickSimulateCourse}
             className="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs shadow-2xs flex items-center gap-1.5 cursor-pointer"
           >
@@ -215,6 +256,31 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
           </button>
         </div>
       </section>
+
+      {/* Diagnostic Alert Banner for IAM / Firestore Synchronization Warnings */}
+      {adminSyncWarnings.length > 0 && (
+        <section className="bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-2xl p-4 space-y-2 text-xs text-amber-950 dark:text-amber-200 shadow-xs">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 font-bold">
+              <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-lg">warning</span>
+              <span>Alerte de synchronisation Firebase / Backend ({adminSyncWarnings.length})</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => refreshAdminData(false)}
+              disabled={isSyncingAdminData}
+              className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] cursor-pointer disabled:opacity-60"
+            >
+              Réessayer
+            </button>
+          </div>
+          <ul className="list-disc pl-5 space-y-1 text-[11px] text-amber-900 dark:text-amber-300">
+            {adminSyncWarnings.map((warning, idx) => (
+              <li key={idx}>{warning}</li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* 2. Primary 3 Indicator Cards */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -309,6 +375,14 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
                 Tous
               </button>
               <button
+                onClick={() => setActivityFeedFilter('user')}
+                className={`px-2.5 py-1 rounded-md transition-all ${
+                  activityFeedFilter === 'user' ? 'bg-white dark:bg-slate-900 text-purple-600 shadow-2xs' : 'text-slate-500'
+                }`}
+              >
+                Vendeurs
+              </button>
+              <button
                 onClick={() => setActivityFeedFilter('delivery')}
                 className={`px-2.5 py-1 rounded-md transition-all ${
                   activityFeedFilter === 'delivery' ? 'bg-white dark:bg-slate-900 text-blue-600 shadow-2xs' : 'text-slate-500'
@@ -365,6 +439,101 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
             ))}
           </div>
         </div>
+      </section>
+
+      {/* 3b. Rapports & Inscriptions Vendeurs en Direct */}
+      <section className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <div>
+            <h2 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
+              <span className="material-symbols-outlined text-emerald-600 text-lg">storefront</span>
+              <span>Rapports Vendeurs &amp; Nouvelles Inscriptions ({merchantReports.length})</span>
+              {newMerchantsTodayCount > 0 && (
+                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                  +{newMerchantsTodayCount} aujourd'hui
+                </span>
+              )}
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Suivi consolidé des boutiques enregistrées, commandes, frais générés et volumes COD
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigateToTab('merchants')}
+            className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-800 dark:text-slate-200 text-xs font-bold transition-colors cursor-pointer self-start sm:self-auto"
+          >
+            Voir toutes les boutiques ›
+          </button>
+        </div>
+
+        {merchantReports.length === 0 ? (
+          <div className="py-6 text-center text-xs text-slate-500">
+            Aucun vendeur enregistré synchronisé pour le moment. Cliquez sur « Synchroniser » pour charger depuis Firebase.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs min-w-[640px]">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-800/60 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200 dark:border-slate-800">
+                  <th className="py-2.5 px-3">Boutique &amp; Vendeur</th>
+                  <th className="py-2.5 px-3">Contact</th>
+                  <th className="py-2.5 px-3">Inscription</th>
+                  <th className="py-2.5 px-3">Courses (Livrées)</th>
+                  <th className="py-2.5 px-3">Volume COD</th>
+                  <th className="py-2.5 px-3">Frais Livraison</th>
+                  <th className="py-2.5 px-3">Statut</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {merchantReports.slice(0, 8).map((rep) => (
+                  <tr key={rep.merchant.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                    <td className="py-2.5 px-3">
+                      <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <span>{rep.merchant.storeName}</span>
+                        {rep.registeredToday && (
+                          <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 text-[9px] font-bold">
+                            NOUVEAU
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-slate-500">{rep.merchant.managerName}</div>
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <div className="font-mono text-slate-700 dark:text-slate-300">{rep.merchant.email || 'N/A'}</div>
+                      <div className="text-[10px] text-slate-400">{rep.merchant.phone}</div>
+                    </td>
+                    <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400">
+                      {formatShortDateFr(rep.merchant.createdAt)}
+                    </td>
+                    <td className="py-2.5 px-3 font-mono font-bold text-slate-900 dark:text-white">
+                      {rep.totalOrders} ({rep.deliveredOrders} livrées)
+                    </td>
+                    <td className="py-2.5 px-3 font-mono font-bold text-emerald-600">
+                      {rep.totalVolumeCOD.toLocaleString('fr-FR')} FCFA
+                    </td>
+                    <td className="py-2.5 px-3 font-mono text-blue-600 font-semibold">
+                      {rep.totalDeliveryFees.toLocaleString('fr-FR')} FCFA
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          rep.merchant.status === 'actif'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : rep.merchant.status === 'suspendu'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {rep.merchant.status === 'actif' ? 'Actif' : rep.merchant.status === 'suspendu' ? 'Suspendu' : 'En attente'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       {/* 4. Quick Modules Grid */}

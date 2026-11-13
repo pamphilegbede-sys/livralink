@@ -244,6 +244,8 @@ export const AdminConsole: React.FC = () => {
     directorTargetName,
     openEmailCenter,
     simulateNewPriorityMission,
+    refreshAdminData,
+    isSyncingAdminData,
   } = useApp();
 
   // Whitelist management state
@@ -862,10 +864,12 @@ export const AdminConsole: React.FC = () => {
   });
 
   const filteredMerchants = merchants.filter(m => {
-    const matchesSearch = m.storeName.toLowerCase().includes(adminSearch.toLowerCase()) ||
-                          m.managerName.toLowerCase().includes(adminSearch.toLowerCase()) ||
+    const q = adminSearch.toLowerCase();
+    const matchesSearch = m.storeName.toLowerCase().includes(q) ||
+                          m.managerName.toLowerCase().includes(q) ||
                           m.phone.includes(adminSearch) ||
-                          m.commune.toLowerCase().includes(adminSearch.toLowerCase());
+                          (m.email || '').toLowerCase().includes(q) ||
+                          m.commune.toLowerCase().includes(q);
     if (!matchesSearch) return false;
     if (merchantStatusFilter === 'all') return true;
     return m.status === merchantStatusFilter;
@@ -2333,6 +2337,17 @@ export const AdminConsole: React.FC = () => {
                       🔴 Suspendus
                     </button>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => refreshAdminData(false)}
+                    disabled={isSyncingAdminData}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl text-xs shadow-2xs flex items-center gap-1 cursor-pointer disabled:opacity-60"
+                    title="Synchroniser les vendeurs depuis Firebase"
+                  >
+                    <span className={`material-symbols-outlined text-sm ${isSyncingAdminData ? 'animate-spin' : ''}`}>sync</span>
+                    <span>{isSyncingAdminData ? 'Synchro...' : 'Synchroniser'}</span>
+                  </button>
 
                   <button
                     onClick={() => setIsAddMerchantModalOpen(true)}

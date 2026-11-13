@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { loginWithEmailPassword, loginWithGoogle, getFirebaseAuthErrorMessage } from '../../firebase/authService';
+import { loginWithEmailPassword, loginWithGoogle, logoutUser, getFirebaseAuthErrorMessage } from '../../firebase/authService';
 import { ForgotPasswordModal } from '../modals/ForgotPasswordModal';
 import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
 import { createFreshCourierSettings, createFreshCourierEntity } from '../../utils/userIsolation';
+
+const SUPER_ADMIN_EMAIL = 'pamphile.gbede@gmail.com';
 
 export const LoginLivreurPage: React.FC = () => {
   const { 
@@ -16,7 +18,6 @@ export const LoginLivreurPage: React.FC = () => {
     couriers, 
     setCouriers,
     showToast, 
-    openTestModal, 
     detectAndSaveLocation 
   } = useApp();
   const [identifier, setIdentifier] = useState('');
@@ -26,12 +27,6 @@ export const LoginLivreurPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
-
-  const fillTestAccount = (email: string, pass: string) => {
-    setIdentifier(email);
-    setPassword(pass);
-    setErrorMessage(null);
-  };
 
   const syncCourierIdentity = (profile: any) => {
     if (!profile) return;
@@ -65,41 +60,53 @@ export const LoginLivreurPage: React.FC = () => {
 
     try {
       const { user, profile } = await loginWithEmailPassword(identifier, password, 'livreur');
-      const resolvedRole = profile?.role || 'livreur';
+      const resolvedRole = profile.role;
+      const isVerifiedSuperAdmin =
+        (user.email || '').toLowerCase().trim() === SUPER_ADMIN_EMAIL && user.emailVerified === true;
 
-      // Détection automatique et enregistrement de la position géographique de l'utilisateur
-      detectAndSaveLocation(user.uid, profile).catch((err) => console.warn('Erreur détection position:', err));
-      
-      setCurrentRole(resolvedRole);
-      if (resolvedRole === 'vendeur') {
-        setCurrentView('vendeur_dashboard');
-        showToast(`Bienvenue sur votre Espace Vendeur, ${profile?.fullName || user.displayName || 'Marchand'} !`, 'success');
-      } else {
-        setCurrentRole('livreur');
-        setCurrentView('livreur_dashboard');
-        if (profile) {
-          setUserProfile(profile);
-          const isAccredited = Boolean(profile.isKycVerified || profile.kycStatus === 'valide');
-          let loaded = null;
-          try {
-            const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
-            if (saved) loaded = JSON.parse(saved);
-          } catch {}
-          if (!loaded) {
-            loaded = createFreshCourierSettings(profile);
-          }
-          // Si le livreur n'est pas encore accrédité, forcer le statut en pause / hors ligne (voyant vert désactivé)
-          if (!isAccredited) {
-            loaded.isAvailable = false;
-          }
-          try {
-            localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loaded));
-          } catch {}
-          setCourierSettings(loaded);
-          syncCourierIdentity(profile);
-        }
-        showToast(`Bienvenue sur votre Espace Livreur, ${profile?.fullName || user.displayName || 'Coursier'} !`, 'success');
+      if (resolvedRole === 'admin' || isVerifiedSuperAdmin) {
+        setUserProfile(profile);
+        setCurrentRole('admin');
+        setCurrentView('admin_console');
+        showToast('Connexion Super-Admin confirmée.', 'success');
+        return;
       }
+
+      if (resolvedRole !== 'livreur') {
+        await logoutUser();
+        setUserProfile(null);
+        const msg =
+          resolvedRole === 'vendeur'
+            ? "Ce compte est enregistré comme Vendeur. Veuillez vous connecter via l'Espace Vendeur."
+            : "Ce compte n'est pas autorisé dans l'Espace Livreur.";
+        setErrorMessage(msg);
+        showToast(msg, 'error');
+        return;
+      }
+
+      detectAndSaveLocation(user.uid, profile).catch((err) => console.warn('Erreur détection position:', err));
+
+      setCurrentRole('livreur');
+      setUserProfile(profile);
+      const isAccredited = Boolean(profile.isKycVerified || profile.kycStatus === 'valide');
+      let loaded = null;
+      try {
+        const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
+        if (saved) loaded = JSON.parse(saved);
+      } catch {}
+      if (!loaded) {
+        loaded = createFreshCourierSettings(profile);
+      }
+      if (!isAccredited) {
+        loaded.isAvailable = false;
+      }
+      try {
+        localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loaded));
+      } catch {}
+      setCourierSettings(loaded);
+      syncCourierIdentity(profile);
+      setCurrentView('livreur_dashboard');
+      showToast(`Bienvenue sur votre Espace Livreur, ${profile.fullName || user.displayName || 'Coursier'} !`, 'success');
     } catch (err: any) {
       const friendlyMsg = getFirebaseAuthErrorMessage(err);
       setErrorMessage(friendlyMsg);
@@ -114,35 +121,56 @@ export const LoginLivreurPage: React.FC = () => {
     setErrorMessage(null);
     try {
       const { user, profile, location } = await loginWithGoogle('livreur');
-      setCurrentRole('livreur');
-      if (profile) {
+      const resolvedRole = profile.role;
+      const isVerifiedSuperAdmin =
+        (user.email || '').toLowerCase().trim() === SUPER_ADMIN_EMAIL && user.emailVerified === true;
+
+      if (resolvedRole === 'admin' || isVerifiedSuperAdmin) {
         setUserProfile(profile);
-        const isAccredited = Boolean(profile.isKycVerified || profile.kycStatus === 'valide');
-        let loaded = null;
-        try {
-          const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
-          if (saved) loaded = JSON.parse(saved);
-        } catch {}
-        if (!loaded) {
-          loaded = createFreshCourierSettings({
-            ...profile,
-            locationCommune: location?.commune || profile.locationCommune,
-            locationAddress: location?.address || profile.locationAddress,
-            gpsCoordinates: location?.gpsCoordinates || profile.gpsCoordinates,
-          });
-        }
-        // Si le livreur n'est pas encore accrédité, forcer le statut en pause / hors ligne (voyant vert désactivé)
-        if (!isAccredited) {
-          loaded.isAvailable = false;
-        }
-        try {
-          localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loaded));
-        } catch {}
-        setCourierSettings(loaded);
-        syncCourierIdentity(profile);
+        setCurrentRole('admin');
+        setCurrentView('admin_console');
+        showToast('Connexion Google Super-Admin confirmée.', 'success');
+        return;
       }
+
+      if (resolvedRole !== 'livreur') {
+        await logoutUser();
+        setUserProfile(null);
+        const msg =
+          resolvedRole === 'vendeur'
+            ? "Ce compte Google est déjà enregistré comme Vendeur. Veuillez utiliser l'Espace Vendeur."
+            : "Ce compte Google n'est pas autorisé dans l'Espace Livreur.";
+        setErrorMessage(msg);
+        showToast(msg, 'error');
+        return;
+      }
+
+      setCurrentRole('livreur');
+      setUserProfile(profile);
+      const isAccredited = Boolean(profile.isKycVerified || profile.kycStatus === 'valide');
+      let loaded = null;
+      try {
+        const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
+        if (saved) loaded = JSON.parse(saved);
+      } catch {}
+      if (!loaded) {
+        loaded = createFreshCourierSettings({
+          ...profile,
+          locationCommune: location?.commune || profile.locationCommune,
+          locationAddress: location?.address || profile.locationAddress,
+          gpsCoordinates: location?.gpsCoordinates || profile.gpsCoordinates,
+        });
+      }
+      if (!isAccredited) {
+        loaded.isAvailable = false;
+      }
+      try {
+        localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loaded));
+      } catch {}
+      setCourierSettings(loaded);
+      syncCourierIdentity(profile);
       setCurrentView('livreur_dashboard');
-      showToast(`Connexion Google réussie ! Bienvenue ${profile?.fullName || user.displayName || 'Coursier'}. Position enregistrée : ${location?.commune || 'Cotonou'} (${location?.gpsCoordinates || '6.3571, 2.4175'}).`, 'success');
+      showToast(`Connexion Google réussie ! Bienvenue ${profile.fullName || user.displayName || 'Coursier'}.`, 'success');
     } catch (err: any) {
       const errorMsg = getFirebaseAuthErrorMessage(err);
       setErrorMessage(errorMsg);

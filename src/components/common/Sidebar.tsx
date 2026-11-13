@@ -12,26 +12,43 @@ export const Sidebar: React.FC = () => {
     courierSettings,
     showToast,
     logout,
-    openTestModal,
     adminActiveTab,
     setAdminActiveTab,
     deliveries,
     couriers,
     merchants,
     kycRequests,
-    openLivreurSearchModal,
     userProfile,
     isEmailAuthorizedAdmin,
+    courierMissionsFilter,
+    setCourierMissionsFilter,
   } = useApp();
 
   const isUserSuperAdmin = Boolean(userProfile?.email && isEmailAuthorizedAdmin(userProfile.email));
+
+  // Résolution déterministe du rôle affiché dans la barre latérale afin que le menu ne disparaisse jamais
+  const effectiveNavRole: 'vendeur' | 'livreur' | 'admin' =
+    currentView === 'admin_console'
+      ? 'admin'
+      : currentView.startsWith('vendeur_')
+      ? 'vendeur'
+      : currentView.startsWith('livreur_')
+      ? 'livreur'
+      : userProfile?.role === 'vendeur' || userProfile?.role === 'livreur'
+      ? userProfile.role
+      : currentRole;
+
+  const availableCourierMissionsCount = deliveries.filter((d) => d.status === 'en_attente' || !d.courier).length;
+  const activeCourierMissionsCount = deliveries.filter(
+    (d) => d.status === 'acceptee' || d.status === 'colis_recupere' || d.status === 'en_cours'
+  ).length;
 
   const handleLogout = async () => {
     await logout();
   };
 
   return (
-    <aside className="hidden md:flex flex-col justify-between h-screen w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm z-30 shrink-0 select-none sticky top-0 transition-colors">
+    <aside className="hidden sm:flex flex-col justify-between h-screen sm:w-56 lg:w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm z-30 shrink-0 select-none sticky top-0 transition-colors">
       {/* Top Part: Logo, CTA, Navigation (Scrollable) */}
       <div className="flex-1 flex flex-col p-4 overflow-y-auto custom-scrollbar">
         {/* Brand Logo & Switcher */}
@@ -45,12 +62,12 @@ export const Sidebar: React.FC = () => {
             <LivraLinkLogo size="md" subtitle="CONNECT & DELIVER" />
           </button>
           <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-blue-50 text-blue-700 border border-blue-200">
-            {currentRole}
+            {effectiveNavRole}
           </span>
         </div>
 
-        {/* Primary Action Button (New delivery for vendor / Search for driver) */}
-        {currentRole === 'vendeur' && (
+        {/* Primary Action Button (New delivery for vendor / Status for driver) */}
+        {effectiveNavRole === 'vendeur' && (
           <button
             onClick={() => setCurrentView('vendeur_new_delivery')}
             className="mb-5 w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm active:scale-95 transition-all"
@@ -60,22 +77,22 @@ export const Sidebar: React.FC = () => {
           </button>
         )}
 
-        {currentRole === 'livreur' && (
-          <div className="mb-5 p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+        {effectiveNavRole === 'livreur' && (
+          <div className="mb-5 p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="relative flex h-2.5 w-2.5">
                 <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${courierSettings.isAvailable ? 'bg-emerald-400' : 'bg-slate-400'} opacity-75`}></span>
                 <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${courierSettings.isAvailable ? 'bg-emerald-500' : 'bg-slate-500'}`}></span>
               </span>
-              <span className="text-xs font-bold text-slate-800">
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-100">
                 {courierSettings.isAvailable ? 'Disponible 🟢' : 'En pause ⏸️'}
               </span>
             </div>
-            <span className="text-[10px] font-bold text-blue-700">Cotonou Littoral</span>
+            <span className="text-[10px] font-bold text-blue-700 dark:text-blue-300">Cotonou Littoral</span>
           </div>
         )}
 
-        {currentRole === 'admin' && (
+        {effectiveNavRole === 'admin' && (
           <div className="mb-5 p-3 rounded-xl bg-slate-900 text-white flex items-center justify-between shadow-sm">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -88,7 +105,7 @@ export const Sidebar: React.FC = () => {
         {/* Navigation Tabs - Role-specific */}
         <nav className="space-y-1">
           {/* VENDEUR TABS */}
-          {currentRole === 'vendeur' && (
+          {effectiveNavRole === 'vendeur' && (
             <>
               <button
                 type="button"
@@ -205,7 +222,7 @@ export const Sidebar: React.FC = () => {
           )}
 
           {/* LIVREUR TABS */}
-          {currentRole === 'livreur' && (
+          {effectiveNavRole === 'livreur' && (
             <>
               <button
                 type="button"
@@ -222,18 +239,64 @@ export const Sidebar: React.FC = () => {
 
               <button
                 type="button"
-                onClick={() => setCurrentView('livreur_missions')}
+                onClick={() => {
+                  setCourierMissionsFilter('en_attente');
+                  setCurrentView('livreur_missions');
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                  currentView === 'livreur_missions'
+                  currentView === 'livreur_missions' && (courierMissionsFilter === 'en_attente' || courierMissionsFilter === 'all')
+                    ? 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 font-bold shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="material-symbols-outlined text-xl">two_wheeler</span>
+                  <span>Missions disponibles</span>
+                </div>
+                {availableCourierMissionsCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-emerald-600 text-white text-[10px] font-bold">
+                    {availableCourierMissionsCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCourierMissionsFilter('en_cours');
+                  setCurrentView('livreur_missions');
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+                  currentView === 'livreur_missions' && courierMissionsFilter === 'en_cours'
                     ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
                     : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
                 <div className="flex items-center gap-3">
                   <span className="material-symbols-outlined text-xl">local_shipping</span>
-                  <span>Mes Courses</span>
+                  <span>Mes livraisons</span>
                 </div>
-                <span className="px-1.5 py-0.2 rounded-full bg-blue-600 text-white text-[10px] font-bold">2</span>
+                {activeCourierMissionsCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-blue-600 text-white text-[10px] font-bold">
+                    {activeCourierMissionsCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCourierMissionsFilter('livree');
+                  setCurrentView('livreur_missions');
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+                  currentView === 'livreur_missions' && courierMissionsFilter === 'livree'
+                    ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
+                }`}
+              >
+                <span className="material-symbols-outlined text-xl">history</span>
+                <span>Historique</span>
               </button>
 
               <button
@@ -322,7 +385,7 @@ export const Sidebar: React.FC = () => {
           )}
 
           {/* ADMIN TABS */}
-          {currentRole === 'admin' && (
+          {effectiveNavRole === 'admin' && (
             <>
               <button
                 type="button"
@@ -632,18 +695,18 @@ export const Sidebar: React.FC = () => {
           return (
             <div className="mt-2 pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center gap-3 px-2">
               <div className="w-9 h-9 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 flex items-center justify-center font-bold text-xs border border-blue-200 dark:border-blue-800 shrink-0">
-                {currentRole === 'vendeur' ? vendorInitials : currentRole === 'livreur' ? courierInitials : 'AD'}
+                {effectiveNavRole === 'vendeur' ? vendorInitials : effectiveNavRole === 'livreur' ? courierInitials : 'AD'}
               </div>
               <div className="overflow-hidden min-w-0">
                 <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                  {currentRole === 'vendeur'
+                  {effectiveNavRole === 'vendeur'
                     ? merchantSettings.storeName
-                    : currentRole === 'livreur'
+                    : effectiveNavRole === 'livreur'
                     ? courierSettings.fullName
                     : 'Super Admin CI'}
                 </p>
                 <p className="text-[10px] font-bold text-emerald-600 truncate">
-                  {currentRole === 'vendeur' ? 'Vendeur Certifié' : currentRole === 'livreur' ? 'Livreur ★ 4.9' : 'Superviseur National'}
+                  {effectiveNavRole === 'vendeur' ? 'Vendeur Certifié' : effectiveNavRole === 'livreur' ? 'Livreur Certifié' : 'Superviseur National'}
                 </p>
               </div>
             </div>

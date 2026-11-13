@@ -1,19 +1,23 @@
+/// <reference types="google.maps" />
 // Source: Google Maps Platform Code Assist
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   APIProvider,
   Map,
   AdvancedMarker,
   useMap,
+  useMapsLibrary,
 } from '@vis.gl/react-google-maps';
 import {
   GOOGLE_MAPS_API_KEY,
   calculateDistanceKm,
   calculateDeliveryPrice,
   RATE_PER_KM_FCFA,
+  DeliveryTravelMode,
+  RouteEstimationResult,
+  estimateFallbackDurationMinutes,
+  formatTravelDuration,
 } from '../../config/maps';
-
-declare const google: any;
 
 export interface LatLng {
   lat: number;
@@ -33,40 +37,81 @@ export interface GoogleMapDeliveryProps {
   activeTarget?: 'origin' | 'destination';
   onActiveTargetChange?: (target: 'origin' | 'destination') => void;
   heightClass?: string;
+  travelMode?: DeliveryTravelMode;
+  showTravelModeSelector?: boolean;
+  onRouteCalculated?: (result: RouteEstimationResult) => void;
 }
 
-// Composant interne pour tracer la polyline et ajuster la vue de la carte
+interface InternalRouteState extends RouteEstimationResult {
+  isComputing: boolean;
+}
+
+// Composant interne utilisant la librairie moderne Routes (Route.computeRoutes)
+// pour tracer l'itinéraire routier réel et estimer le temps de trajet
 const MapRouteRenderer: React.FC<{
   origin?: LatLng | null;
   destination?: LatLng | null;
   courierPosition?: LatLng;
-}> = ({ origin, destination, courierPosition }) => {
+  travelMode: DeliveryTravelMode;
+  onRouteStateChange: (state: InternalRouteState | null) => void;
+}> = ({ origin, destination, courierPosition, travelMode, onRouteStateChange }) => {
   const map = useMap();
+  const routesLib = useMapsLibrary('routes');
+  const polylinesRef = useRef<google.maps.Polyline[]>([]);
+  const onRouteStateChangeRef = useRef(onRouteStateChange);
+  onRouteStateChangeRef.current = onRouteStateChange;
 
   useEffect(() => {
-    if (!map || typeof google === 'undefined' || !google.maps) return;
+    const clearPolylines = () => {
+      polylinesRef.current.forEach((p) => p.setMap(null));
+      polylinesRef.current = [];
+    };
+
+    if (!map || typeof google === 'undefined' || !google.maps) {
+      return;
+    }
+
+    clearPolylines();
 
     if (!origin && !destination) {
-      // Centre par défaut sur le Grand Cotonou / Bénin
       map.setCenter({ lat: 6.3703, lng: 2.4312 });
       map.setZoom(12);
+      onRouteStateChangeRef.current(null);
       return;
     }
 
     if (origin && !destination) {
       map.setCenter(origin);
       map.setZoom(14);
+      onRouteStateChangeRef.current(null);
       return;
     }
 
     if (!origin && destination) {
       map.setCenter(destination);
       map.setZoom(14);
+      onRouteStateChangeRef.current(null);
       return;
     }
 
-    if (origin && destination) {
-      // Recalibrer les limites pour inclure l'origine, la destination et le coursier
+    if (!origin || !destination) return;
+
+    const isSamePoint =
+      Math.abs(origin.lat - destination.lat) < 0.0001 &&
+      Math.abs(origin.lng - destination.lng) < 0.0001;
+
+    const fallbackKm = calculateDistanceKm(origin, destination);
+    const fallbackDurationMins = estimateFallbackDurationMinutes(fallbackKm, travelMode);
+    const fallbackState: RouteEstimationResult = {
+      distanceKm: fallbackKm,
+      durationMinutes: fallbackDurationMins,
+      durationText: formatTravelDuration(fallbackDurationMins),
+      source: 'fallback',
+      travelMode,
+    };
+
+    const renderFallbackRoute = () => {
+      clearPolylines();
       const bounds = new google.maps.LatLngBounds();
       bounds.extend(origin);
       bounds.extend(destination);
@@ -74,18 +119,13 @@ const MapRouteRenderer: React.FC<{
         bounds.extend(courierPosition);
       }
 
-      // Si les deux points sont très proches
-      if (
-        Math.abs(origin.lat - destination.lat) < 0.0001 &&
-        Math.abs(origin.lng - destination.lng) < 0.0001
-      ) {
+      if (isSamePoint) {
         map.setCenter(origin);
         map.setZoom(14);
       } else {
-        map.fitBounds(bounds, { top: 50, right: 50, bottom: 50, left: 50 });
+        map.fitBounds(bounds, { top: 55, right: 45, bottom: 55, left: 45 });
       }
 
-      // Tracer la polyline de livraison reliant l'origine et la destination
       const routeCoordinates = [
         origin,
         {
@@ -99,20 +139,160 @@ const MapRouteRenderer: React.FC<{
         destination,
       ];
 
-      const polyline = new google.maps.Polyline({
+      const fallbackLine = new google.maps.Polyline({
         path: routeCoordinates,
         geodesic: true,
         strokeColor: '#2563eb',
-        strokeOpacity: 0.9,
+        strokeOpacity: 0.78,
         strokeWeight: 4,
         map,
       });
+      polylinesRef.current = [fallbackLine];
+      onRouteStateChangeRef.current({ ...fallbackState, isComputing: false });
+    };
 
-      return () => {
-        polyline.setMap(null);
-      };
+    if (isSamePoint) {
+      map.setCenter(origin);
+      map.setZoom(15);
+      onRouteStateChangeRef.current({
+        distanceKm: 1.0,
+        durationMinutes: 5,
+        durationText: formatTravelDuration(5),
+        source: 'fallback',
+        travelMode,
+        isComputing: false,
+      });
+      return;
     }
-  }, [map, origin?.lat, origin?.lng, destination?.lat, destination?.lng, courierPosition]);
+
+    // Si la librairie routes n'est pas encore chargée, afficher l'estimation de secours en attendant
+    if (!routesLib || !routesLib.Route) {
+      renderFallbackRoute();
+      return clearPolylines;
+    }
+
+    let cancelled = false;
+    onRouteStateChangeRef.current({ ...fallbackState, isComputing: true });
+
+    const computeWithMode = async (mode: DeliveryTravelMode) => {
+      const request: google.maps.routes.ComputeRoutesRequest = {
+        origin: { lat: origin.lat, lng: origin.lng },
+        destination: { lat: destination.lat, lng: destination.lng },
+        travelMode: mode as google.maps.TravelModeString,
+        routingPreference: 'TRAFFIC_AWARE',
+        fields: ['path', 'distanceMeters', 'durationMillis', 'viewport', 'localizedValues'],
+        internalUsageAttributionIds: ['gmp_mcp_codeassist_v1_aistudio'],
+      };
+      return routesLib.Route.computeRoutes(request);
+    };
+
+    const runCompute = async () => {
+      try {
+        let effectiveMode: DeliveryTravelMode = travelMode;
+        let response: { routes: google.maps.routes.Route[] | undefined } | null = null;
+
+        try {
+          response = await computeWithMode(travelMode);
+        } catch (firstErr) {
+          if (travelMode === 'TWO_WHEELER') {
+            effectiveMode = 'DRIVING';
+            response = await computeWithMode('DRIVING');
+          } else {
+            throw firstErr;
+          }
+        }
+
+        if (cancelled) return;
+
+        if ((!response?.routes || response.routes.length === 0) && effectiveMode === 'TWO_WHEELER') {
+          effectiveMode = 'DRIVING';
+          response = await computeWithMode('DRIVING');
+          if (cancelled) return;
+        }
+
+        const primaryRoute = response?.routes?.[0];
+        if (!primaryRoute) {
+          renderFallbackRoute();
+          return;
+        }
+
+        clearPolylines();
+        let createdPolylines: google.maps.Polyline[] = [];
+        if (typeof primaryRoute.createPolylines === 'function') {
+          createdPolylines = primaryRoute.createPolylines();
+        } else if (primaryRoute.path && primaryRoute.path.length > 0) {
+          createdPolylines = [
+            new google.maps.Polyline({
+              path: primaryRoute.path,
+              geodesic: true,
+            }),
+          ];
+        }
+
+        createdPolylines.forEach((polyline) => {
+          polyline.setOptions({
+            strokeColor: '#2563eb',
+            strokeOpacity: 0.92,
+            strokeWeight: 5,
+          });
+          polyline.setMap(map);
+        });
+        polylinesRef.current = createdPolylines;
+
+        if (primaryRoute.viewport) {
+          const bounds = new google.maps.LatLngBounds(
+            primaryRoute.viewport.getSouthWest(),
+            primaryRoute.viewport.getNorthEast()
+          );
+          if (courierPosition) {
+            bounds.extend(courierPosition);
+          }
+          map.fitBounds(bounds, { top: 55, right: 45, bottom: 55, left: 45 });
+        } else {
+          const bounds = new google.maps.LatLngBounds();
+          bounds.extend(origin);
+          bounds.extend(destination);
+          if (courierPosition) bounds.extend(courierPosition);
+          map.fitBounds(bounds, { top: 55, right: 45, bottom: 55, left: 45 });
+        }
+
+        const meters = primaryRoute.distanceMeters;
+        const routeKm =
+          typeof meters === 'number' && Number.isFinite(meters) && meters > 0
+            ? Math.max(0.5, Math.round((meters / 1000) * 10) / 10)
+            : fallbackKm;
+
+        const durationMs = primaryRoute.durationMillis;
+        const durationMinutes =
+          typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs > 0
+            ? Math.max(1, Math.round(durationMs / 60000))
+            : estimateFallbackDurationMinutes(routeKm, effectiveMode);
+
+        const durationText =
+          primaryRoute.localizedValues?.duration || formatTravelDuration(durationMinutes);
+
+        onRouteStateChangeRef.current({
+          distanceKm: routeKm,
+          durationMinutes,
+          durationText,
+          source: 'google_routes',
+          travelMode: effectiveMode,
+          isComputing: false,
+        });
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('Calcul itinéraire Google Routes indisponible, repli sur estimation distance:', err);
+        renderFallbackRoute();
+      }
+    };
+
+    runCompute();
+
+    return () => {
+      cancelled = true;
+      clearPolylines();
+    };
+  }, [map, routesLib, origin?.lat, origin?.lng, destination?.lat, destination?.lng, courierPosition?.lat, courierPosition?.lng, travelMode]);
 
   return null;
 };
@@ -130,9 +310,21 @@ export const GoogleMapDelivery: React.FC<GoogleMapDeliveryProps> = ({
   activeTarget = 'destination',
   onActiveTargetChange,
   heightClass = 'h-[340px]',
+  travelMode = 'DRIVING',
+  showTravelModeSelector = true,
+  onRouteCalculated,
 }) => {
-  const [mapLoaded, setMapLoaded] = useState(false);
+  const [, setMapLoaded] = useState(false);
   const [internalActiveTarget, setInternalActiveTarget] = useState<'origin' | 'destination'>(activeTarget);
+  const [selectedTravelMode, setSelectedTravelMode] = useState<DeliveryTravelMode>(travelMode);
+  const [routeState, setRouteState] = useState<InternalRouteState | null>(null);
+
+  useEffect(() => {
+    setSelectedTravelMode(travelMode);
+  }, [travelMode]);
+
+  const onRouteCalculatedRef = useRef(onRouteCalculated);
+  onRouteCalculatedRef.current = onRouteCalculated;
 
   const currentTarget = onActiveTargetChange ? activeTarget : internalActiveTarget;
   const setTarget = (t: 'origin' | 'destination') => {
@@ -143,21 +335,53 @@ export const GoogleMapDelivery: React.FC<GoogleMapDeliveryProps> = ({
     }
   };
 
-  // Calcul dynamique de la distance et du tarif si les deux points sont présents
+  // Calcul de base de distance / durée immédiatement disponible en attendant ou en secours de Routes API
   const hasBothPoints = Boolean(origin && destination);
-  const distanceKm = useMemo(() => {
+  const fallbackDistanceKm = useMemo(() => {
     if (origin && destination) {
       return calculateDistanceKm(origin, destination);
     }
     return 0;
   }, [origin, destination]);
 
-  const deliveryFee = useMemo(() => {
+  const fallbackDurationMinutes = useMemo(() => {
     if (origin && destination) {
-      return calculateDeliveryPrice(distanceKm);
+      return estimateFallbackDurationMinutes(fallbackDistanceKm, selectedTravelMode);
     }
     return 0;
-  }, [origin, destination, distanceKm]);
+  }, [origin, destination, fallbackDistanceKm, selectedTravelMode]);
+
+  const effectiveDistanceKm = hasBothPoints
+    ? (routeState?.distanceKm ?? fallbackDistanceKm)
+    : 0;
+  const effectiveDurationMinutes = hasBothPoints
+    ? (routeState?.durationMinutes ?? fallbackDurationMinutes)
+    : 0;
+  const effectiveDurationText = hasBothPoints
+    ? (routeState?.durationText || formatTravelDuration(effectiveDurationMinutes))
+    : '--';
+  const effectiveSource = routeState?.source ?? 'fallback';
+  const isComputingRoute = Boolean(hasBothPoints && routeState?.isComputing);
+
+  const deliveryFee = useMemo(() => {
+    if (hasBothPoints) {
+      return calculateDeliveryPrice(effectiveDistanceKm);
+    }
+    return 0;
+  }, [hasBothPoints, effectiveDistanceKm]);
+
+  const handleRouteStateChange = (nextState: InternalRouteState | null) => {
+    setRouteState(nextState);
+    if (nextState && onRouteCalculatedRef.current) {
+      onRouteCalculatedRef.current({
+        distanceKm: nextState.distanceKm,
+        durationMinutes: nextState.durationMinutes,
+        durationText: nextState.durationText,
+        source: nextState.source,
+        travelMode: nextState.travelMode,
+      });
+    }
+  };
 
   const center = useMemo(() => {
     if (origin && destination) {
@@ -188,7 +412,7 @@ export const GoogleMapDelivery: React.FC<GoogleMapDeliveryProps> = ({
   };
 
   const googleMapsUrl = origin && destination
-    ? `https://www.google.com/maps/dir/?api=1&origin=${origin.lat},${origin.lng}&destination=${destination.lat},${destination.lng}`
+    ? `https://www.google.com/maps/dir/?api=1&origin=${origin.lat},${origin.lng}&destination=${destination.lat},${destination.lng}&travelmode=${selectedTravelMode === 'TWO_WHEELER' ? 'two_wheeler' : 'driving'}`
     : `https://www.google.com/maps/@${center.lat},${center.lng},13z`;
 
   return (
@@ -198,6 +422,7 @@ export const GoogleMapDelivery: React.FC<GoogleMapDeliveryProps> = ({
     >
       <APIProvider
         apiKey={GOOGLE_MAPS_API_KEY}
+        libraries={['routes']}
         language="fr"
         region="BJ"
         onLoad={() => setMapLoaded(true)}
@@ -222,6 +447,8 @@ export const GoogleMapDelivery: React.FC<GoogleMapDeliveryProps> = ({
               origin={origin}
               destination={destination}
               courierPosition={courierPosition}
+              travelMode={selectedTravelMode}
+              onRouteStateChange={handleRouteStateChange}
             />
 
             {/* Pin Ramassage Boutique (Bleu) */}
@@ -268,24 +495,77 @@ export const GoogleMapDelivery: React.FC<GoogleMapDeliveryProps> = ({
           </Map>
 
           {/* Overlay d'information Google Maps en haut à gauche */}
-          <div className="absolute top-3 left-3 z-10 bg-white/95 backdrop-blur-md px-3 py-2 rounded-2xl shadow-md border border-slate-200 text-xs flex items-center gap-2.5 max-w-[90%] flex-wrap">
+          <div className="absolute top-3 left-3 z-10 bg-white/95 backdrop-blur-md px-3 py-2 rounded-2xl shadow-md border border-slate-200 text-xs flex items-center gap-2 max-w-[92%] flex-wrap">
             <div className="flex items-center gap-1 text-blue-600 font-extrabold">
               <span className="material-symbols-outlined text-base">map</span>
-              <span>Google Maps Bénin</span>
+              <span>Google Maps</span>
             </div>
             <div className="h-3.5 w-px bg-slate-300"></div>
 
             {hasBothPoints ? (
               <>
-                <div className="flex items-center gap-1 font-bold text-slate-800">
+                <div className="flex items-center gap-1 font-bold text-slate-800" title="Distance du trajet">
                   <span className="material-symbols-outlined text-sm text-slate-500">straighten</span>
-                  <span>{distanceKm} km</span>
+                  <span>{effectiveDistanceKm} km</span>
+                </div>
+                <div className="h-3.5 w-px bg-slate-300"></div>
+                <div
+                  className="flex items-center gap-1 font-extrabold text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-200"
+                  title={
+                    effectiveSource === 'google_routes'
+                      ? 'Temps de trajet calculé par Google Maps Routes (trafic en temps réel)'
+                      : 'Temps de trajet estimé selon la distance'
+                  }
+                >
+                  {isComputingRoute ? (
+                    <span className="w-3 h-3 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></span>
+                  ) : (
+                    <span className="material-symbols-outlined text-sm text-indigo-600">schedule</span>
+                  )}
+                  <span>~{effectiveDurationText}</span>
+                  <span className="text-[10px] font-semibold text-indigo-600">
+                    {effectiveSource === 'google_routes' ? '• Trafic réel' : '• Estimé'}
+                  </span>
                 </div>
                 <div className="h-3.5 w-px bg-slate-300"></div>
                 <div className="flex items-center gap-1 font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200">
                   <span>{deliveryFee.toLocaleString('fr-FR')} FCFA</span>
-                  <span className="text-[10px] font-normal text-emerald-600">({RATE_PER_KM_FCFA} F/km)</span>
+                  <span className="text-[10px] font-normal text-emerald-600 hidden sm:inline">({RATE_PER_KM_FCFA} F/km)</span>
                 </div>
+
+                {showTravelModeSelector && (
+                  <>
+                    <div className="h-3.5 w-px bg-slate-300 hidden sm:block"></div>
+                    <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTravelMode('TWO_WHEELER')}
+                        className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-0.5 transition-colors cursor-pointer ${
+                          selectedTravelMode === 'TWO_WHEELER'
+                            ? 'bg-blue-600 text-white shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                        title="Estimer pour deux-roues / moto"
+                      >
+                        <span className="material-symbols-outlined text-xs">two_wheeler</span>
+                        <span>Moto</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTravelMode('DRIVING')}
+                        className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-0.5 transition-colors cursor-pointer ${
+                          selectedTravelMode === 'DRIVING'
+                            ? 'bg-blue-600 text-white shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                        title="Estimer pour voiture / utilitaire"
+                      >
+                        <span className="material-symbols-outlined text-xs">directions_car</span>
+                        <span>Voiture</span>
+                      </button>
+                    </div>
+                  </>
+                )}
               </>
             ) : origin ? (
               <span className="text-[11px] text-blue-700 font-semibold flex items-center gap-1">
@@ -310,7 +590,7 @@ export const GoogleMapDelivery: React.FC<GoogleMapDeliveryProps> = ({
               target="_blank"
               rel="noopener noreferrer"
               className="text-[11px] font-bold text-blue-700 hover:text-blue-900 underline flex items-center gap-0.5 ml-auto"
-              title="Ouvrir dans Google Maps"
+              title="Ouvrir l'itinéraire dans Google Maps"
             >
               <span>GPS</span>
               <span className="material-symbols-outlined text-xs">open_in_new</span>
@@ -359,3 +639,4 @@ export const GoogleMapDelivery: React.FC<GoogleMapDeliveryProps> = ({
     </div>
   );
 };
+

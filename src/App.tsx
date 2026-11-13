@@ -68,20 +68,38 @@ const MainAppRouter: React.FC = () => {
     isChatModalOpen,
     closeChatModal,
     chatModalOrder,
+    isAdminAuthenticated,
+    isDirectorModeActive,
   } = useApp();
   const [deviceMode, setDeviceMode] = useState<'responsive' | 'mobile-mock'>('responsive');
 
-  const isCourierActive = (currentRole === 'livreur' || currentView.startsWith('livreur_')) && (firebaseUser != null || userProfile != null);
+  const isCourierActive = Boolean(
+    firebaseUser != null &&
+    userProfile?.role === 'livreur' &&
+    (currentRole === 'livreur' || currentView.startsWith('livreur_'))
+  );
 
   const renderActiveView = () => {
-    if (isAuthLoading) {
+    if (isAuthLoading || (firebaseUser != null && !userProfile)) {
       return <FullViewSkeleton label="Vérification de session sécurisée..." />;
     }
 
     return (
       <React.Suspense fallback={<FullViewSkeleton label="Chargement instantané..." />}>
         {(() => {
-          const isAuthenticated = Boolean(firebaseUser || userProfile);
+          const isAuthenticated = Boolean(firebaseUser && userProfile);
+          const canAccessVendeur = Boolean(
+            isAuthenticated && (
+              userProfile?.role === 'vendeur' ||
+              (isAdminAuthenticated && (isDirectorModeActive || currentRole === 'vendeur'))
+            )
+          );
+          const canAccessLivreur = Boolean(
+            isAuthenticated && (
+              userProfile?.role === 'livreur' ||
+              (isAdminAuthenticated && (isDirectorModeActive || currentRole === 'livreur'))
+            )
+          );
 
           switch (currentView) {
             case 'landing':
@@ -93,27 +111,27 @@ const MainAppRouter: React.FC = () => {
             case 'register':
               return <RegisterPage />;
             case 'vendeur_dashboard':
-              return isAuthenticated ? <VendeurDashboard /> : <LoginVendeurPage />;
+              return canAccessVendeur ? <VendeurDashboard /> : <LoginVendeurPage />;
             case 'vendeur_new_delivery':
-              return isAuthenticated ? <VendeurNewDelivery /> : <LoginVendeurPage />;
+              return canAccessVendeur ? <VendeurNewDelivery /> : <LoginVendeurPage />;
             case 'vendeur_tracking':
-              return isAuthenticated ? <VendeurTracking /> : <LoginVendeurPage />;
+              return canAccessVendeur ? <VendeurTracking /> : <LoginVendeurPage />;
             case 'vendeur_reports':
-              return isAuthenticated ? <VendeurReports /> : <LoginVendeurPage />;
+              return canAccessVendeur ? <VendeurReports /> : <LoginVendeurPage />;
             case 'vendeur_settings':
-              return isAuthenticated ? <VendeurSettings /> : <LoginVendeurPage />;
+              return canAccessVendeur ? <VendeurSettings /> : <LoginVendeurPage />;
             case 'vendeur_chat':
-              return isAuthenticated ? <ChatView /> : <LoginVendeurPage />;
+              return canAccessVendeur ? <ChatView /> : <LoginVendeurPage />;
             case 'livreur_dashboard':
-              return isAuthenticated ? <LivreurDashboard /> : <LoginLivreurPage />;
+              return canAccessLivreur ? <LivreurDashboard /> : <LoginLivreurPage />;
             case 'livreur_missions':
-              return isAuthenticated ? <LivreurMissions /> : <LoginLivreurPage />;
+              return canAccessLivreur ? <LivreurMissions /> : <LoginLivreurPage />;
             case 'livreur_wallet':
-              return isAuthenticated ? <LivreurWallet /> : <LoginLivreurPage />;
+              return canAccessLivreur ? <LivreurWallet /> : <LoginLivreurPage />;
             case 'livreur_settings':
-              return isAuthenticated ? <LivreurSettings /> : <LoginLivreurPage />;
+              return canAccessLivreur ? <LivreurSettings /> : <LoginLivreurPage />;
             case 'livreur_chat':
-              return isAuthenticated ? <ChatView /> : <LoginLivreurPage />;
+              return canAccessLivreur ? <ChatView /> : <LoginLivreurPage />;
             case 'admin_console':
               return <AdminConsole />;
             default:

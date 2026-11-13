@@ -1,3 +1,23 @@
+import { auth } from '../firebase/config';
+
+const getAdminAuthHeaders = async (withJson = true): Promise<Record<string, string>> => {
+  const headers: Record<string, string> = {};
+  if (withJson) {
+    headers['Content-Type'] = 'application/json';
+  }
+  try {
+    if (auth.currentUser) {
+      const token = await auth.currentUser.getIdToken();
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+    }
+  } catch (err) {
+    console.warn('Impossible de récupérer le jeton Firebase ID:', err);
+  }
+  return headers;
+};
+
 export interface SentEmailItem {
   id: string;
   dedupKey?: string;
@@ -280,7 +300,8 @@ export const sendPriorityMissionEmail = async (payload: {
  */
 export const fetchSentEmailsHistory = async (): Promise<SentEmailItem[]> => {
   try {
-    const res = await fetch('/api/email/outbox');
+    const headers = await getAdminAuthHeaders(false);
+    const res = await fetch('/api/email/outbox', { headers });
     const data = await res.json();
     if (res.ok && data.success && Array.isArray(data.emails) && data.emails.length > 0) {
       // Merge with local records
@@ -308,7 +329,8 @@ export interface SmtpConfig {
 
 export const fetchSmtpConfig = async (): Promise<SmtpConfig | null> => {
   try {
-    const res = await fetch('/api/admin/email/config');
+    const headers = await getAdminAuthHeaders(false);
+    const res = await fetch('/api/admin/email/config', { headers });
     const data = await res.json();
     if (res.ok && data.success) {
       return data.config;
@@ -327,12 +349,10 @@ export const updateSmtpConfig = async (payload: {
   from?: string;
 }): Promise<{ success: boolean; message?: string; config?: SmtpConfig }> => {
   try {
+    const headers = await getAdminAuthHeaders(true);
     const res = await fetch('/api/admin/email/config', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-admin-secret': 'livralink_super_admin_2026_key',
-      },
+      headers,
       body: JSON.stringify(payload),
     });
     const data = await res.json();
@@ -360,12 +380,10 @@ export const testSmtpConnection = async (payload?: {
   config?: SmtpConfig;
 }> => {
   try {
+    const headers = await getAdminAuthHeaders(true);
     const res = await fetch('/api/admin/email/test-smtp', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-admin-secret': 'livralink_super_admin_2026_key',
-      },
+      headers,
       body: JSON.stringify(payload || {}),
     });
     const data = await res.json();
@@ -434,12 +452,10 @@ export const processEmailQueue = async (): Promise<{
   successCount?: number;
 }> => {
   try {
+    const headers = await getAdminAuthHeaders(true);
     const res = await fetch('/api/admin/email/process-queue', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-admin-secret': 'livralink_super_admin_2026_key',
-      },
+      headers,
     });
     const data = await res.json();
     return data;

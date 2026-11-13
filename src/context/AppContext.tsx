@@ -31,7 +31,14 @@ import {
   INITIAL_NOTIFICATIONS
 } from '../data/mockData';
 import { calculateDeliveryPrice, calculateDistanceKm, DetectedUserLocation } from '../config/maps';
-import { collection, doc, onSnapshot, setDoc, query, where, runTransaction } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, onSnapshot, setDoc, deleteDoc, query, where, runTransaction } from 'firebase/firestore';
+import {
+  mergeRemoteUsersIntoAdminLists,
+  enrichMerchantsWithDeliveries,
+  mapFirestoreDeliveryToOrder,
+  mapFirestoreKycToRequest,
+  FirestoreUserRecord,
+} from '../utils/adminReconciliation';
 import {
   uploadPODPhoto,
   uploadPODSignature,
@@ -209,6 +216,9 @@ interface AppContextType {
   // Admin Tabs State
   adminActiveTab: AdminTab;
   setAdminActiveTab: (tab: AdminTab) => void;
+  courierMissionsFilter: 'all' | 'en_attente' | 'en_cours' | 'livree';
+  setCourierMissionsFilter: (filter: 'all' | 'en_attente' | 'en_cours' | 'livree') => void;
+  adminSyncWarnings: string[];
   sendAdminBroadcast: (params: {
     targetCategory?: 'all' | 'vendeurs' | 'livreurs' | 'individual' | 'tous' | 'admins' | 'individuel';
     targetUserEmail?: string;
@@ -228,9 +238,12 @@ interface AppContextType {
   removeAuthorizedAdminEmail: (email: string) => { success: boolean; message: string };
   isAdminAuthenticated: boolean;
   adminLoginWithGoogle: (email: string, name?: string) => { success: boolean; message?: string; error?: string };
-  adminLogout: () => void;
+  adminLogout: () => Promise<void> | void;
   verifyAdminPassword: (password: string) => boolean;
   changeAdminPassword: (oldPassword: string, newPassword: string) => { success: boolean; message: string };
+  isSyncingAdminData: boolean;
+  lastAdminSyncAt: string | null;
+  refreshAdminData: (silent?: boolean) => Promise<void>;
   // Dark Mode & Theme Selector
   themeMode: ThemeMode;
   setThemeMode: (mode: ThemeMode) => void;
@@ -313,21 +326,58 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+const SESSION_VIEW_KEY = 'livralink_session_view';
+
+const LEGACY_LOCAL_CACHE_KEYS = [
+  'livralink_deliveries',
+  'livralink_couriers',
+  'livralink_merchants',
+  'livralink_chat_messages',
+  'livralink_notifications',
+  'livralink_director_active',
+  'livralink_director_target',
+  'livralink_user_detected_location',
+  'livralink_registered_users_v2',
+  'livralink_admin_password',
+];
+
+const clearAllSessionCaches = () => {
+  try {
+    sessionStorage.removeItem(SESSION_VIEW_KEY);
+  } catch {}
+  try {
+    LEGACY_LOCAL_CACHE_KEYS.forEach((k) => localStorage.removeItem(k));
+  } catch {}
+};
+
+const isAuthenticatedAppView = (view: AppView): boolean =>
+  view.startsWith('vendeur_') || view.startsWith('livreur_') || view === 'admin_console';
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentView, setCurrentViewState] = useState<AppView>('landing');
   const [viewHistory, setViewHistory] = useState<AppView[]>([]);
   const [currentRole, setCurrentRole] = useState<UserRole>('vendeur');
-
-  const setCurrentView = (nextView: AppView) => {
-    if (nextView === currentView) return;
-    setViewHistory((prev) => [...prev.slice(-30), currentView]);
-    setCurrentViewState(nextView);
-  };
+  const [courierMissionsFilter, setCourierMissionsFilter] = useState<'all' | 'en_attente' | 'en_cours' | 'livree'>('all');
 
   // Real Firebase Auth state
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+
+  const setCurrentView = (nextView: AppView) => {
+    if (nextView !== currentView) {
+      setViewHistory((prev) => [...prev.slice(-30), currentView]);
+      setCurrentViewState(nextView);
+    }
+    try {
+      const uid = auth.currentUser?.uid || firebaseUser?.uid;
+      if (uid && isAuthenticatedAppView(nextView)) {
+        sessionStorage.setItem(SESSION_VIEW_KEY, JSON.stringify({ uid, view: nextView }));
+      } else if (nextView === 'landing' || nextView === 'login_vendeur' || nextView === 'login_livreur' || nextView === 'register') {
+        sessionStorage.removeItem(SESSION_VIEW_KEY);
+      }
+    } catch {}
+  };
 
   const navigateBack = () => {
     // Defense: If user is authenticated, ignore unauthenticated entry screens in back stack
@@ -342,10 +392,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const prevView = historyStack[historyStack.length - 1];
       setViewHistory(historyStack.slice(0, -1));
 
-      // Auto-synchroniser le rôle avec la vue de destination si nécessaire
-      if ((prevView.startsWith('vendeur_') || prevView === 'login_vendeur') && currentRole !== 'vendeur') {
+      if (prevView.startsWith('vendeur_') && currentRole !== 'vendeur') {
         setCurrentRole('vendeur');
-      } else if ((prevView.startsWith('livreur_') || prevView === 'login_livreur') && currentRole !== 'livreur') {
+      } else if (prevView.startsWith('livreur_') && currentRole !== 'livreur') {
         setCurrentRole('livreur');
       } else if (prevView === 'admin_console' && currentRole !== 'admin') {
         setCurrentRole('admin');
@@ -353,7 +402,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setCurrentViewState(prevView);
     } else {
-      // Repli contextuel logique selon le rôle connecté (interdiction de retour écran de connexion)
       if (currentRole === 'vendeur' && currentView !== 'vendeur_dashboard') {
         setCurrentViewState('vendeur_dashboard');
       } else if (currentRole === 'livreur' && currentView !== 'livreur_dashboard') {
@@ -370,44 +418,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ? (currentView !== 'vendeur_dashboard' && currentView !== 'livreur_dashboard' && currentView !== 'admin_console')
     : (viewHistory.length > 0 || currentView !== 'landing');
 
-  const [deliveries, setDeliveries] = useState<DeliveryOrder[]>(() => {
-    try {
-      const saved = localStorage.getItem('livralink_deliveries');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.filter((d: any) => !d.id?.startsWith('#LL-41') && !d.id?.startsWith('#LL-10'));
-        }
-      }
-    } catch {}
-    return INITIAL_DELIVERIES;
-  });
-
-  const [couriers, setCouriers] = useState<Courier[]>(() => {
-    try {
-      const saved = localStorage.getItem('livralink_couriers');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.filter((c: any) => !c.id?.startsWith('c-'));
-        }
-      }
-    } catch {}
-    return INITIAL_COURIERS;
-  });
-
-  const [merchants, setMerchants] = useState<Merchant[]>(() => {
-    try {
-      const saved = localStorage.getItem('livralink_merchants');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.filter((m: any) => !m.id?.startsWith('m-'));
-        }
-      }
-    } catch {}
-    return INITIAL_MERCHANTS;
-  });
+  const [deliveries, setDeliveries] = useState<DeliveryOrder[]>(() => INITIAL_DELIVERIES);
+  const [couriers, setCouriers] = useState<Courier[]>(() => INITIAL_COURIERS);
+  const [merchants, setMerchants] = useState<Merchant[]>(() => INITIAL_MERCHANTS);
 
   const [selectedCourier, setSelectedCourier] = useState<Courier>(couriers[0] || {
     id: 'c-default',
@@ -485,24 +498,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Trigger audio chime, vibration haptic & real OS/browser notification
     triggerRealDeviceAlert(notif.title, notif.message, notif.type, notif.orderId);
 
-    // Persist to Cloud Firestore if user is authenticated
+    // Persist to Cloud Firestore strictly adhering to isValidNotification() in firestore.rules
     if (auth.currentUser) {
+      const senderUid = auth.currentUser.uid;
       const cleanNotifId = newNotif.id.replace(/[^a-zA-Z0-9_-]/g, '');
+      const cleanTitle = (notif.title || 'Notification LivraLink').trim().slice(0, 256);
+      const cleanMessage = (notif.message || 'Mise à jour LivraLink').trim().slice(0, 2048);
+
+      let resolvedRecipientId = (notif.recipientId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      let resolvedOrderDocId = (notif.orderDocId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+
+      if (!resolvedRecipientId && notif.orderId) {
+        const cleanOrd = notif.orderId.replace(/[^a-zA-Z0-9_-]/g, '');
+        const matchedOrder = deliveriesRef.current.find(
+          (d) => d.id === notif.orderId || d.id.replace(/[^a-zA-Z0-9_-]/g, '') === cleanOrd
+        );
+        if (matchedOrder) {
+          if (matchedOrder.merchantId === senderUid && matchedOrder.courier?.id && matchedOrder.courier.id !== senderUid) {
+            resolvedRecipientId = matchedOrder.courier.id.replace(/[^a-zA-Z0-9_-]/g, '');
+            resolvedOrderDocId = cleanOrd;
+          } else if (matchedOrder.courier?.id === senderUid && matchedOrder.merchantId && matchedOrder.merchantId !== senderUid) {
+            resolvedRecipientId = matchedOrder.merchantId.replace(/[^a-zA-Z0-9_-]/g, '');
+            resolvedOrderDocId = cleanOrd;
+          }
+        }
+      }
+
+      if (!resolvedRecipientId || resolvedRecipientId === 'all') {
+        resolvedRecipientId = senderUid;
+      }
+
+      const safeType =
+        (notif.type as string) === 'system' || (notif.type as string) === 'admin' || (notif.type as string) === 'broadcast'
+          ? (isAdminAuthenticated ? notif.type : 'order_status')
+          : (notif.type || 'order_status');
+
+      const firestorePayload: Record<string, any> = {
+        id: cleanNotifId,
+        senderId: senderUid,
+        recipientId: resolvedRecipientId,
+        title: cleanTitle,
+        message: cleanMessage,
+        type: safeType,
+        read: false,
+        isRead: false,
+        createdAt: Date.now(),
+        timestamp: newNotif.timestamp,
+      };
+      if (resolvedOrderDocId) firestorePayload.orderDocId = resolvedOrderDocId;
+      if (notif.orderId) firestorePayload.orderId = notif.orderId;
+      if (notif.actionView) firestorePayload.actionView = notif.actionView;
+
       try {
-        setDoc(doc(db, 'notifications', cleanNotifId), {
-          id: newNotif.id,
-          senderId: auth.currentUser.uid,
-          targetUserId: notif.roleTarget || 'all',
-          title: notif.title,
-          message: notif.message,
-          type: notif.type,
-          orderId: notif.orderId || null,
-          actionView: notif.actionView || null,
-          read: false,
-          isRead: false,
-          createdAt: Date.now(),
-          timestamp: newNotif.timestamp,
-        }).catch((err) => console.warn('Erreur Firestore notification setDoc:', err));
+        setDoc(doc(db, 'notifications', cleanNotifId), firestorePayload)
+          .catch((err) => console.warn('Erreur Firestore notification setDoc:', err));
       } catch (err) {
         console.warn('Erreur Firestore addNotification:', err);
       }
@@ -597,32 +646,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setRateLivreurTargetOrder(null);
   };
 
-  // Direct Messagerie / Chat Vendeur <-> Livreur state (Initialisé vide sans chat de test pré-rempli)
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
-    try {
-      const saved = localStorage.getItem('livralink_chat_messages');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          // Filtrer et purger les anciens messages de test (Ibrahim Touré, Sarah Kouamé, msg-seed-*, #LL-4192)
-          const clean = parsed.filter(
-            (m) =>
-              !m.id?.startsWith('msg-seed') &&
-              m.senderName !== 'Ibrahim Touré' &&
-              m.recipientName !== 'Ibrahim Touré' &&
-              m.senderName !== 'Sarah Kouamé' &&
-              m.recipientName !== 'Sarah Kouamé' &&
-              m.orderId !== '#LL-4192'
-          );
-          localStorage.setItem('livralink_chat_messages', JSON.stringify(clean));
-          return clean;
-        }
-      }
-    } catch {}
-    return [];
-  });
+  // Direct Messagerie / Chat Vendeur <-> Livreur state
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
-  const sendChatMessage = (params: {
+  const sendChatMessage = async (params: {
     orderId?: string;
     recipientId: string;
     recipientName: string;
@@ -630,13 +657,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     text: string;
     quickTag?: ChatMessage['quickTag'];
   }) => {
-    const senderId = userProfile?.uid || (currentRole === 'vendeur' ? 'vendor-default' : 'courier-default');
+    const cleanText = (params.text || '').trim();
+    if (!cleanText) return;
+
+    const senderId = auth.currentUser?.uid || userProfile?.uid;
+    if (!senderId) {
+      showToast('Authentification requise pour envoyer un message.', 'error');
+      return;
+    }
+
     const senderName = currentRole === 'vendeur'
       ? (merchantSettings.storeName || userProfile?.fullName || 'Vendeur LivraLink')
       : (courierSettings.fullName || userProfile?.fullName || 'Livreur Partenaire');
 
     const newMsg: ChatMessage = {
-      id: `chat_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      id: `chat_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       orderId: params.orderId,
       senderId,
       senderName,
@@ -644,43 +679,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       recipientId: params.recipientId,
       recipientName: params.recipientName,
       recipientRole: params.recipientRole,
-      text: params.text,
+      text: cleanText,
       timestamp: new Date().toISOString(),
       isRead: false,
       quickTag: params.quickTag,
     };
 
-    setChatMessages((prev) => {
-      const updated = [...prev, newMsg];
-      try {
-        localStorage.setItem('livralink_chat_messages', JSON.stringify(updated));
-      } catch {}
-      return updated;
-    });
-
+    setChatMessages((prev) => [...prev, newMsg]);
     showToast('Message envoyé !', 'success');
 
-    // Persist to Cloud Firestore if user is authenticated
+    // Persist to Cloud Firestore strictly ensuring conversations/{convId} exists first
     if (auth.currentUser) {
+      const cleanRecipient = (params.recipientId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      const cleanSender = auth.currentUser.uid;
+      const participants = Array.from(new Set([cleanSender, cleanRecipient])).filter(Boolean).sort();
+
+      if (participants.length < 2) {
+        return;
+      }
+
       const convId = params.orderId
         ? `order_${params.orderId.replace(/[^a-zA-Z0-9_-]/g, '')}`
-        : `direct_${senderId.replace(/[^a-zA-Z0-9_-]/g, '')}_${params.recipientId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+        : `direct_${participants.join('_')}`;
       const msgCleanId = newMsg.id.replace(/[^a-zA-Z0-9_-]/g, '');
+
       try {
-        setDoc(doc(db, 'conversations', convId, 'messages', msgCleanId), {
-          id: newMsg.id,
-          senderId: auth.currentUser.uid,
+        const convRef = doc(db, 'conversations', convId);
+        const convSnap = await getDoc(convRef);
+        if (!convSnap.exists()) {
+          const convPayload: Record<string, any> = {
+            id: convId,
+            participantIds: participants,
+            updatedAt: Date.now(),
+          };
+          if (params.orderId) convPayload.orderId = params.orderId;
+          await setDoc(convRef, convPayload);
+        }
+
+        const msgPayload: Record<string, any> = {
+          id: msgCleanId,
+          senderId: cleanSender,
           senderName: newMsg.senderName,
           senderRole: newMsg.senderRole,
-          recipientId: newMsg.recipientId,
+          recipientId: params.recipientId,
           recipientName: newMsg.recipientName,
           recipientRole: newMsg.recipientRole,
-          text: newMsg.text,
-          orderId: newMsg.orderId || null,
+          text: cleanText.slice(0, 4000),
           createdAt: Date.now(),
           timestamp: newMsg.timestamp,
           read: false,
-        }).catch((err) => console.warn('Erreur Firestore message chat:', err));
+        };
+        if (newMsg.orderId) msgPayload.orderId = newMsg.orderId;
+
+        await setDoc(doc(db, 'conversations', convId, 'messages', msgCleanId), msgPayload);
       } catch (err) {
         console.warn('Erreur Firestore sendChatMessage:', err);
       }
@@ -698,11 +749,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         return msg;
       });
-      if (changed) {
-        try {
-          localStorage.setItem('livralink_chat_messages', JSON.stringify(updated));
-        } catch {}
-      }
       return changed ? updated : prev;
     });
   }, []);
@@ -922,24 +968,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`Fonctionnalités réinitialisées aux valeurs standard.`, 'success');
   };
 
-  // Director Mode (Prise de Contrôle Absolue des Pages Vendeurs et Livreurs)
-  const [isDirectorModeActive, setIsDirectorModeActive] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('livralink_director_active') === 'true';
-    } catch {
-      return false;
-    }
-  });
-
-  const [directorTargetName, setDirectorTargetName] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem('livralink_director_target');
-    } catch {
-      return null;
-    }
-  });
+  // Director Mode (Prise de Contrôle Absolue des Pages Vendeurs et Livreurs — exclusivement Super-Admin authentifié)
+  const [isDirectorModeActive, setIsDirectorModeActive] = useState<boolean>(false);
+  const [directorTargetName, setDirectorTargetName] = useState<string | null>(null);
 
   const impersonateMerchant = (merchantId: string) => {
+    if (!isAdminAuthenticated) {
+      showToast('Accès réservé exclusivement au Super-Admin authentifié.', 'error');
+      return;
+    }
     const merchant = merchants.find(m => m.id === merchantId) || merchants[0];
     if (!merchant) return;
 
@@ -955,11 +992,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setIsDirectorModeActive(true);
     setDirectorTargetName(merchant.storeName);
-    try {
-      localStorage.setItem('livralink_director_active', 'true');
-      localStorage.setItem('livralink_director_target', merchant.storeName);
-    } catch {}
-
     setCurrentRole('vendeur');
     setCurrentViewState('vendeur_dashboard');
     addAuditLog('system', `Prise de contrôle Directeur : ${merchant.storeName}`, `L'administrateur supervise directement l'espace de la boutique ${merchant.storeName} (${merchant.id})`);
@@ -967,6 +999,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const impersonateCourier = (courierId: string) => {
+    if (!isAdminAuthenticated) {
+      showToast('Accès réservé exclusivement au Super-Admin authentifié.', 'error');
+      return;
+    }
     const courier = couriers.find(c => c.id === courierId) || couriers[0];
     if (!courier) return;
 
@@ -978,16 +1014,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       email: courier.email || prev.email,
       parkingBaseAddress: courier.zone,
       vehicleType: courier.vehicle,
-      vehiclePlate: courier.vehiclePlate || prev.vehiclePlate || 'BJ-1234-RB',
+      vehiclePlate: courier.vehiclePlate || prev.vehiclePlate || '',
     }));
 
     setIsDirectorModeActive(true);
     setDirectorTargetName(courier.name);
-    try {
-      localStorage.setItem('livralink_director_active', 'true');
-      localStorage.setItem('livralink_director_target', courier.name);
-    } catch {}
-
     setCurrentRole('livreur');
     setCurrentViewState('livreur_dashboard');
     addAuditLog('system', `Prise de contrôle Directeur : ${courier.name}`, `L'administrateur supervise directement le compte du livreur ${courier.name} (${courier.id})`);
@@ -997,11 +1028,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const exitDirectorMode = () => {
     setIsDirectorModeActive(false);
     setDirectorTargetName(null);
-    try {
-      localStorage.removeItem('livralink_director_active');
-      localStorage.removeItem('livralink_director_target');
-    } catch {}
-
     setCurrentRole('admin');
     setCurrentViewState('admin_console');
     showToast(`Retour à la Console Administrateur.`, 'info');
@@ -1038,14 +1064,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return authorizedAdminEmails.some((authMail) => authMail.toLowerCase().trim() === clean);
   };
 
-  const isUserMasterAdmin = Boolean(userProfile?.email && isEmailAuthorizedAdmin(userProfile.email));
+  const isUserMasterAdmin = Boolean(
+    firebaseUser &&
+    firebaseUser.emailVerified &&
+    (firebaseUser.email || userProfile?.email) &&
+    isEmailAuthorizedAdmin((firebaseUser.email || userProfile?.email || '').toLowerCase())
+  );
 
   const isAdminAuthenticated = Boolean(
-    isUserMasterAdmin ||
-    (isAdminSessionUnlocked && (userProfile?.role === 'admin' || isUserMasterAdmin))
+    firebaseUser &&
+    firebaseUser.emailVerified &&
+    (isUserMasterAdmin || (isAdminSessionUnlocked && userProfile?.role === 'admin'))
   );
 
   const addAuthorizedAdminEmail = (newEmail: string): { success: boolean; message: string } => {
+    if (!isAdminAuthenticated) {
+      return { success: false, message: 'Action réservée au Super-Admin authentifié.' };
+    }
     const clean = newEmail.toLowerCase().trim();
     if (!clean || !clean.includes('@')) {
       return { success: false, message: 'Adresse email invalide.' };
@@ -1061,6 +1096,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const removeAuthorizedAdminEmail = (emailToRemove: string): { success: boolean; message: string } => {
+    if (!isAdminAuthenticated) {
+      return { success: false, message: 'Action réservée au Super-Admin authentifié.' };
+    }
     const clean = emailToRemove.toLowerCase().trim();
     if (clean === 'pamphile.gbede@gmail.com') {
       return { success: false, message: 'Impossible de supprimer le Super-Admin principal (Pamphile.gbede@gmail.com).' };
@@ -1073,22 +1111,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const adminLoginWithGoogle = (email: string, name?: string): { success: boolean; message?: string; error?: string } => {
-    const clean = email.toLowerCase().trim();
-    if (!isEmailAuthorizedAdmin(clean)) {
+    const currentAuthUser = auth.currentUser;
+    const clean = (currentAuthUser?.email || email || '').toLowerCase().trim();
+    if (!currentAuthUser || !currentAuthUser.emailVerified || !clean || !isEmailAuthorizedAdmin(clean)) {
       setIsAdminSessionUnlocked(false);
-      addAuditLog('security', 'Accès Admin Refusé (403)', `Tentative d'accès non autorisée avec le compte Google : ${clean}`);
+      addAuditLog('security', 'Accès Admin Refusé (403)', `Tentative d'accès non autorisée avec le compte Google : ${clean || 'inconnu'}`);
       return {
         success: false,
-        error: `Accès refusé. L'adresse "${clean}" n'est pas autorisée à administrer LivraLink. Seul le compte super-admin ou les e-mails whitelistés sont acceptés.`
+        error: `Accès refusé. Authentification Google Firebase vérifiée requise avec un compte Super-Admin whitelisté.`
       };
     }
 
-    const adminName = name || (clean.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase()));
+    const adminName = name || currentAuthUser.displayName || clean.split('@')[0];
     const profile: UserProfile = {
-      uid: 'admin_google_' + clean.replace(/[^a-zA-Z0-9]/g, '_'),
+      uid: currentAuthUser.uid,
       email: clean,
       fullName: adminName,
-      phone: '+229 97 48 12 34',
+      phone: currentAuthUser.phoneNumber || '',
       role: 'admin',
       createdAt: new Date().toISOString()
     };
@@ -1102,53 +1141,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true, message: `Bienvenue ${adminName}` };
   };
 
-  const adminLogout = () => {
+  const adminLogout = async () => {
+    clearAllSessionCaches();
     setIsAdminSessionUnlocked(false);
+    setIsDirectorModeActive(false);
+    setDirectorTargetName(null);
+    setPriorityMissionAlert(null);
+    setAdminSyncWarnings([]);
+    setDeliveries([]);
+    setCouriers([]);
+    setMerchants([]);
+    setKycRequests([]);
+    setNotifications([]);
+    setChatMessages([]);
+    setSelectedDelivery(null);
+    setViewHistory([]);
     setUserProfile(null);
+    setFirebaseUser(null);
     setCurrentRole('vendeur');
-    setCurrentView('landing');
+    setCurrentViewState('landing');
+    await logoutUser();
     addAuditLog('security', 'Déconnexion Admin', `Déconnexion de la session administrateur`);
     showToast('Session administrateur fermée en toute sécurité.', 'info');
   };
 
-  const [adminPassword, setAdminPasswordState] = useState<string>(() => {
-    try {
-      return localStorage.getItem('livralink_admin_password') || 'livralink2026';
-    } catch {
-      return 'livralink2026';
-    }
-  });
-
-  const verifyAdminPassword = (password: string): boolean => {
-    const trimmed = (password || '').trim();
-    // Only accept fallback defaults if the password has never been customized
-    if (adminPassword === 'livralink2026') {
-      return trimmed === 'livralink2026' || trimmed === 'Admin2026!';
-    }
-    return trimmed === adminPassword;
+  const verifyAdminPassword = (_password: string): boolean => {
+    return false;
   };
 
-  const changeAdminPassword = (oldPassword: string, newPassword: string): { success: boolean; message: string } => {
-    if (!verifyAdminPassword(oldPassword)) {
-      return { success: false, message: 'L\'ancien mot de passe administrateur est incorrect.' };
-    }
-    const cleanNew = (newPassword || '').trim();
-    if (!cleanNew || cleanNew.length < 6) {
-      return { success: false, message: 'Le nouveau mot de passe doit comporter au moins 6 caractères.' };
-    }
-    setAdminPasswordState(cleanNew);
-    try {
-      localStorage.setItem('livralink_admin_password', cleanNew);
-    } catch (e) {
-      console.warn('Erreur stockage local admin password:', e);
-    }
-    addAuditLog('security', 'Modification Mot de Passe Admin', 'Le mot de passe administrateur a été modifié avec succès.');
-    showToast('Mot de passe administrateur modifié avec succès !', 'success');
-    return { success: true, message: 'Mot de passe mis à jour avec succès.' };
+  const changeAdminPassword = (_oldPassword: string, _newPassword: string): { success: boolean; message: string } => {
+    return {
+      success: false,
+      message: 'La console administrateur utilise exclusivement l\'authentification Google Firebase vérifiée.'
+    };
   };
 
   const openGoogleModal = (_role?: 'vendeur' | 'livreur' | 'admin') => {
-    // In-app Google Modal permanently deactivated in favor of direct authentic Google Auth
     setIsGoogleModalOpen(false);
   };
 
@@ -1160,19 +1188,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const openTestModal = () => setIsTestModalOpen(true);
   const closeTestModal = () => setIsTestModalOpen(false);
 
-  // Sync state to local storage for persistence across reloads
-  useEffect(() => {
-    localStorage.setItem('livralink_deliveries', JSON.stringify(deliveries));
-  }, [deliveries]);
-
-  useEffect(() => {
-    localStorage.setItem('livralink_couriers', JSON.stringify(couriers));
-  }, [couriers]);
-
-  useEffect(() => {
-    localStorage.setItem('livralink_merchants', JSON.stringify(merchants));
-  }, [merchants]);
-
   // Listen to real Firebase Auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -1180,7 +1195,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (user) {
         try {
           const profile = await getUserProfile(user.uid);
+          const userEmail = (user.email || '').toLowerCase().trim();
+          const isMaster = Boolean(user.emailVerified && userEmail && isEmailAuthorizedAdmin(userEmail));
+          let effectiveProfile: UserProfile;
+
           if (profile) {
+            effectiveProfile = profile;
             setUserProfile(profile);
             setCurrentRole(profile.role);
             if (profile.role === 'vendeur') {
@@ -1197,10 +1217,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               }
               setMerchantSettings(loadedMerchant);
             } else if (profile.role === 'livreur') {
-              const isAccredited = Boolean(
-                profile.isKycVerified ||
-                profile.kycStatus === 'valide'
-              );
+              const isAccredited = Boolean(profile.isKycVerified || profile.kycStatus === 'valide');
               let loadedCourier: CourierSettings | null = null;
               try {
                 const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
@@ -1209,7 +1226,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               if (!loadedCourier) {
                 loadedCourier = createFreshCourierSettings(profile);
               }
-              // Si le livreur n'est pas accrédité, forcer le statut hors ligne (voyant vert désactivé)
               if (!isAccredited) {
                 loadedCourier.isAvailable = false;
               }
@@ -1218,7 +1234,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               } catch {}
               setCourierSettings(loadedCourier);
 
-              // Match or create the courier entity
               setCouriers((prev) => {
                 const matched = prev.find(
                   (c) => c.id === user.uid || (c.email && c.email.toLowerCase() === (profile.email || '').toLowerCase())
@@ -1236,38 +1251,66 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 setSelectedCourier(freshEntity);
                 return [freshEntity, ...prev];
               });
-            } else if (profile.role === 'admin' || isEmailAuthorizedAdmin(user.email || '')) {
+            } else if (profile.role === 'admin' && user.emailVerified) {
               setIsAdminSessionUnlocked(true);
             }
           } else {
-            // Profile does not exist yet in Firestore, derive immediate fallback
-            const userEmail = (user.email || '').toLowerCase().trim();
-            const isAdmin = isEmailAuthorizedAdmin(userEmail);
-            const fallbackRole: UserRole = isAdmin ? 'admin' : (userEmail.includes('livreur') ? 'livreur' : 'vendeur');
-            const fallbackProfile: UserProfile = {
+            const fallbackRole: UserRole = isMaster
+              ? 'admin'
+              : (currentRoleRef.current === 'livreur' ? 'livreur' : 'vendeur');
+            effectiveProfile = {
               uid: user.uid,
               email: userEmail,
-              fullName: user.displayName || userEmail.split('@')[0],
+              fullName: user.displayName || userEmail.split('@')[0] || 'Utilisateur',
               phone: user.phoneNumber || '',
               role: fallbackRole,
               storeName: fallbackRole === 'vendeur' ? (user.displayName || 'Ma Boutique') : undefined,
               vehicleType: fallbackRole === 'livreur' ? 'Moto 125cc' : undefined,
               createdAt: new Date().toISOString()
             };
-            setUserProfile(fallbackProfile);
+            setUserProfile(effectiveProfile);
             setCurrentRole(fallbackRole);
             if (fallbackRole === 'vendeur') {
-              setMerchantSettings(createFreshMerchantSettings(fallbackProfile));
+              setMerchantSettings(createFreshMerchantSettings(effectiveProfile));
             } else if (fallbackRole === 'livreur') {
-              setCourierSettings(createFreshCourierSettings(fallbackProfile));
+              setCourierSettings(createFreshCourierSettings(effectiveProfile));
             }
-            if (isAdmin) {
+            if (isMaster) {
               setIsAdminSessionUnlocked(true);
             }
           }
 
-          // Détection automatique de la position géographique de l'utilisateur à la connexion et synchronisation
-          detectAndSaveUserLocation(user.uid, profile).then((loc) => {
+          if (isMaster) {
+            setIsAdminSessionUnlocked(true);
+          }
+
+          // Restore last authenticated view ONLY on page reload (when still on landing)
+          if (currentViewRef.current === 'landing') {
+            try {
+              const rawSaved = sessionStorage.getItem(SESSION_VIEW_KEY);
+              if (rawSaved) {
+                const parsed = JSON.parse(rawSaved);
+                const savedView = parsed?.view as AppView | undefined;
+                if (parsed?.uid === user.uid && savedView && isAuthenticatedAppView(savedView)) {
+                  const canRestoreAdmin = savedView === 'admin_console' && (isMaster || (effectiveProfile.role === 'admin' && user.emailVerified));
+                  const canRestoreVendor = savedView.startsWith('vendeur_') && (effectiveProfile.role === 'vendeur' || isMaster);
+                  const canRestoreCourier = savedView.startsWith('livreur_') && (effectiveProfile.role === 'livreur' || isMaster);
+                  if (canRestoreAdmin) {
+                    setCurrentRole('admin');
+                    setCurrentViewState('admin_console');
+                  } else if (canRestoreVendor) {
+                    setCurrentRole('vendeur');
+                    setCurrentViewState(savedView);
+                  } else if (canRestoreCourier) {
+                    setCurrentRole('livreur');
+                    setCurrentViewState(savedView);
+                  }
+                }
+              }
+            } catch {}
+          }
+
+          detectAndSaveUserLocation(user.uid, profile || effectiveProfile).then((loc) => {
             setDetectedLocation(loc);
           }).catch((locErr) => {
             console.warn('Notice détection position connexion:', locErr);
@@ -1277,6 +1320,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       } else {
         setUserProfile(null);
+        setIsAdminSessionUnlocked(false);
+        setIsDirectorModeActive(false);
+        setDirectorTargetName(null);
+        setPriorityMissionAlert(null);
+        setAdminSyncWarnings([]);
+        setDeliveries([]);
+        setCouriers([]);
+        setMerchants([]);
+        setKycRequests([]);
+        setNotifications([]);
+        setChatMessages([]);
+        setSelectedDelivery(null);
+        if (isAuthenticatedAppView(currentViewRef.current)) {
+          setCurrentViewState('landing');
+        }
       }
       setIsAuthLoading(false);
     });
@@ -1312,15 +1370,77 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const isCourierActive =
       (currentRole === 'livreur' || userProfile?.role === 'livreur') &&
       (currentView.startsWith('livreur_') || currentRole === 'livreur') &&
-      (firebaseUser != null || userProfile != null);
+      firebaseUser != null &&
+      userProfile != null;
 
     if (!isCourierActive) {
       setPriorityMissionAlert(null);
     }
   }, [currentRole, currentView, firebaseUser, userProfile]);
 
-  // Contextual real-time Firestore listener for priority missions (strictly for logged-in couriers)
+  // Real-time Firestore deliveries listener for authenticated Vendors & Couriers
   useEffect(() => {
+    if (!firebaseUser || !firebaseUser.emailVerified || !userProfile) return;
+    if (userProfile.role !== 'vendeur' && userProfile.role !== 'livreur') return;
+
+    const unsubs: Array<() => void> = [];
+    const mergeOrders = (incomingOrders: DeliveryOrder[]) => {
+      if (incomingOrders.length === 0) return;
+      setDeliveries((prev) => {
+        const byNormId = new Map<string, DeliveryOrder>();
+        prev.forEach((d) => byNormId.set(d.id.replace(/^#/, ''), d));
+        incomingOrders.forEach((ord) => {
+          const norm = ord.id.replace(/^#/, '');
+          const prevOrd = byNormId.get(norm);
+          byNormId.set(norm, prevOrd ? { ...prevOrd, ...ord, timeline: ord.timeline.length > 0 ? ord.timeline : prevOrd.timeline } : ord);
+        });
+        return Array.from(byNormId.values());
+      });
+    };
+
+    if (userProfile.role === 'vendeur') {
+      try {
+        const q = query(collection(db, 'deliveries'), where('merchantId', '==', firebaseUser.uid));
+        unsubs.push(
+          onSnapshot(
+            q,
+            (snap) => mergeOrders(snap.docs.map((d) => mapFirestoreDeliveryToOrder(d.data(), d.id))),
+            (err) => console.warn('Écouteur vendeur deliveries:', err?.message || err)
+          )
+        );
+      } catch {}
+    } else if (userProfile.role === 'livreur') {
+      try {
+        const qPending = query(collection(db, 'deliveries'), where('status', '==', 'en_attente'));
+        const qMine = query(collection(db, 'deliveries'), where('courierId', '==', firebaseUser.uid));
+        unsubs.push(
+          onSnapshot(
+            qPending,
+            (snap) => mergeOrders(snap.docs.map((d) => mapFirestoreDeliveryToOrder(d.data(), d.id))),
+            (err) => console.warn('Écouteur livreur pending deliveries:', err?.message || err)
+          ),
+          onSnapshot(
+            qMine,
+            (snap) => mergeOrders(snap.docs.map((d) => mapFirestoreDeliveryToOrder(d.data(), d.id))),
+            (err) => console.warn('Écouteur livreur my deliveries:', err?.message || err)
+          )
+        );
+      } catch {}
+    }
+
+    return () => {
+      unsubs.forEach((u) => {
+        try { u(); } catch {}
+      });
+    };
+  }, [firebaseUser?.uid, firebaseUser?.emailVerified, userProfile?.role]);
+
+  // Contextual real-time Firestore listener for priority missions (strictly gated on authenticated courier/admin)
+  useEffect(() => {
+    if (!firebaseUser || !firebaseUser.emailVerified) return;
+    const isAllowed = isAdminAuthenticated || userProfile?.role === 'livreur';
+    if (!isAllowed) return;
+
     try {
       const activeMissionsQuery = query(
         collection(db, 'priority_missions'),
@@ -1333,11 +1453,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const data = change.doc.data();
             const missionId = data.id || data.orderId || change.doc.id;
 
-            // Trigger alert ONLY IF the user is authenticated as an active courier in their space
             const isCourierActive =
               (currentRoleRef.current === 'livreur' || userProfileRef.current?.role === 'livreur') &&
               (currentViewRef.current.startsWith('livreur_') || currentRoleRef.current === 'livreur') &&
-              (firebaseUserRef.current != null || userProfileRef.current != null);
+              firebaseUserRef.current != null &&
+              userProfileRef.current != null;
 
             if (isCourierActive && data.status === 'en_attente' && !notifiedMissionsRef.current.has(missionId)) {
               notifiedMissionsRef.current.add(missionId);
@@ -1355,10 +1475,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 source: 'firestore'
               });
 
-              // Play synthesized dual-tone priority chime with tactile haptics
               playPriorityMissionChime();
 
-              // Add entry to notifications center
               addNotification({
                 type: 'priority_mission',
                 title: '⚡ Mission prioritaire disponible',
@@ -1371,14 +1489,356 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         });
       }, (error) => {
-        console.warn('Erreur écouteur Firestore priority_missions:', error);
+        console.warn('Erreur écouteur Firestore priority_missions:', error?.message || error);
       });
 
       return () => unsubscribe();
     } catch (err) {
       console.warn('Impossible d\'initialiser l\'écouteur priority_missions:', err);
     }
-  }, []);
+  }, [firebaseUser?.uid, firebaseUser?.emailVerified, userProfile?.role, isAdminAuthenticated]);
+
+  // =========================================================================
+  // ADMIN REAL-TIME FIRESTORE + FIREBASE AUTH RECONCILIATION
+  // =========================================================================
+  const [isSyncingAdminData, setIsSyncingAdminData] = useState(false);
+  const [lastAdminSyncAt, setLastAdminSyncAt] = useState<string | null>(null);
+  const [adminSyncWarnings, setAdminSyncWarnings] = useState<string[]>([]);
+  const deliveriesRef = React.useRef(deliveries);
+  useEffect(() => {
+    deliveriesRef.current = deliveries;
+  }, [deliveries]);
+
+  const mapPriorityMissionToOrder = (data: any, docId: string): DeliveryOrder => {
+    const id = data.orderId || data.id || (docId.startsWith('LL-') ? `#${docId}` : docId);
+    return mapFirestoreDeliveryToOrder(
+      {
+        ...data,
+        id,
+        deliveryFee: typeof data.fee === 'number' ? data.fee : (data.deliveryFee ?? 0),
+        itemValueCOD: typeof data.cod === 'number' ? data.cod : (data.itemValueCOD ?? 0),
+        merchantStoreName: data.storeName || data.merchantStoreName,
+        pickupLocation: data.pickupLocation || {
+          name: data.storeName || 'Boutique Vendeur',
+          address: `${data.pickupCommune || 'Cotonou'}, Bénin`,
+          commune: data.pickupCommune || 'Cotonou',
+        },
+        dropoffLocation: data.dropoffLocation || {
+          name: 'Client',
+          address: `${data.dropoffCommune || 'Cotonou'}, Bénin`,
+          commune: data.dropoffCommune || 'Cotonou',
+        },
+      },
+      docId
+    );
+  };
+
+  const applyRemoteAdminSnapshot = (
+    remoteUsers: FirestoreUserRecord[],
+    remoteDeliveries?: DeliveryOrder[],
+    remoteKyc?: KYCUserRequest[]
+  ) => {
+    let activeDeliveries = deliveriesRef.current;
+    if (Array.isArray(remoteDeliveries) && remoteDeliveries.length > 0) {
+      setDeliveries((prev) => {
+        const byNormId = new Map<string, DeliveryOrder>();
+        prev.forEach((d) => byNormId.set(d.id.replace(/^#/, ''), d));
+        remoteDeliveries.forEach((rd) => {
+          const norm = rd.id.replace(/^#/, '');
+          const existingOrd = byNormId.get(norm);
+          byNormId.set(norm, existingOrd ? { ...existingOrd, ...rd } : rd);
+        });
+        const nextList = Array.from(byNormId.values());
+        activeDeliveries = nextList;
+        return nextList;
+      });
+    }
+
+    if (Array.isArray(remoteKyc) && remoteKyc.length > 0) {
+      setKycRequests((prev) => {
+        const byId = new Map<string, KYCUserRequest>();
+        prev.forEach((k) => byId.set(k.id, k));
+        remoteKyc.forEach((rk) => byId.set(rk.id, { ...(byId.get(rk.id) || {}), ...rk }));
+        return Array.from(byId.values());
+      });
+    }
+
+    if (Array.isArray(remoteUsers) && remoteUsers.length > 0) {
+      setMerchants((prevMerchants) => {
+        const { merchants: nextMerchants } = mergeRemoteUsersIntoAdminLists({
+          remoteUsers,
+          existingMerchants: prevMerchants,
+          existingCouriers: [],
+          deliveries: activeDeliveries,
+        });
+        return nextMerchants;
+      });
+      setCouriers((prevCouriers) => {
+        const { couriers: nextCouriers } = mergeRemoteUsersIntoAdminLists({
+          remoteUsers,
+          existingMerchants: [],
+          existingCouriers: prevCouriers,
+          deliveries: activeDeliveries,
+        });
+        return nextCouriers;
+      });
+    } else {
+      setMerchants((prev) => enrichMerchantsWithDeliveries(prev, activeDeliveries));
+    }
+  };
+
+  const refreshAdminData = async (silent = false) => {
+    if (!isAdminAuthenticated) return;
+    setIsSyncingAdminData(true);
+    const collectedWarnings: string[] = [];
+
+    try {
+      const mergedUsersById = new Map<string, FirestoreUserRecord>();
+      const mergedDeliveriesByNormId = new Map<string, DeliveryOrder>();
+      const mergedKycById = new Map<string, KYCUserRequest>();
+      let hasAnyRemoteSource = false;
+
+      // 1. Query backend Admin SDK endpoint
+      const headers: Record<string, string> = {};
+      if (auth.currentUser) {
+        try {
+          const token = await auth.currentUser.getIdToken();
+          headers.Authorization = `Bearer ${token}`;
+        } catch {}
+      }
+      try {
+        const res = await fetch('/api/admin/sync-overview', { headers });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data?.success) {
+          hasAnyRemoteSource = true;
+          if (Array.isArray(data.users)) {
+            for (const u of data.users) {
+              const key = (u?.uid || u?.id || u?.email || '').toString();
+              if (key) mergedUsersById.set(key, u);
+            }
+          }
+          if (Array.isArray(data.deliveries)) {
+            for (const d of data.deliveries) {
+              const mapped = mapFirestoreDeliveryToOrder(d, d.id || '');
+              if (mapped.id) mergedDeliveriesByNormId.set(mapped.id.replace(/^#/, ''), mapped);
+            }
+          }
+          if (Array.isArray(data.priorityMissions)) {
+            for (const pm of data.priorityMissions) {
+              const mapped = mapPriorityMissionToOrder(pm, pm.id || '');
+              const norm = mapped.id.replace(/^#/, '');
+              if (norm && !mergedDeliveriesByNormId.has(norm)) {
+                mergedDeliveriesByNormId.set(norm, mapped);
+              }
+            }
+          }
+          if (Array.isArray(data.kycRequests)) {
+            for (const k of data.kycRequests) {
+              const mapped = mapFirestoreKycToRequest(k, k.id || '');
+              if (mapped.id) mergedKycById.set(mapped.id, mapped);
+            }
+          }
+          if (Array.isArray(data.warnings) && data.warnings.length > 0) {
+            collectedWarnings.push(...data.warnings);
+          }
+          if (data.iamDiagnostics?.hasPermissionError) {
+            collectedWarnings.push(
+              `IAM Backend (${data.iamDiagnostics.targetProjectId}/${data.iamDiagnostics.databaseId}): droits requis (${(data.iamDiagnostics.missingRoles || []).join(', ')}). Synchronisation directe via SDK Client active.`
+            );
+          }
+        } else if (!res.ok) {
+          collectedWarnings.push(`API Admin Sync HTTP ${res.status}: ${data?.error || 'Accès serveur indisponible'}`);
+        }
+      } catch (apiErr: any) {
+        collectedWarnings.push(`API Admin Sync inaccessible: ${apiErr?.message || 'Erreur réseau'}`);
+      }
+
+      // 2. Query Firestore directly via authenticated Client SDK
+      if (auth.currentUser) {
+        try {
+          const [usersRes, deliveriesRes, missionsRes, kycRes] = await Promise.allSettled([
+            getDocs(collection(db, 'users')),
+            getDocs(collection(db, 'deliveries')),
+            getDocs(collection(db, 'priority_missions')),
+            getDocs(collection(db, 'kyc')),
+          ]);
+
+          if (usersRes.status === 'fulfilled') {
+            hasAnyRemoteSource = true;
+            usersRes.value.docs.forEach((docSnap) => {
+              const data = docSnap.data() as any;
+              const rec: FirestoreUserRecord = { id: docSnap.id, uid: data.uid || docSnap.id, ...data };
+              const key = rec.uid || rec.id || '';
+              if (key) mergedUsersById.set(key, rec);
+            });
+          } else {
+            collectedWarnings.push(`Firestore Client users: ${usersRes.reason?.message || 'Accès refusé'}`);
+          }
+
+          if (deliveriesRes.status === 'fulfilled') {
+            hasAnyRemoteSource = true;
+            deliveriesRes.value.docs.forEach((docSnap) => {
+              const mapped = mapFirestoreDeliveryToOrder(docSnap.data(), docSnap.id);
+              if (mapped.id) mergedDeliveriesByNormId.set(mapped.id.replace(/^#/, ''), mapped);
+            });
+          } else {
+            collectedWarnings.push(`Firestore Client deliveries: ${deliveriesRes.reason?.message || 'Accès refusé'}`);
+          }
+
+          if (missionsRes.status === 'fulfilled') {
+            hasAnyRemoteSource = true;
+            missionsRes.value.docs.forEach((docSnap) => {
+              const mapped = mapPriorityMissionToOrder(docSnap.data(), docSnap.id);
+              const norm = mapped.id.replace(/^#/, '');
+              if (norm && !mergedDeliveriesByNormId.has(norm)) {
+                mergedDeliveriesByNormId.set(norm, mapped);
+              }
+            });
+          } else {
+            collectedWarnings.push(`Firestore Client priority_missions: ${missionsRes.reason?.message || 'Accès refusé'}`);
+          }
+
+          if (kycRes.status === 'fulfilled') {
+            hasAnyRemoteSource = true;
+            kycRes.value.docs.forEach((docSnap) => {
+              const mapped = mapFirestoreKycToRequest(docSnap.data(), docSnap.id);
+              if (mapped.id) mergedKycById.set(mapped.id, mapped);
+            });
+          } else {
+            collectedWarnings.push(`Firestore Client kyc: ${kycRes.reason?.message || 'Accès refusé'}`);
+          }
+        } catch (fsErr: any) {
+          collectedWarnings.push(`Erreur Client Firestore: ${fsErr?.message || fsErr}`);
+        }
+      }
+
+      setAdminSyncWarnings(collectedWarnings);
+
+      const finalUsers = Array.from(mergedUsersById.values());
+      const finalDeliveries = Array.from(mergedDeliveriesByNormId.values());
+      const finalKyc = Array.from(mergedKycById.values());
+
+      if (hasAnyRemoteSource) {
+        applyRemoteAdminSnapshot(
+          finalUsers,
+          finalDeliveries.length > 0 ? finalDeliveries : undefined,
+          finalKyc.length > 0 ? finalKyc : undefined
+        );
+        setLastAdminSyncAt(new Date().toISOString());
+        if (!silent) {
+          showToast(
+            `Synchronisation terminée : ${finalUsers.length} compte(s) et ${finalDeliveries.length} course(s) chargés.`,
+            'success'
+          );
+        }
+      } else if (!silent) {
+        showToast('Connectez-vous avec le compte Super-Admin vérifié pour synchroniser Firestore.', 'error');
+      }
+    } catch (err: any) {
+      setAdminSyncWarnings([err?.message || 'Erreur inattendue de synchronisation']);
+      if (!silent) {
+        showToast('Synchronisation distante indisponible pour le moment.', 'error');
+      }
+    } finally {
+      setIsSyncingAdminData(false);
+    }
+  };
+
+  // Real-time Firestore subscriptions for Admin Console (users, deliveries, priority_missions, kyc)
+  useEffect(() => {
+    if (!isAdminAuthenticated || !firebaseUser) return;
+
+    refreshAdminData(true);
+
+    const unsubscribers: Array<() => void> = [];
+    const appendSyncWarning = (label: string, err: any) => {
+      const msg = `${label}: ${err?.message || err}`;
+      setAdminSyncWarnings((prev) => (prev.includes(msg) ? prev : [...prev, msg]));
+    };
+
+    try {
+      const unsubUsers = onSnapshot(
+        collection(db, 'users'),
+        (snapshot) => {
+          const remoteUsers: FirestoreUserRecord[] = snapshot.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as any),
+          }));
+          applyRemoteAdminSnapshot(remoteUsers);
+          setLastAdminSyncAt(new Date().toISOString());
+        },
+        (err) => appendSyncWarning('Écouteur Admin users', err)
+      );
+      unsubscribers.push(unsubUsers);
+    } catch {}
+
+    try {
+      const unsubDeliveries = onSnapshot(
+        collection(db, 'deliveries'),
+        (snapshot) => {
+          const remoteDeliveries = snapshot.docs.map((d) => mapFirestoreDeliveryToOrder(d.data(), d.id));
+          applyRemoteAdminSnapshot([], remoteDeliveries);
+        },
+        (err) => appendSyncWarning('Écouteur Admin deliveries', err)
+      );
+      unsubscribers.push(unsubDeliveries);
+    } catch {}
+
+    try {
+      const unsubMissions = onSnapshot(
+        collection(db, 'priority_missions'),
+        (snapshot) => {
+          const remoteMissions = snapshot.docs.map((d) => mapPriorityMissionToOrder(d.data(), d.id));
+          setDeliveries((prev) => {
+            const byNormId = new Map<string, DeliveryOrder>();
+            prev.forEach((d) => byNormId.set(d.id.replace(/^#/, ''), d));
+            remoteMissions.forEach((pm) => {
+              const norm = pm.id.replace(/^#/, '');
+              if (!byNormId.has(norm)) {
+                byNormId.set(norm, pm);
+              }
+            });
+            return Array.from(byNormId.values());
+          });
+        },
+        (err) => appendSyncWarning('Écouteur Admin priority_missions', err)
+      );
+      unsubscribers.push(unsubMissions);
+    } catch {}
+
+    try {
+      const unsubKyc = onSnapshot(
+        collection(db, 'kyc'),
+        (snapshot) => {
+          const remoteKyc = snapshot.docs.map((d) => mapFirestoreKycToRequest(d.data(), d.id));
+          applyRemoteAdminSnapshot([], undefined, remoteKyc);
+        },
+        (err) => appendSyncWarning('Écouteur Admin kyc', err)
+      );
+      unsubscribers.push(unsubKyc);
+    } catch {}
+
+    return () => {
+      unsubscribers.forEach((unsub) => {
+        try {
+          unsub();
+        } catch {}
+      });
+    };
+  }, [isAdminAuthenticated, firebaseUser?.uid]);
+
+  // Keep per-merchant order count & COD volume dynamically accurate when deliveries update
+  useEffect(() => {
+    setMerchants((prev) => {
+      const enriched = enrichMerchantsWithDeliveries(prev, deliveries);
+      const changed = enriched.some(
+        (m, idx) =>
+          m.totalOrders !== prev[idx]?.totalOrders ||
+          m.totalVolumeFCFA !== prev[idx]?.totalVolumeFCFA
+      );
+      return changed ? enriched : prev;
+    });
+  }, [deliveries]);
 
   const simulateNewPriorityMission = async () => {
     const simNum = Math.floor(1000 + Math.random() * 9000);
@@ -1452,27 +1912,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const logout = async () => {
+    const prevRole = currentRole;
+    clearAllSessionCaches();
+    setFirebaseUser(null);
+    setUserProfile(null);
+    setIsAdminSessionUnlocked(false);
+    setIsDirectorModeActive(false);
+    setDirectorTargetName(null);
+    setPriorityMissionAlert(null);
+    setAdminSyncWarnings([]);
+    setDeliveries([]);
+    setCouriers([]);
+    setMerchants([]);
+    setKycRequests([]);
+    setNotifications([]);
+    setChatMessages([]);
+    setSelectedDelivery(null);
+    setMerchantSettings(INITIAL_MERCHANT_SETTINGS);
+    setCourierSettings(INITIAL_COURIER_SETTINGS);
+    setViewHistory([]);
     try {
       await logoutUser();
-      setFirebaseUser(null);
-      setUserProfile(null);
-      setMerchantSettings(INITIAL_MERCHANT_SETTINGS);
-      setCourierSettings(INITIAL_COURIER_SETTINGS);
-      setViewHistory([]);
-      const targetView: AppView = currentRole === 'livreur' ? 'login_livreur' : 'login_vendeur';
-      setCurrentViewState(targetView);
-      showToast('Session déconnectée avec succès.', 'info');
     } catch (err) {
       console.error('Erreur déconnexion:', err);
-      setFirebaseUser(null);
-      setUserProfile(null);
-      setMerchantSettings(INITIAL_MERCHANT_SETTINGS);
-      setCourierSettings(INITIAL_COURIER_SETTINGS);
-      setViewHistory([]);
-      const targetView: AppView = currentRole === 'livreur' ? 'login_livreur' : 'login_vendeur';
-      setCurrentViewState(targetView);
-      showToast('Session déconnectée.', 'info');
     }
+    const targetView: AppView = prevRole === 'livreur' ? 'login_livreur' : 'login_vendeur';
+    setCurrentViewState(targetView);
+    showToast('Session déconnectée avec succès.', 'info');
   };
 
   const createDelivery = (newOrderData: Partial<DeliveryOrder>): DeliveryOrder => {
@@ -1525,7 +1991,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       statusNote: newOrderData.statusNote || (courierObj 
         ? `Assignée à ${courierObj.name}`
         : `Course publiée • Disponible pour tous les livreurs de la zone`),
-      createdAt: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      createdAt: new Date().toISOString(),
       estimatedArrival: 'Dans ~20 min',
       otpCode: newOrderData.otpCode || Math.floor(1000 + Math.random() * 9000).toString(),
       otpGeneratedAt: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
@@ -1559,7 +2025,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setSelectedDelivery(newOrder);
     addAuditLog('system', 'Nouvelle course créée', `Commande ${newId} pour ${clientName} (${newOrder.dropoffLocation.commune})`);
 
-    // Add notification to Notification Center
     addNotification({
       type: 'order_created',
       title: `📦 Nouvelle livraison ${newId} créée`,
@@ -1569,52 +2034,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       roleTarget: 'vendeur'
     });
 
-    // Dispatch automated platform activity email notification
-    sendPlatformNotification({
-      eventType: 'delivery_created',
-      recipientEmail: newOrder.merchantEmail || userProfile?.email || 'Pamphile.gbede@gmail.com',
-      recipientName: newOrder.merchantStoreName || userProfile?.fullName || 'Commerçant',
-      details: {
-        orderId: newOrder.id,
-        pickupName: newOrder.pickupLocation.name,
-        dropoffCommune: newOrder.dropoffLocation.commune,
-        feeFCFA: newOrder.deliveryFee,
-        codFCFA: newOrder.itemValueCOD,
-      },
-    });
+    if (newOrder.merchantEmail || userProfile?.email) {
+      sendPlatformNotification({
+        eventType: 'delivery_created',
+        recipientEmail: newOrder.merchantEmail || userProfile?.email || '',
+        recipientName: newOrder.merchantStoreName || userProfile?.fullName || 'Commerçant',
+        details: {
+          orderId: newOrder.id,
+          pickupName: newOrder.pickupLocation.name,
+          dropoffCommune: newOrder.dropoffLocation.commune,
+          feeFCFA: newOrder.deliveryFee,
+          codFCFA: newOrder.itemValueCOD,
+        },
+      });
+    }
 
-    // Sync to Firestore collections (deliveries & priority_missions)
+    // Sync to Firestore collections (strictly conforming to isValidDelivery & isValidPriorityMission rules)
     const authenticatedMerchantUid = auth.currentUser?.uid || firebaseUser?.uid;
     const cleanDocId = newId.replace(/[^a-zA-Z0-9_-]/g, '');
 
     if (authenticatedMerchantUid) {
+      const firestoreDeliveryPayload: Record<string, any> = {
+        id: newId,
+        orderId: newId,
+        merchantId: authenticatedMerchantUid,
+        merchantEmail: newOrder.merchantEmail || userProfile?.email || '',
+        merchantStoreName: newOrder.merchantStoreName || newOrder.pickupLocation.name || 'Boutique Vendeur',
+        clientName: newOrder.clientName,
+        clientPhone: newOrder.clientPhone,
+        clientNote: newOrder.clientNote || '',
+        channel: newOrder.channel || 'WhatsApp',
+        pickupLocation: newOrder.pickupLocation,
+        dropoffLocation: newOrder.dropoffLocation,
+        itemDescription: newOrder.itemDescription,
+        itemWeightKg: newOrder.itemWeightKg,
+        itemFormat: newOrder.itemFormat,
+        isFragile: newOrder.isFragile,
+        itemValueCOD: newOrder.itemValueCOD,
+        deliveryFee: newOrder.deliveryFee,
+        totalCustomerPayable: newOrder.totalCustomerPayable,
+        status: courierObj && isAdminAuthenticated ? initialStatus : 'en_attente',
+        statusNote: newOrder.statusNote,
+        createdAt: Date.now(),
+        otpCode: newOrder.otpCode,
+      };
+      // Only include courierId/courierName when pre-assigned by admin (rules forbid courierId on non-admin create)
+      if (courierObj?.id && isAdminAuthenticated) {
+        firestoreDeliveryPayload.courierId = courierObj.id;
+        firestoreDeliveryPayload.courierName = courierObj.name;
+      }
+
       try {
-        setDoc(doc(db, 'deliveries', cleanDocId), {
-          id: newId,
-          orderId: newId,
-          merchantId: authenticatedMerchantUid,
-          merchantEmail: newOrder.merchantEmail || userProfile?.email || '',
-          merchantStoreName: newOrder.merchantStoreName || newOrder.pickupLocation.name || 'Boutique Vendeur',
-          clientName: newOrder.clientName,
-          clientPhone: newOrder.clientPhone,
-          clientNote: newOrder.clientNote || '',
-          channel: newOrder.channel || 'WhatsApp',
-          pickupLocation: newOrder.pickupLocation,
-          dropoffLocation: newOrder.dropoffLocation,
-          itemDescription: newOrder.itemDescription,
-          itemWeightKg: newOrder.itemWeightKg,
-          itemFormat: newOrder.itemFormat,
-          isFragile: newOrder.isFragile,
-          itemValueCOD: newOrder.itemValueCOD,
-          deliveryFee: newOrder.deliveryFee,
-          totalCustomerPayable: newOrder.totalCustomerPayable,
-          status: initialStatus,
-          statusNote: newOrder.statusNote,
-          createdAt: Date.now(),
-          otpCode: newOrder.otpCode,
-          courierId: courierObj?.id || null,
-          courierName: courierObj?.name || null,
-        }).catch((err: any) => {
+        setDoc(doc(db, 'deliveries', cleanDocId), firestoreDeliveryPayload).catch((err: any) => {
           console.warn('Erreur synchro deliveries Firestore:', err?.message || err);
         });
       } catch (err: any) {
@@ -1622,7 +2093,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    // Sync to Firestore priority_missions collection so couriers receive real-time notifications
     if (!courierObj || initialStatus === 'en_attente') {
       if (!authenticatedMerchantUid) {
         showToast('Session Firebase Auth non valide. Veuillez vous connecter pour créer une livraison.', 'error');
@@ -1683,10 +2153,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const acceptDelivery = async (orderId: string, customCourier?: Courier) => {
-    // 0. Strict authentication & courier role check: only logged-in couriers can accept missions
     const isCourierLoggedIn =
       (currentRole === 'livreur' || userProfile?.role === 'livreur') &&
-      (firebaseUser != null || userProfile != null);
+      firebaseUser != null &&
+      userProfile != null;
 
     if (!isCourierLoggedIn && !isDirectorModeActive) {
       showToast("🔒 Accès refusé : Vous devez être connecté à un compte livreur actif pour accepter une commande.", "error");
@@ -1694,7 +2164,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
-    // Contrôle KYC obligatoire avant qu'un coursier puisse accepter une course
+    const authenticatedCourierUid = auth.currentUser?.uid || firebaseUser?.uid;
+    if (!authenticatedCourierUid) {
+      showToast('Session Firebase Auth non valide. Veuillez vous connecter pour accepter cette course.', 'error');
+      return;
+    }
+
     const isKycApproved =
       customCourier?.isKycVerified ||
       selectedCourier?.isKycVerified ||
@@ -1717,37 +2192,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
-    // 1. Déterminer l'identité exacte du livreur connecté qui accepte la mission
+    // Resolve courier entity WITHOUT mutating React state until Firestore transaction succeeds
     let courier: Courier;
-
     if (customCourier) {
-      courier = customCourier;
+      courier = { ...customCourier, id: authenticatedCourierUid, status: 'en_course' };
     } else {
-      // Priorité absolue : le compte du livreur connecté ou sélectionné dans l'espace livreur
-      let activeName: string;
-      let activePhone: string;
-      let activeEmail: string;
-      let activeVehicle: string;
-      let activePlate: string;
+      let activeName = 'Coursier LivraLink';
+      let activePhone = courierSettings.phone || '';
+      let activeEmail = courierSettings.email || '';
+      let activeVehicle = courierSettings.vehicleType || 'Moto 125cc';
+      let activePlate = courierSettings.vehiclePlate || '';
 
       if (userProfile && userProfile.role === 'livreur' && userProfile.fullName) {
         activeName = userProfile.fullName;
         activePhone = userProfile.phone || courierSettings.phone || '';
         activeEmail = userProfile.email || courierSettings.email || '';
         activeVehicle = userProfile.vehicleType || courierSettings.vehicleType || 'Moto 125cc';
-        activePlate = courierSettings.vehiclePlate || '';
       } else if (selectedCourier && selectedCourier.name) {
         activeName = selectedCourier.name;
         activePhone = selectedCourier.phone || courierSettings.phone || '';
         activeEmail = selectedCourier.email || courierSettings.email || '';
         activeVehicle = selectedCourier.vehicle || courierSettings.vehicleType || 'Moto 125cc';
         activePlate = selectedCourier.vehiclePlate || courierSettings.vehiclePlate || '';
-      } else {
-        activeName = courierSettings.fullName || 'Coursier LivraLink';
-        activePhone = courierSettings.phone || '';
-        activeEmail = courierSettings.email || '';
-        activeVehicle = courierSettings.vehicleType || 'Moto 125cc';
-        activePlate = courierSettings.vehiclePlate || '';
       }
 
       const initials = activeName
@@ -1756,22 +2222,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         .filter(Boolean)
         .join('')
         .toUpperCase()
-        .substring(0, 2) || 'AV';
+        .substring(0, 2) || 'CR';
 
-      // Chercher s'il existe déjà un profil dans la liste des coursiers
       const match = couriers.find(
         c =>
+          c.id === authenticatedCourierUid ||
           c.name.trim().toLowerCase() === activeName.trim().toLowerCase() ||
-          (userProfile?.uid && c.id === userProfile.uid) ||
-          (c.email && c.email.toLowerCase() === activeEmail.toLowerCase()) ||
-          c.name.toLowerCase().includes(activeName.toLowerCase()) ||
-          activeName.toLowerCase().includes(c.name.toLowerCase())
+          (c.email && activeEmail && c.email.toLowerCase() === activeEmail.toLowerCase())
       );
 
       if (match) {
         courier = {
           ...match,
-          name: activeName, // Toujours garantir le nom exact du compte livreur connecté !
+          id: authenticatedCourierUid,
+          name: activeName,
           phone: activePhone,
           email: activeEmail,
           avatarInitials: initials,
@@ -1780,20 +2244,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       } else {
         courier = {
-          id: userProfile?.uid || `c-${Date.now()}`,
+          id: authenticatedCourierUid,
           name: activeName,
           phone: activePhone,
           email: activeEmail,
           avatarInitials: initials,
           rating: 5.0,
-          totalDeliveries: 385,
+          totalDeliveries: 0,
           vehicle: activeVehicle,
           vehiclePlate: activePlate,
-          zone: courierSettings.parkingBaseAddress || 'Zone Cotonou & Alentours',
+          zone: courierSettings.parkingBaseAddress || 'Cotonou',
           distanceKm: 0.9,
           etaMinutes: 5,
           status: 'en_course',
-          walletBalanceFCFA: 62000,
+          walletBalanceFCFA: 0,
           priceFCFA: 100,
           commissionFCFA: 0,
           netEarningFCFA: 100,
@@ -1804,7 +2268,70 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    // Synchroniser immédiatement le coursier sélectionné, les settings et la liste des coursiers disponibles
+    // 1. Atomic Firestore transaction FIRST (anti-race-condition)
+    const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
+    const missionDocRef = doc(db, 'priority_missions', cleanDocId);
+    const deliveryDocRef = doc(db, 'deliveries', cleanDocId);
+    const safeCourierName = (courier.name || userProfile?.fullName || 'Livreur Partenaire').slice(0, 128);
+    const nowEpoch = Date.now();
+    const nowIso = new Date().toISOString();
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const [missionSnap, deliverySnap] = await Promise.all([
+          transaction.get(missionDocRef),
+          transaction.get(deliveryDocRef),
+        ]);
+
+        if (!missionSnap.exists() && !deliverySnap.exists()) {
+          throw new Error('MISSION_NOT_FOUND');
+        }
+
+        if (deliverySnap.exists()) {
+          const dData = deliverySnap.data();
+          if (dData.status !== 'en_attente' || Boolean(dData.courierId)) {
+            throw new Error('MISSION_ALREADY_ASSIGNED');
+          }
+        }
+
+        if (missionSnap.exists()) {
+          const mData = missionSnap.data();
+          if (mData.status !== 'en_attente' || Boolean(mData.courierId)) {
+            throw new Error('MISSION_ALREADY_ASSIGNED');
+          }
+        }
+
+        if (missionSnap.exists()) {
+          transaction.update(missionDocRef, {
+            status: 'assignee',
+            courierId: authenticatedCourierUid,
+            courierName: safeCourierName,
+            assignedAt: nowEpoch,
+            updatedAt: nowIso,
+          });
+        }
+
+        if (deliverySnap.exists()) {
+          transaction.update(deliveryDocRef, {
+            status: 'assignee',
+            courierId: authenticatedCourierUid,
+            courierName: safeCourierName,
+            assignedAt: nowEpoch,
+            updatedAt: nowEpoch,
+          });
+        }
+      });
+    } catch (err: any) {
+      console.error('Erreur transaction acceptation mission:', err?.message || err);
+      if (err?.message === 'MISSION_ALREADY_ASSIGNED' || err?.message?.includes('ALREADY_ASSIGNED')) {
+        showToast("⚡ Cette mission vient d'être prise par un autre livreur.", 'error');
+        return;
+      }
+      showToast('Impossible de réserver la mission sur le serveur Firestore.', 'error');
+      return;
+    }
+
+    // 2. Commit local state ONLY AFTER atomic transaction succeeds
     setSelectedCourier(courier);
     setCourierSettings(prev => ({
       ...prev,
@@ -1814,16 +2341,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       vehicleType: courier.vehicle || prev.vehicleType,
     }));
     setCouriers(prev => {
-      const exists = prev.some(c => c.name.toLowerCase() === courier.name.toLowerCase() || c.id === courier.id);
-      if (!exists) {
-        return [courier, ...prev];
-      }
-      return prev.map(c => (c.name.toLowerCase() === courier.name.toLowerCase() || c.id === courier.id ? courier : c));
+      const exists = prev.some(c => c.id === courier.id || c.name.toLowerCase() === courier.name.toLowerCase());
+      if (!exists) return [courier, ...prev];
+      return prev.map(c => (c.id === courier.id || c.name.toLowerCase() === courier.name.toLowerCase() ? courier : c));
     });
 
     const nowTime = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-    let updatedDeliveryOrder: DeliveryOrder | null = null;
-
     setDeliveries(prev =>
       prev.map(ord => {
         if (ord.id === orderId) {
@@ -1856,75 +2379,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return step;
           });
 
-          updatedDeliveryOrder = {
+          return {
             ...ord,
             courier,
             status: 'acceptee' as const,
             statusNote: `Course acceptée par le livreur (${courier.name}) • En route vers le point de collecte`,
             timeline: updatedTimeline,
           };
-          return updatedDeliveryOrder;
         }
         return ord;
       })
     );
 
-    // Mettre à jour immédiatement la livraison sélectionnée pour que le compte vendeur et le compte livreur voient instantanément le même coursier
-    // Dismiss active priority mission banner if accepting this mission
     if (priorityMissionAlert && (priorityMissionAlert.orderId === orderId || priorityMissionAlert.id === orderId)) {
       setPriorityMissionAlert(null);
     }
-
-    // Execute atomic transaction on Firestore priority_missions
-    const authenticatedCourierUid = auth.currentUser?.uid || firebaseUser?.uid;
-    if (!authenticatedCourierUid) {
-      showToast('Session Firebase Auth non valide. Veuillez vous connecter pour accepter cette course.', 'error');
-      return;
-    }
-
-    const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
-    const missionDocRef = doc(db, 'priority_missions', cleanDocId);
-
-    try {
-      await runTransaction(db, async (transaction) => {
-        const sfDoc = await transaction.get(missionDocRef);
-        if (sfDoc.exists()) {
-          const missionData = sfDoc.data();
-          if (missionData.status !== 'en_attente') {
-            throw new Error('MISSION_ALREADY_ASSIGNED');
-          }
-          transaction.update(missionDocRef, {
-            status: 'assignee',
-            courierId: authenticatedCourierUid,
-            courierName: courier.name || userProfile?.fullName || 'Livreur Partenaire',
-            assignedAt: Date.now(),
-            updatedAt: new Date().toISOString()
-          });
-        } else {
-          // If priority mission doc does not exist, reject assignment
-          throw new Error('MISSION_NOT_FOUND');
-        }
-      });
-    } catch (err: any) {
-      console.error('Erreur transaction acceptation mission:', err?.message || err);
-      if (err?.message === 'MISSION_ALREADY_ASSIGNED' || err?.message?.includes('ALREADY_ASSIGNED')) {
-        showToast("⚡ Cette mission vient d'être prise par un autre livreur.", 'error');
-        return;
-      }
-      showToast('Erreur lors de la réservation de la mission sur le serveur.', 'error');
-      return;
-    }
-
-    // Sync assignment to deliveries collection in Firestore
-    try {
-      setDoc(doc(db, 'deliveries', cleanDocId), {
-        status: 'assignee',
-        courierId: authenticatedCourierUid,
-        courierName: courier.name || userProfile?.fullName || 'Livreur Partenaire',
-        assignedAt: Date.now(),
-        updatedAt: Date.now()
-      }, { merge: true }).catch((err: any) => console.warn('Erreur synchro deliveries assignee:', err));
-    } catch {}
 
     addAuditLog('system', `Course ${orderId} acceptée`, `Mission prise en charge par le coursier ${courier.name}`);
     addNotification({
@@ -1932,6 +2401,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       title: '🎉 Mission acceptée par le coursier',
       message: `La course ${orderId} a été prise en charge par ${courier.name} (${courier.vehicle}).`,
       orderId,
+      orderDocId: cleanDocId,
       actionView: 'vendeur_tracking'
     });
     showToast(`🎉 Course ${orderId} acceptée avec succès par ${courier.name} ! Vous êtes assigné à cette livraison.`, 'success');
@@ -2060,9 +2530,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updatedAt: Date.now(),
       }, { merge: true }).catch((err: any) => console.warn('Erreur update deliveries status Firestore:', err));
 
-      if (newStatus === 'livree' || newStatus === 'echec') {
+      if (newStatus === 'colis_recupere' || newStatus === 'en_cours' || newStatus === 'livree' || newStatus === 'echec') {
         setDoc(doc(db, 'priority_missions', cleanDocId), {
-          status: newStatus === 'livree' ? 'terminee' : 'echec',
+          status: newStatus,
           updatedAt: new Date().toISOString()
         }, { merge: true }).catch((err: any) => console.warn('Erreur priority_missions update status:', err));
       }
@@ -2278,7 +2748,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }, { merge: true });
 
           await setDoc(doc(db, 'priority_missions', cleanDocId), {
-            status: 'terminee',
+            status: 'livree',
             completedAt: Date.now(),
             updatedAt: new Date().toISOString(),
           }, { merge: true });
@@ -2399,64 +2869,78 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }).catch(err => console.warn('Notice email dépôt KYC:', err));
 
     // Synchronisation Firebase Storage (document CNI/CIP) et Firestore (dossier KYC)
-    const courierDocId = newReq.courierId || auth.currentUser?.uid || 'temp_user';
+    const courierDocId = newReq.courierId || auth.currentUser?.uid || '';
     const cleanCourierId = courierDocId.replace(/[^a-zA-Z0-9_-]/g, '');
 
-    (async () => {
-      let docUrl = newReq.documentPhotoUrl;
-      if (docUrl && (docUrl.startsWith('data:') || docUrl.startsWith('blob:'))) {
-        try {
-          docUrl = await uploadKYCDocument(cleanCourierId, 'cni', docUrl);
-        } catch (err) {
-          console.warn('Fallback upload document KYC vers Firebase Storage:', err);
+    if (cleanCourierId) {
+      (async () => {
+        let docUrl = newReq.documentPhotoUrl;
+        if (docUrl && (docUrl.startsWith('data:') || docUrl.startsWith('blob:'))) {
+          try {
+            docUrl = await uploadKYCDocument(cleanCourierId, 'cni', docUrl);
+          } catch (err) {
+            console.warn('Fallback upload document KYC vers Firebase Storage:', err);
+          }
         }
-      }
 
-      try {
-        await setDoc(doc(db, 'kyc', cleanCourierId), {
+        const kycPayload: Record<string, any> = {
+          id: cleanCourierId,
+          userId: cleanCourierId,
           courierId: cleanCourierId,
           fullName: newReq.fullName,
           phone: newReq.phone,
+          email: userProfile?.email || courierSettings.email || '',
           role: 'coursier',
           vehicleType: newReq.vehicleType,
           vehiclePlate: newReq.vehiclePlate,
           idType: newReq.idType,
           idNumber: newReq.idNumber,
-          ifuNumber: newReq.ifuNumber || null,
-          npi: newReq.npi || null,
           operatingZone: newReq.operatingZone,
-          documentPhotoUrl: docUrl || null,
           status: 'en_attente',
           isApproved: false,
           verified: false,
           submittedAt: Date.now(),
           createdAt: Date.now(),
-        }, { merge: true });
-      } catch (fsErr) {
-        console.warn('Erreur enregistrement KYC dans Firestore:', fsErr);
-      }
-    })();
+        };
+        if (newReq.ifuNumber) kycPayload.ifuNumber = newReq.ifuNumber;
+        if (newReq.npi) kycPayload.npi = newReq.npi;
+        if (docUrl) kycPayload.documentPhotoUrl = docUrl;
+
+        try {
+          await setDoc(doc(db, 'kyc', cleanCourierId), kycPayload, { merge: true });
+          await setDoc(
+            doc(db, 'users', cleanCourierId),
+            { kycStatus: 'en_attente', kycSubmittedAt: new Date().toISOString() },
+            { merge: true }
+          );
+        } catch (fsErr) {
+          console.warn('Erreur enregistrement KYC dans Firestore:', fsErr);
+        }
+      })();
+    }
 
     showToast(`Dossier KYC transmis avec succès ! En attente de validation administrative.`, 'success');
     return newReq;
   };
 
   const approveKYC = (requestId: string) => {
-    let approvedCourierName = '';
-    let approvedCourierId = '';
+    if (!isAdminAuthenticated) {
+      showToast('Action réservée au Super-Admin authentifié.', 'error');
+      return;
+    }
+
+    const targetReq = kycRequests.find(r => r.id === requestId);
+    const approvedCourierName = targetReq?.fullName || '';
+    const approvedCourierId = targetReq?.courierId || '';
+    const matchedCourier = couriers.find(
+      c => c.id === approvedCourierId || (approvedCourierName && c.name.toLowerCase() === approvedCourierName.toLowerCase())
+    );
+    const targetEmail = targetReq?.email || matchedCourier?.email || '';
 
     setKycRequests(prev =>
-      prev.map(req => {
-        if (req.id === requestId) {
-          approvedCourierName = req.fullName;
-          approvedCourierId = req.courierId || '';
-          return { ...req, status: 'valide' as const };
-        }
-        return req;
-      })
+      prev.map(req => (req.id === requestId ? { ...req, status: 'valide' as const } : req))
     );
 
-    // Update couriers list
     setCouriers(prev =>
       prev.map(c => {
         if (
@@ -2469,7 +2953,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
-    // Update selectedCourier if matched
     setSelectedCourier(prev => {
       if (
         prev.id === approvedCourierId ||
@@ -2480,7 +2963,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return prev;
     });
 
-    // Update current courierSettings and userProfile if matched
     if (
       userProfile &&
       (userProfile.uid === approvedCourierId ||
@@ -2490,7 +2972,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCourierSettings(prev => ({ ...prev, isKycVerified: true, kycStatus: 'valide' }));
     }
 
-    // Persist KYC validation to Firestore
     if (approvedCourierId) {
       const cleanId = approvedCourierId.replace(/[^a-zA-Z0-9_-]/g, '');
       try {
@@ -2501,6 +2982,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           reviewedAt: Date.now(),
           reviewedBy: auth.currentUser?.uid || 'admin'
         }, { merge: true }).catch(err => console.warn('Erreur Firestore approveKYC:', err));
+
+        setDoc(doc(db, 'users', cleanId), {
+          isKycVerified: true,
+          kycStatus: 'valide',
+          updatedAt: new Date().toISOString(),
+        }, { merge: true }).catch(err => console.warn('Erreur Firestore users approveKYC:', err));
       } catch (err) {
         console.warn('Erreur Firestore approveKYC:', err);
       }
@@ -2509,38 +2996,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addAuditLog('kyc', 'Validation KYC', `Dossier ${requestId} approuvé par l'administrateur (${approvedCourierName})`);
     addNotification({
       type: 'kyc',
+      recipientId: approvedCourierId || undefined,
       title: '🎉 Accréditation KYC validée !',
       message: `Votre dossier d'accréditation a été validé avec succès. Vous pouvez maintenant passer en ligne et démarrer vos livraisons.`,
       actionView: 'livreur_dashboard',
     });
 
-    // Envoi de l'email de confirmation d'activation KYC
-    const targetReq = kycRequests.find(r => r.id === requestId);
-    const targetEmail = userProfile?.email || courierSettings.email || 'Pamphile.gbede@gmail.com';
-    sendKycConfirmationEmail({
-      email: targetEmail,
-      fullName: approvedCourierName || targetReq?.fullName || 'Utilisateur LivraLink',
-      role: 'livreur',
-      status: 'approved',
-    }).catch(err => console.warn('Notice email validation KYC:', err));
+    if (targetEmail) {
+      sendKycConfirmationEmail({
+        email: targetEmail,
+        fullName: approvedCourierName || 'Utilisateur LivraLink',
+        role: 'livreur',
+        status: 'approved',
+      }).catch(err => console.warn('Notice email validation KYC:', err));
+    }
 
     showToast(`Dossier KYC (${approvedCourierName || requestId}) approuvé avec succès !`, 'success');
   };
 
   const rejectKYC = (requestId: string, reason?: string) => {
+    if (!isAdminAuthenticated) {
+      showToast('Action réservée au Super-Admin authentifié.', 'error');
+      return;
+    }
+
     const rejectionReason = reason || 'Documents d\'identité non conformes ou illisibles.';
-    let targetCourierName = '';
-    let targetCourierId = '';
+    const targetReq = kycRequests.find(r => r.id === requestId);
+    const targetCourierName = targetReq?.fullName || '';
+    const targetCourierId = targetReq?.courierId || '';
+    const matchedCourier = couriers.find(
+      c => c.id === targetCourierId || (targetCourierName && c.name.toLowerCase() === targetCourierName.toLowerCase())
+    );
+    const targetEmail = targetReq?.email || matchedCourier?.email || '';
 
     setKycRequests(prev =>
-      prev.map(req => {
-        if (req.id === requestId) {
-          targetCourierName = req.fullName;
-          targetCourierId = req.courierId || '';
-          return { ...req, status: 'refuse' as const, rejectionReason };
-        }
-        return req;
-      })
+      prev.map(req => (req.id === requestId ? { ...req, status: 'refuse' as const, rejectionReason } : req))
     );
 
     setCouriers(prev =>
@@ -2555,7 +3045,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
-    // Persist KYC rejection to Firestore
     if (targetCourierId) {
       const cleanId = targetCourierId.replace(/[^a-zA-Z0-9_-]/g, '');
       try {
@@ -2567,6 +3056,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           reviewedAt: Date.now(),
           reviewedBy: auth.currentUser?.uid || 'admin'
         }, { merge: true }).catch(err => console.warn('Erreur Firestore rejectKYC:', err));
+
+        setDoc(doc(db, 'users', cleanId), {
+          isKycVerified: false,
+          kycStatus: 'refuse',
+          kycRejectionReason: rejectionReason,
+          updatedAt: new Date().toISOString(),
+        }, { merge: true }).catch(err => console.warn('Erreur Firestore users rejectKYC:', err));
       } catch (err) {
         console.warn('Erreur Firestore rejectKYC:', err);
       }
@@ -2575,21 +3071,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addAuditLog('kyc', 'Rejet KYC', `Dossier ${requestId} rejeté : ${rejectionReason}`);
     addNotification({
       type: 'kyc',
+      recipientId: targetCourierId || undefined,
       title: '❌ Dossier KYC non validé',
       message: `Votre dossier KYC a été rejeté. Motif : ${rejectionReason}. Veuillez re-soumettre vos documents.`,
       actionView: 'livreur_dashboard',
     });
 
-    // Envoi de l'email de notification de rejet KYC
-    const targetReq = kycRequests.find(r => r.id === requestId);
-    const targetEmail = userProfile?.email || courierSettings.email || 'Pamphile.gbede@gmail.com';
-    sendKycConfirmationEmail({
-      email: targetEmail,
-      fullName: targetCourierName || targetReq?.fullName || 'Utilisateur LivraLink',
-      role: 'livreur',
-      status: 'rejected',
-      reason: rejectionReason,
-    }).catch(err => console.warn('Notice email rejet KYC:', err));
+    if (targetEmail) {
+      sendKycConfirmationEmail({
+        email: targetEmail,
+        fullName: targetCourierName || 'Utilisateur LivraLink',
+        role: 'livreur',
+        status: 'rejected',
+        reason: rejectionReason,
+      }).catch(err => console.warn('Notice email rejet KYC:', err));
+    }
 
     showToast(`Dossier KYC rejeté : ${rejectionReason}`, 'error');
   };
@@ -2726,18 +3222,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateCourier = (id: string, updates: Partial<Courier>) => {
+    if (!isAdminAuthenticated) return;
     setCouriers(prev =>
       prev.map(c => c.id === id ? { ...c, ...updates } : c)
     );
+    if (auth.currentUser && !id.startsWith('c-')) {
+      const firestoreUpdates: Record<string, any> = { updatedAt: new Date().toISOString() };
+      if (updates.name !== undefined) firestoreUpdates.fullName = updates.name;
+      if (updates.phone !== undefined) firestoreUpdates.phone = updates.phone;
+      if (updates.email !== undefined) firestoreUpdates.email = updates.email;
+      if (updates.vehicle !== undefined) firestoreUpdates.vehicleType = updates.vehicle;
+      if (updates.status !== undefined) firestoreUpdates.status = updates.status;
+      if (updates.isKycVerified !== undefined) firestoreUpdates.isKycVerified = updates.isKycVerified;
+      setDoc(doc(db, 'users', id), firestoreUpdates, { merge: true }).catch(() => {});
+    }
     addAuditLog('system', 'Livreur modifié', `Mise à jour des informations pour le coursier #${id}`);
     showToast(`Informations du coursier mises à jour !`, 'success');
   };
 
   const toggleCourierStatus = (id: string) => {
+    if (!isAdminAuthenticated) return;
     setCouriers(prev =>
       prev.map(c => {
         if (c.id === id) {
           const newStatus = c.status === 'suspendu' ? 'en_ligne' : 'suspendu';
+          if (auth.currentUser && !id.startsWith('c-')) {
+            setDoc(doc(db, 'users', id), { status: newStatus, updatedAt: new Date().toISOString() }, { merge: true }).catch(() => {});
+          }
           addAuditLog('system', `Statut coursier #${id}`, `Statut passé à: ${newStatus}`);
           showToast(`Coursier ${c.name} est maintenant : ${newStatus.toUpperCase()}`, newStatus === 'suspendu' ? 'error' : 'success');
           return { ...c, status: newStatus };
@@ -2749,6 +3260,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // --- Admin Delivery Management (Supervision) ---
   const deleteDelivery = (orderId: string) => {
+    if (!isAdminAuthenticated) return;
     setDeliveries(prev => prev.filter(d => d.id !== orderId));
     if (selectedDelivery?.id === orderId) {
       setSelectedDelivery(null);
@@ -2800,18 +3312,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           addAuditLog('system', `Portefeuille #${id} : ${opLabel}`, note || `Ajustement admin (${type})`);
           showToast(`Portefeuille de ${c.name} : ${opLabel}`, 'success');
 
-          // Dispatch automated platform activity email notification
-          const targetEmail = c.email || userProfile?.email || 'Pamphile.gbede@gmail.com';
-          sendPlatformNotification({
-            eventType: 'wallet_transaction',
-            recipientEmail: targetEmail,
-            recipientName: c.name,
-            details: {
-              transactionType: type,
-              amountFCFA: delta,
-              newBalanceFCFA: newBal,
-            },
-          });
+          const targetEmail = c.email || '';
+          if (targetEmail) {
+            sendPlatformNotification({
+              eventType: 'wallet_transaction',
+              recipientEmail: targetEmail,
+              recipientName: c.name,
+              details: {
+                transactionType: type,
+                amountFCFA: delta,
+                newBalanceFCFA: newBal,
+              },
+            });
+          }
 
           return { ...c, walletBalanceFCFA: newBal };
         }
@@ -2821,6 +3334,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteCourier = (id: string) => {
+    if (!isAdminAuthenticated) return;
     setCouriers(prev => {
       const remaining = prev.filter(c => c.id !== id);
       if (selectedCourier.id === id && remaining.length > 0) {
@@ -2828,6 +3342,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return remaining;
     });
+    if (auth.currentUser && !id.startsWith('c-')) {
+      deleteDoc(doc(db, 'users', id)).catch(() => {});
+    }
     addAuditLog('system', `Livreur supprimé #${id}`, `Compte coursier retiré de la flotte`);
     showToast(`Livreur retiré de la flotte avec succès.`, 'info');
   };
@@ -2859,24 +3376,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateMerchant = (id: string, updates: Partial<Merchant>) => {
+    if (!isAdminAuthenticated) return;
     setMerchants(prev =>
       prev.map(m => m.id === id ? { ...m, ...updates } : m)
     );
+    if (auth.currentUser && !id.startsWith('m-')) {
+      const firestoreUpdates: Record<string, any> = { updatedAt: new Date().toISOString() };
+      if (updates.storeName !== undefined) firestoreUpdates.storeName = updates.storeName;
+      if (updates.managerName !== undefined) firestoreUpdates.fullName = updates.managerName;
+      if (updates.phone !== undefined) firestoreUpdates.phone = updates.phone;
+      if (updates.email !== undefined) firestoreUpdates.email = updates.email;
+      if (updates.commune !== undefined) firestoreUpdates.storeCommune = updates.commune;
+      if (updates.address !== undefined) firestoreUpdates.storeAddress = updates.address;
+      if (updates.status !== undefined) firestoreUpdates.status = updates.status;
+      if (updates.isVerified !== undefined) firestoreUpdates.isKycVerified = updates.isVerified;
+      setDoc(doc(db, 'users', id), firestoreUpdates, { merge: true }).catch(() => {});
+    }
     addAuditLog('system', 'Marchand modifié', `Mise à jour des coordonnées boutique #${id}`);
     showToast(`Boutique mise à jour !`, 'success');
   };
 
   const deleteMerchant = (id: string) => {
+    if (!isAdminAuthenticated) return;
     setMerchants(prev => prev.filter(m => m.id !== id));
+    if (auth.currentUser && !id.startsWith('m-')) {
+      deleteDoc(doc(db, 'users', id)).catch(() => {});
+    }
     addAuditLog('system', `Boutique supprimée #${id}`, `Boutique marchande retirée du réseau`);
     showToast(`Boutique supprimée avec succès.`, 'info');
   };
 
   const toggleMerchantStatus = (id: string) => {
+    if (!isAdminAuthenticated) return;
     setMerchants(prev =>
       prev.map(m => {
         if (m.id === id) {
           const newStatus = m.status === 'suspendu' ? 'actif' : 'suspendu';
+          if (auth.currentUser && !id.startsWith('m-')) {
+            setDoc(doc(db, 'users', id), { status: newStatus, updatedAt: new Date().toISOString() }, { merge: true }).catch(() => {});
+          }
           addAuditLog('system', `Statut boutique #${id}`, `Statut passé à : ${newStatus}`);
           showToast(`Boutique ${m.storeName} : ${newStatus.toUpperCase()}`, newStatus === 'suspendu' ? 'error' : 'success');
           return { ...m, status: newStatus };
@@ -2887,10 +3425,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const toggleMerchantVerification = (id: string) => {
+    if (!isAdminAuthenticated) return;
     setMerchants(prev =>
       prev.map(m => {
         if (m.id === id) {
           const next = !m.isVerified;
+          if (auth.currentUser && !id.startsWith('m-')) {
+            setDoc(doc(db, 'users', id), { isKycVerified: next, kycStatus: next ? 'valide' : 'non_soumis', updatedAt: new Date().toISOString() }, { merge: true }).catch(() => {});
+          }
           addAuditLog('system', `Badge vérifié boutique #${id}`, next ? 'Badge accordé' : 'Badge révoqué');
           showToast(next ? `Badge vérifié accordé à ${m.storeName}` : `Badge révoqué pour ${m.storeName}`, 'info');
           return { ...m, isVerified: next };
@@ -3262,7 +3804,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     targetEmail?: string;
     sendEmailCopy?: boolean;
   }) => {
+    if (!auth.currentUser) {
+      showToast('Authentification Super-Admin Firebase requise.', 'error');
+      return { success: false, message: 'Non authentifié' };
+    }
     try {
+      const token = await auth.currentUser.getIdToken();
       const payload = {
         targetCategory: params.targetCategory || params.audience || 'all',
         targetUserEmail: params.targetUserEmail || params.targetEmail,
@@ -3274,7 +3821,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-admin-email': userProfile?.email || 'Pamphile.gbede@gmail.com',
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(payload),
       });
@@ -3283,8 +3830,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         showToast(data.message || 'Diffusion enregistrée avec succès !', 'success');
         return { success: true, recipientCount: data.recipientCount, message: data.message };
       } else {
-        showToast(data.message || 'Erreur lors de la diffusion.', 'error');
-        return { success: false, message: data.message };
+        showToast(data.message || data.error || 'Erreur lors de la diffusion.', 'error');
+        return { success: false, message: data.message || data.error };
       }
     } catch (err: any) {
       showToast('Impossible de contacter le serveur de diffusion.', 'error');
@@ -3379,6 +3926,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         closeTestModal,
         adminActiveTab,
         setAdminActiveTab,
+        courierMissionsFilter,
+        setCourierMissionsFilter,
+        adminSyncWarnings,
         sendAdminBroadcast,
         authorizedAdminEmails,
         isEmailAuthorizedAdmin,
@@ -3389,6 +3939,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         adminLogout,
         verifyAdminPassword,
         changeAdminPassword,
+        isSyncingAdminData,
+        lastAdminSyncAt,
+        refreshAdminData,
         themeMode,
         setThemeMode,
         isDarkMode,

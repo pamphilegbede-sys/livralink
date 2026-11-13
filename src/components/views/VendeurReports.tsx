@@ -3,12 +3,10 @@ import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
-import { BackButton } from '../common/BackButton';
 
 export const VendeurReports: React.FC = () => {
   const { 
     deliveries, 
-    setCurrentView, 
     showToast,
     userProfile,
     merchantSettings,
@@ -170,8 +168,8 @@ export const VendeurReports: React.FC = () => {
                 {totalCODCollected.toLocaleString('fr-FR')} <span className="text-xs font-bold text-slate-400">FCFA</span>
               </div>
               <div className="flex items-center gap-1 text-xs text-emerald-600 font-bold">
-                <span className="material-symbols-outlined text-sm">trending_up</span>
-                <span>+18.4% vs période préc.</span>
+                <span className="material-symbols-outlined text-sm">verified</span>
+                <span>{deliveredOrders} commande{deliveredOrders > 1 ? 's' : ''} livrée{deliveredOrders > 1 ? 's' : ''}</span>
               </div>
             </div>
 
@@ -203,7 +201,7 @@ export const VendeurReports: React.FC = () => {
                 {totalOrders}
               </div>
               <p className="text-[11px] text-indigo-600 font-semibold">
-                Délai moyen : 38 min / course
+                {Math.max(0, totalOrders - deliveredOrders)} en cours / attente · {deliveredOrders} livrée{deliveredOrders > 1 ? 's' : ''}
               </p>
             </div>
 

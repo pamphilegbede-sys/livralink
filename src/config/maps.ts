@@ -1163,3 +1163,45 @@ export async function detectUserGeolocation(): Promise<DetectedUserLocation> {
   });
 }
 
+export type DeliveryTravelMode = 'DRIVING' | 'TWO_WHEELER';
+
+export interface RouteEstimationResult {
+  distanceKm: number;
+  durationMinutes: number;
+  durationText: string;
+  source: 'google_routes' | 'fallback';
+  travelMode: DeliveryTravelMode;
+}
+
+/**
+ * Formate une durée en minutes en libellé français lisible (ex: "18 min", "1 h 12 min").
+ */
+export function formatTravelDuration(durationMinutes: number): string {
+  if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+    return '--';
+  }
+  const mins = Math.max(1, Math.round(durationMinutes));
+  if (mins < 60) {
+    return `${mins} min`;
+  }
+  const hours = Math.floor(mins / 60);
+  const rem = mins % 60;
+  return rem === 0 ? `${hours} h` : `${hours} h ${String(rem).padStart(2, '0')} min`;
+}
+
+/**
+ * Estimation de secours du temps de trajet (en minutes) basée sur la distance routière
+ * lorsque l'API Google Maps Routes n'a pas encore répondu ou est indisponible.
+ */
+export function estimateFallbackDurationMinutes(
+  distanceKm: number,
+  travelMode: DeliveryTravelMode = 'DRIVING'
+): number {
+  if (!Number.isFinite(distanceKm) || distanceKm <= 0) {
+    return 5;
+  }
+  // Vitesse urbaine moyenne au Bénin : ~26 km/h en deux-roues, ~22 km/h en voiture + marge prise en charge
+  const avgSpeedKmh = travelMode === 'TWO_WHEELER' ? 26 : 22;
+  const bufferMinutes = travelMode === 'TWO_WHEELER' ? 3 : 4;
+  return Math.max(4, Math.round((distanceKm / avgSpeedKmh) * 60 + bufferMinutes));
+}

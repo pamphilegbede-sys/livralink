@@ -220,6 +220,7 @@ const uptimeTracker: UptimeHealthTracker = {
 // Initialize Firebase Admin SDK
 let firebaseAdminApp: App | null = null;
 let firestoreAdmin: Firestore | null = null;
+let configuredDatabaseId = process.env.FIRESTORE_DATABASE_ID || '(default)';
 
 try {
   let projectId = process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT || 'gen-lang-client-0654978401';
@@ -228,6 +229,7 @@ try {
     try {
       const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       if (cfg.projectId) projectId = cfg.projectId;
+      if (cfg.firestoreDatabaseId) configuredDatabaseId = cfg.firestoreDatabaseId;
     } catch {}
   }
 
@@ -242,8 +244,11 @@ try {
   }
 
   if (firebaseAdminApp) {
-    firestoreAdmin = getFirestore(firebaseAdminApp);
-    console.log('[FIREBASE-ADMIN] Firestore Admin DB disponible pour historisation centralisée.');
+    firestoreAdmin =
+      configuredDatabaseId && configuredDatabaseId !== '(default)'
+        ? getFirestore(firebaseAdminApp, configuredDatabaseId)
+        : getFirestore(firebaseAdminApp);
+    console.log(`[FIREBASE-ADMIN] Firestore Admin DB (${configuredDatabaseId}) disponible pour historisation centralisée.`);
   }
 } catch (adminInitErr: any) {
   console.warn('[FIREBASE-ADMIN] Note d\'initialisation:', adminInitErr?.message);
@@ -324,17 +329,50 @@ const authenticateFirebaseToken = async (req: AuthenticatedRequest, res: Respons
 /**
  * Middleware: Enforce Super-Admin authorization for high-privilege routes
  */
-const requireAdminAuthorization = (req: AuthenticatedRequest, res: Response, next: any) => {
-  const adminSecret = req.headers['x-admin-secret'];
-  const masterKeyMatch = adminSecret === (process.env.ADMIN_MASTER_KEY || 'livralink_super_admin_2026_key');
-  const isSuperAdminUser = req.user?.email && req.user.email.toLowerCase().trim() === 'pamphile.gbede@gmail.com';
-  const isAdminAuthorized = isSuperAdminUser || req.user?.isAdmin || masterKeyMatch;
+const requireAdminAuthorization = async (req: AuthenticatedRequest, res: Response, next: any) => {
+  const configuredMasterKey = (process.env.ADMIN_MASTER_KEY || '').trim();
+  const adminSecret = typeof req.headers['x-admin-secret'] === 'string' ? req.headers['x-admin-secret'].trim() : '';
+  const masterKeyMatch = Boolean(configuredMasterKey && adminSecret && adminSecret === configuredMasterKey);
+
+  if (masterKeyMatch) {
+    return next();
+  }
+
+  if (!req.user?.uid) {
+    recordSecurityAnomaly(getClientIp(req), 'UNAUTHENTICATED_ADMIN_ROUTE_ATTEMPT', `Accès sans jeton Firebase à la route admin: ${req.path}`);
+    return res.status(401).json({
+      success: false,
+      error: 'Authentification Firebase requise pour accéder à cette ressource administrateur.',
+    });
+  }
+
+  const emailLower = (req.user.email || '').toLowerCase().trim();
+  const isVerifiedSuperAdmin = Boolean(req.user.email_verified && emailLower === 'pamphile.gbede@gmail.com');
+  let isFirestoreAdmin = false;
+
+  if (!isVerifiedSuperAdmin && !req.user.isAdmin && firestoreAdmin) {
+    try {
+      const adminDoc = await firestoreAdmin.collection('admins').doc(req.user.uid).get();
+      if (adminDoc.exists) {
+        isFirestoreAdmin = true;
+      } else {
+        const userDoc = await firestoreAdmin.collection('users').doc(req.user.uid).get();
+        if (userDoc.exists && userDoc.data()?.role === 'admin') {
+          isFirestoreAdmin = true;
+        }
+      }
+    } catch {
+      // Ignore transient Admin SDK read error; verified claims/whitelist still apply
+    }
+  }
+
+  const isAdminAuthorized = isVerifiedSuperAdmin || (Boolean(req.user.isAdmin) && Boolean(req.user.email_verified)) || isFirestoreAdmin;
 
   if (!isAdminAuthorized) {
-    recordSecurityAnomaly(getClientIp(req), 'UNAUTHORIZED_ADMIN_ROUTE_ATTEMPT', `Tentative d'accès non autorisée à la route admin: ${req.path}`);
+    recordSecurityAnomaly(getClientIp(req), 'UNAUTHORIZED_ADMIN_ROUTE_ATTEMPT', `Tentative d'accès non autorisée par ${req.user.email || req.user.uid} sur: ${req.path}`);
     return res.status(403).json({
       success: false,
-      error: 'Accès refusé. Droits d\'administration Super-Admin requis pour exécuter cette action.',
+      error: 'Accès refusé. Droits d\'administration Super-Admin vérifiés requis pour exécuter cette action.',
     });
   }
   next();
@@ -1822,7 +1860,7 @@ app.post('/api/email/notification', async (req: Request, res: Response): Promise
  * GET /api/email/outbox
  * Returns the history of sent emails from Firestore or memory.
  */
-app.get('/api/email/outbox', async (_req: Request, res: Response) => {
+app.get('/api/email/outbox', requireAdminAuthorization as any, async (_req: Request, res: Response) => {
   if (firestoreAdmin) {
     try {
       const snap = await firestoreAdmin.collection('email_logs').orderBy('sentAt', 'desc').limit(100).get();
@@ -1875,7 +1913,7 @@ app.post('/api/email/clear-outbox', requireAdminAuthorization as any, (_req: Req
  * GET /api/admin/email/config
  * Retrieves the active SMTP parameters (sanitizing password details)
  */
-app.get('/api/admin/email/config', (_req: Request, res: Response) => {
+app.get('/api/admin/email/config', requireAdminAuthorization as any, (_req: Request, res: Response) => {
   res.json({
     success: true,
     config: {
@@ -2154,7 +2192,7 @@ app.get('/api/admin/announcements', requireAdminAuthorization as any, async (_re
  * Performs a live handshake verification with smtp.gmail.com via Nodemailer verify()
  * and optionally dispatches a test email.
  */
-app.post('/api/admin/email/test-smtp', async (req: Request, res: Response): Promise<void> => {
+app.post('/api/admin/email/test-smtp', requireAdminAuthorization as any, async (req: Request, res: Response): Promise<void> => {
   const startTime = Date.now();
   const { sendTestEmail, targetEmail } = req.body || {};
   const transporter = getGmailTransporter();
@@ -2474,7 +2512,7 @@ app.post('/api/logs/error', (req: Request, res: Response) => {
   res.status(201).json({ success: true, logId: entry.id });
 });
 
-app.get('/api/logs/error', (_req: Request, res: Response) => {
+app.get('/api/logs/error', requireAdminAuthorization as any, (_req: Request, res: Response) => {
   res.json({
     totalRecorded: errorAuditRingBuffer.length,
     recentErrors: errorAuditRingBuffer.slice(0, 30),
@@ -2541,6 +2579,282 @@ app.post('/api/system/restore', requireAdminAuthorization as any, (_req: Request
     restoredData: testBackupSnapshot.data,
     checksum: currentChecksum,
   });
+});
+
+// =========================================================================
+// USER PROFILE SYNC & ADMIN FIRESTORE/AUTH OVERVIEW RECONCILIATION
+// =========================================================================
+app.post('/api/users/sync-profile', async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user?.uid) {
+    return res.status(401).json({ success: false, error: 'Jeton d\'authentification Firebase requis.' });
+  }
+  if (!firestoreAdmin) {
+    return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+  }
+
+  try {
+    const body = req.body || {};
+    const uid = req.user.uid;
+    const email = (req.user.email || body.email || '').toString().trim().toLowerCase().slice(0, 128);
+    const isSuperAdminEmail = email === 'pamphile.gbede@gmail.com' && Boolean(req.user.email_verified);
+    const requestedRole = typeof body.role === 'string' ? body.role.trim().toLowerCase() : 'vendeur';
+    const safeRole =
+      requestedRole === 'livreur'
+        ? 'livreur'
+        : requestedRole === 'client'
+        ? 'client'
+        : requestedRole === 'admin' && isSuperAdminEmail
+        ? 'admin'
+        : 'vendeur';
+
+    const userRef = firestoreAdmin.collection('users').doc(uid);
+    const existingSnap = await userRef.get();
+    const existingData = existingSnap.exists ? existingSnap.data() || {} : {};
+
+    const fullNameRaw = (body.fullName || existingData.fullName || email.split('@')[0] || 'Utilisateur LivraLink').toString().trim().slice(0, 128);
+    const fullName = fullNameRaw.length >= 2 ? fullNameRaw : `${fullNameRaw}_ll`.slice(0, 128);
+
+    const updateDocData: Record<string, any> = {
+      uid,
+      email,
+      fullName,
+      phone: (body.phone ?? existingData.phone ?? '').toString().trim().slice(0, 32),
+      role: existingData.role || safeRole,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (!existingSnap.exists) {
+      updateDocData.createdAt = new Date().toISOString();
+      updateDocData.isKycVerified = false;
+      updateDocData.kycStatus = 'non_soumis';
+    }
+
+    if (typeof body.storeName === 'string' && body.storeName.trim()) {
+      updateDocData.storeName = body.storeName.trim().slice(0, 128);
+    } else if ((updateDocData.role === 'vendeur') && !existingData.storeName) {
+      updateDocData.storeName = `Boutique ${fullName}`.slice(0, 128);
+    }
+    if (typeof body.storeCommune === 'string' && body.storeCommune.trim()) {
+      updateDocData.storeCommune = body.storeCommune.trim().slice(0, 128);
+    }
+    if (typeof body.storeAddress === 'string' && body.storeAddress.trim()) {
+      updateDocData.storeAddress = body.storeAddress.trim().slice(0, 256);
+    }
+    if (Array.isArray(body.storeCoordinates) && body.storeCoordinates.length === 2) {
+      updateDocData.storeCoordinates = body.storeCoordinates;
+    }
+    if (typeof body.vehicleType === 'string' && body.vehicleType.trim()) {
+      updateDocData.vehicleType = body.vehicleType.trim().slice(0, 64);
+    }
+    if (typeof body.avatarUrl === 'string' && body.avatarUrl.trim()) {
+      updateDocData.avatarUrl = body.avatarUrl.trim().slice(0, 1000);
+    }
+
+    await userRef.set(updateDocData, { merge: true });
+    return res.json({ success: true, uid, role: updateDocData.role });
+  } catch (err: any) {
+    console.warn('[USERS-SYNC] Erreur sync-profile:', err?.message || err);
+    const isIamDenied = String(err?.message || '').includes('PERMISSION_DENIED') || String(err?.code || '') === '7';
+    return res.status(isIamDenied ? 503 : 500).json({
+      success: false,
+      code: isIamDenied ? 'IAM_PERMISSION_DENIED' : 'SYNC_PROFILE_FAILED',
+      error: err?.message || 'Erreur lors de la synchronisation du profil.',
+    });
+  }
+});
+
+app.get('/api/admin/sync-overview', requireAdminAuthorization as any, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const usersById = new Map<string, any>();
+    const deliveriesList: any[] = [];
+    const priorityMissionsList: any[] = [];
+    const kycList: any[] = [];
+    const warnings: string[] = [];
+    const iamIssues: string[] = [];
+
+    const classifyAdminError = (scope: string, e: any) => {
+      const msg = String(e?.message || e || 'Erreur inconnue');
+      warnings.push(`${scope}: ${msg}`);
+      if (/PERMISSION_DENIED|insufficient|7 PERMISSION_DENIED|iam|identity/i.test(msg)) {
+        iamIssues.push(`${scope}: ${msg}`);
+      }
+    };
+
+    if (firestoreAdmin) {
+      // 1. Read Firestore users
+      try {
+        const usersSnap = await firestoreAdmin.collection('users').get();
+        usersSnap.forEach((docSnap) => {
+          const data = docSnap.data() || {};
+          usersById.set(docSnap.id, {
+            id: docSnap.id,
+            uid: data.uid || docSnap.id,
+            ...data,
+          });
+        });
+      } catch (e: any) {
+        classifyAdminError('users', e);
+      }
+
+      // 2. Read Firestore deliveries
+      try {
+        const deliveriesSnap = await firestoreAdmin.collection('deliveries').get();
+        deliveriesSnap.forEach((docSnap) => {
+          const data = docSnap.data() || {};
+          deliveriesList.push({
+            id: data.id || docSnap.id,
+            ...data,
+          });
+        });
+      } catch (e: any) {
+        classifyAdminError('deliveries', e);
+      }
+
+      // 3. Read Firestore priority_missions
+      try {
+        const missionsSnap = await firestoreAdmin.collection('priority_missions').get();
+        missionsSnap.forEach((docSnap) => {
+          const data = docSnap.data() || {};
+          priorityMissionsList.push({
+            id: data.id || docSnap.id,
+            ...data,
+          });
+        });
+      } catch (e: any) {
+        classifyAdminError('priority_missions', e);
+      }
+
+      // 4. Read Firestore kyc
+      try {
+        const kycSnap = await firestoreAdmin.collection('kyc').get();
+        kycSnap.forEach((docSnap) => {
+          const data = docSnap.data() || {};
+          kycList.push({
+            id: data.id || docSnap.id,
+            ...data,
+          });
+        });
+      } catch (e: any) {
+        classifyAdminError('kyc', e);
+      }
+    } else {
+      warnings.push('Firestore Admin non initialisé');
+    }
+
+    // 5. Discover all Firebase Auth accounts (no fictitious fallback users)
+    if (firebaseAdminApp) {
+      try {
+        const authResult = await getAuth(firebaseAdminApp).listUsers(1000);
+        for (const authUser of authResult.users) {
+          const email = (authUser.email || '').toLowerCase().trim();
+          if (!email) continue;
+          const isSuperAdmin = email === 'pamphile.gbede@gmail.com';
+          if (isSuperAdmin) continue;
+
+          if (!usersById.has(authUser.uid)) {
+            const inferredRole = email.includes('livreur') ? 'livreur' : 'vendeur';
+            const displayName = (authUser.displayName || email.split('@')[0] || 'Vendeur LivraLink').trim();
+            const backfilledUser: Record<string, any> = {
+              uid: authUser.uid,
+              id: authUser.uid,
+              email,
+              fullName: displayName,
+              phone: authUser.phoneNumber || '',
+              role: inferredRole,
+              isKycVerified: false,
+              kycStatus: 'non_soumis',
+              createdAt: authUser.metadata?.creationTime || new Date().toISOString(),
+              syncedFromAuth: true,
+            };
+            if (inferredRole === 'vendeur') {
+              backfilledUser.storeName = `Boutique ${displayName}`;
+            } else {
+              backfilledUser.vehicleType = 'Moto 125cc';
+            }
+
+            usersById.set(authUser.uid, backfilledUser);
+
+            if (firestoreAdmin) {
+              firestoreAdmin.collection('users').doc(authUser.uid).set(backfilledUser, { merge: true }).catch(() => {});
+            }
+          } else {
+            const existing = usersById.get(authUser.uid);
+            if (!existing.createdAt && authUser.metadata?.creationTime) {
+              existing.createdAt = authUser.metadata.creationTime;
+            }
+          }
+        }
+      } catch (authListErr: any) {
+        classifyAdminError('auth.listUsers', authListErr);
+      }
+    }
+
+    const users = Array.from(usersById.values());
+    const merchantsCount = users.filter((u) => (u.role || 'vendeur') === 'vendeur').length;
+    const couriersCount = users.filter((u) => u.role === 'livreur').length;
+    const todayIso = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Porto-Novo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    const newSellersToday = users.filter((u) => {
+      if ((u.role || 'vendeur') !== 'vendeur') return false;
+      if (!u.createdAt) return false;
+      try {
+        const formattedDay = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Africa/Porto-Novo',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(new Date(u.createdAt));
+        return formattedDay === todayIso;
+      } catch {
+        return typeof u.createdAt === 'string' && u.createdAt.startsWith(todayIso);
+      }
+    }).length;
+
+    return res.json({
+      success: true,
+      databaseId: configuredDatabaseId,
+      syncedAt: new Date().toISOString(),
+      users,
+      deliveries: deliveriesList,
+      priorityMissions: priorityMissionsList,
+      kycRequests: kycList,
+      warnings,
+      iamDiagnostics: iamIssues.length > 0
+        ? {
+            hasPermissionError: true,
+            targetProjectId: process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0654978401',
+            databaseId: configuredDatabaseId,
+            missingRoles: ['roles/datastore.user', 'roles/firebaseauth.viewer'],
+            details: iamIssues,
+          }
+        : {
+            hasPermissionError: false,
+            targetProjectId: process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0654978401',
+            databaseId: configuredDatabaseId,
+            missingRoles: [],
+            details: [],
+          },
+      stats: {
+        totalUsers: users.length,
+        merchantsCount,
+        couriersCount,
+        deliveriesCount: deliveriesList.length,
+        priorityMissionsCount: priorityMissionsList.length,
+        kycCount: kycList.length,
+        newSellersToday,
+      },
+    });
+  } catch (err: any) {
+    console.error('[ADMIN-SYNC-OVERVIEW] Erreur:', err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Erreur lors de la synchronisation globale administrateur.',
+    });
+  }
 });
 
 async function startServer() {

@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { loginWithEmailPassword, loginWithGoogle, getFirebaseAuthErrorMessage } from '../../firebase/authService';
+import { loginWithEmailPassword, loginWithGoogle, logoutUser, getFirebaseAuthErrorMessage } from '../../firebase/authService';
 import { ForgotPasswordModal } from '../modals/ForgotPasswordModal';
 import { BackButton } from '../common/BackButton';
 import { LivraLinkLogo } from '../common/LivraLinkLogo';
 import { createFreshMerchantSettings } from '../../utils/userIsolation';
 
+const SUPER_ADMIN_EMAIL = 'pamphile.gbede@gmail.com';
+
 export const LoginVendeurPage: React.FC = () => {
-  const { setCurrentView, setCurrentRole, setMerchantSettings, setUserProfile, showToast, openTestModal, detectAndSaveLocation } = useApp();
+  const { setCurrentView, setCurrentRole, setMerchantSettings, setUserProfile, showToast, detectAndSaveLocation } = useApp();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -16,12 +18,6 @@ export const LoginVendeurPage: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
 
-  const fillTestAccount = (email: string, pass: string) => {
-    setIdentifier(email);
-    setPassword(pass);
-    setErrorMessage(null);
-  };
-
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
@@ -29,35 +25,48 @@ export const LoginVendeurPage: React.FC = () => {
 
     try {
       const { user, profile } = await loginWithEmailPassword(identifier, password, 'vendeur');
-      const resolvedRole = profile?.role || 'vendeur';
+      const resolvedRole = profile.role;
+      const isVerifiedSuperAdmin =
+        (user.email || '').toLowerCase().trim() === SUPER_ADMIN_EMAIL && user.emailVerified === true;
 
-      // Détection automatique et enregistrement de la position géographique de l'utilisateur
+      if (resolvedRole === 'admin' || isVerifiedSuperAdmin) {
+        setUserProfile(profile);
+        setCurrentRole('admin');
+        setCurrentView('admin_console');
+        showToast('Connexion Super-Admin confirmée.', 'success');
+        return;
+      }
+
+      if (resolvedRole !== 'vendeur') {
+        await logoutUser();
+        setUserProfile(null);
+        const msg =
+          resolvedRole === 'livreur'
+            ? "Ce compte est enregistré comme Livreur. Veuillez vous connecter via l'Espace Livreur."
+            : "Ce compte n'est pas autorisé dans l'Espace Vendeur.";
+        setErrorMessage(msg);
+        showToast(msg, 'error');
+        return;
+      }
+
       detectAndSaveLocation(user.uid, profile).catch((err) => console.warn('Erreur détection position:', err));
 
-      setCurrentRole(resolvedRole);
-      if (resolvedRole === 'livreur') {
-        setCurrentView('livreur_dashboard');
-        showToast(`Bienvenue sur votre Espace Livreur, ${profile?.fullName || user.displayName || 'Coursier'} !`, 'success');
-      } else {
-        setCurrentRole('vendeur');
-        setCurrentView('vendeur_dashboard');
-        if (profile) {
-          setUserProfile(profile);
-          let loaded = null;
-          try {
-            const saved = localStorage.getItem(`livralink_merchant_settings_${user.uid}`);
-            if (saved) loaded = JSON.parse(saved);
-          } catch {}
-          if (!loaded) {
-            loaded = createFreshMerchantSettings(profile);
-            try {
-              localStorage.setItem(`livralink_merchant_settings_${user.uid}`, JSON.stringify(loaded));
-            } catch {}
-          }
-          setMerchantSettings(loaded);
-        }
-        showToast(`Bienvenue sur votre Espace Vendeur, ${profile?.fullName || user.displayName || 'Marchand'} !`, 'success');
+      setCurrentRole('vendeur');
+      setUserProfile(profile);
+      let loaded = null;
+      try {
+        const saved = localStorage.getItem(`livralink_merchant_settings_${user.uid}`);
+        if (saved) loaded = JSON.parse(saved);
+      } catch {}
+      if (!loaded) {
+        loaded = createFreshMerchantSettings(profile);
+        try {
+          localStorage.setItem(`livralink_merchant_settings_${user.uid}`, JSON.stringify(loaded));
+        } catch {}
       }
+      setMerchantSettings(loaded);
+      setCurrentView('vendeur_dashboard');
+      showToast(`Bienvenue sur votre Espace Vendeur, ${profile.fullName || user.displayName || 'Marchand'} !`, 'success');
     } catch (err: any) {
       const friendlyMsg = getFirebaseAuthErrorMessage(err);
       setErrorMessage(friendlyMsg);
@@ -72,31 +81,56 @@ export const LoginVendeurPage: React.FC = () => {
     setErrorMessage(null);
     try {
       const { user, profile, location } = await loginWithGoogle('vendeur');
-      setCurrentRole('vendeur');
-      if (profile) {
+      const resolvedRole = profile.role;
+      const isVerifiedSuperAdmin =
+        (user.email || '').toLowerCase().trim() === SUPER_ADMIN_EMAIL && user.emailVerified === true;
+
+      if (resolvedRole === 'admin' || isVerifiedSuperAdmin) {
         setUserProfile(profile);
-        let loaded = null;
-        try {
-          const saved = localStorage.getItem(`livralink_merchant_settings_${user.uid}`);
-          if (saved) loaded = JSON.parse(saved);
-        } catch {}
-        if (!loaded) {
-          loaded = createFreshMerchantSettings({
-            ...profile,
-            locationCommune: location?.commune || profile.locationCommune,
-            locationAddress: location?.address || profile.locationAddress,
-            locationLat: location?.lat,
-            locationLng: location?.lng,
-            gpsCoordinates: location?.gpsCoordinates,
-          });
-          try {
-            localStorage.setItem(`livralink_merchant_settings_${user.uid}`, JSON.stringify(loaded));
-          } catch {}
-        }
-        setMerchantSettings(loaded);
+        setCurrentRole('admin');
+        setCurrentView('admin_console');
+        showToast('Connexion Google Super-Admin confirmée.', 'success');
+        return;
       }
+
+      if (resolvedRole !== 'vendeur') {
+        await logoutUser();
+        setUserProfile(null);
+        const msg =
+          resolvedRole === 'livreur'
+            ? "Ce compte Google est déjà enregistré comme Livreur. Veuillez utiliser l'Espace Livreur."
+            : "Ce compte Google n'est pas autorisé dans l'Espace Vendeur.";
+        setErrorMessage(msg);
+        showToast(msg, 'error');
+        return;
+      }
+
+      setCurrentRole('vendeur');
+      setUserProfile(profile);
+      let loaded = null;
+      try {
+        const saved = localStorage.getItem(`livralink_merchant_settings_${user.uid}`);
+        if (saved) loaded = JSON.parse(saved);
+      } catch {}
+      if (!loaded) {
+        loaded = createFreshMerchantSettings({
+          ...profile,
+          locationCommune: location?.commune || profile.locationCommune,
+          locationAddress: location?.address || profile.locationAddress,
+          locationLat: location?.lat,
+          locationLng: location?.lng,
+          gpsCoordinates: location?.gpsCoordinates,
+        });
+        try {
+          localStorage.setItem(`livralink_merchant_settings_${user.uid}`, JSON.stringify(loaded));
+        } catch {}
+      }
+      setMerchantSettings(loaded);
       setCurrentView('vendeur_dashboard');
-      showToast(`Connexion Google réussie ! Bienvenue ${profile?.fullName || user.displayName || 'Vendeur'}. Position enregistrée : ${location?.commune || 'Cotonou'} (${location?.gpsCoordinates || '6.3571, 2.4175'}).`, 'success');
+      showToast(
+        `Connexion Google réussie ! Bienvenue ${profile.fullName || user.displayName || 'Vendeur'}.`,
+        'success'
+      );
     } catch (err: any) {
       const errorMsg = getFirebaseAuthErrorMessage(err);
       setErrorMessage(errorMsg);

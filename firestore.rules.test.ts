@@ -1,20 +1,17 @@
 /**
  * Comprehensive Security Test Suite for Firestore Rules — LivraLink
- * 
- * Section 9 Required Test Scenarios (13 Total):
- * 1. Unauthenticated user cannot access protected data
- * 2. Client cannot accept a delivery
- * 3. Vendor cannot accept a delivery as a courier
- * 4. Authorized courier can accept an available mission
- * 5. Courier cannot retrieve/take over an already assigned mission
- * 6. Two couriers cannot obtain the same mission (double acceptance guard)
- * 7. User cannot modify their own role after creation
- * 8. User cannot become an administrator
- * 9. User cannot read personal client PII without authorization
- * 10. User cannot send fraudulent notifications (spoofing senderId or system types)
- * 11. User cannot read conversations they are not part of
- * 12. User cannot modify sender identity of a message
- * 13. Legitimate operations by Vendors, Couriers, and Admins continue working
+ *
+ * Covers:
+ * 1-15: Core 15 security scenarios (unauthenticated read, role-less/vendor accept block,
+ *       double-acceptance prevention, privilege escalation blocks, PII isolation,
+ *       notification spoofing/type blocks, conversation isolation, message sender forgery,
+ *       deletion locks, read-only notification flag updates).
+ * 16-20: Additional hardened controls:
+ *       16. Unverified email matching admin whitelist is denied Admin access.
+ *       17. Vendor or client cannot accept /deliveries doc; only verified livreur can accept once.
+ *       18. User cannot self-approve KYC (/kyc isApproved/valide) or modify user status/isKycVerified.
+ *       19. User cannot spam arbitrary recipientId on /notifications without order counterparty.
+ *       20. Conversation schema requires >= 2 participants & legitimate workflow completes end-to-end.
  */
 
 import {
@@ -29,7 +26,7 @@ let testEnv: RulesTestEnvironment;
 
 const PROJECT_ID = 'ai-studio-livralink-security-test';
 
-describe('LivraLink 13-Point Complete Security Rules Test Suite', () => {
+describe('LivraLink Complete Security Rules Test Suite', () => {
   beforeAll(async () => {
     testEnv = await initializeTestEnvironment({
       projectId: PROJECT_ID,
@@ -67,7 +64,7 @@ describe('LivraLink 13-Point Complete Security Rules Test Suite', () => {
         email: 'client@test.com',
         fullName: 'Client Test',
         phone: '+22997000001',
-        role: 'vendeur',
+        role: 'client',
       });
       await context.firestore().doc('priority_missions/mission_1').set({
         id: 'mission_1',
@@ -262,7 +259,6 @@ describe('LivraLink 13-Point Complete Security Rules Test Suite', () => {
     });
     const db = userCtx.firestore();
 
-    // Registering as admin
     await assertFails(
       db.doc('users/hacker_admin').set({
         uid: 'hacker_admin',
@@ -273,7 +269,6 @@ describe('LivraLink 13-Point Complete Security Rules Test Suite', () => {
       })
     );
 
-    // Creating document in /admins
     await assertFails(
       db.doc('admins/hacker_admin').set({
         email: 'hacker@test.com',
@@ -312,43 +307,50 @@ describe('LivraLink 13-Point Complete Security Rules Test Suite', () => {
   });
 
   // 10. User cannot send fraudulent notifications
-  test('10. User cannot omit senderId or spoof senderId or create system type notification', async () => {
+  test('10. User cannot omit senderId, spoof senderId, create system type, or target unrelated victim', async () => {
     const userCtx = testEnv.authenticatedContext('user_notif_tester', {
       email: 'user_n@test.com',
       email_verified: true,
     });
     const db = userCtx.firestore();
 
-    // Omitting senderId
     await assertFails(
       db.doc('notifications/n_1').set({
         id: 'n_1',
-        recipientId: 'victim_1',
+        recipientId: 'user_notif_tester',
         title: 'Alert',
         message: 'Hello',
       })
     );
 
-    // Spoofing senderId
     await assertFails(
       db.doc('notifications/n_2').set({
         id: 'n_2',
-        recipientId: 'victim_1',
+        recipientId: 'user_notif_tester',
         senderId: 'admin_god',
         title: 'Alert',
         message: 'Hello',
       })
     );
 
-    // Using system type
     await assertFails(
       db.doc('notifications/n_3').set({
         id: 'n_3',
-        recipientId: 'victim_1',
+        recipientId: 'user_notif_tester',
         senderId: 'user_notif_tester',
         title: 'System Alert',
         message: 'Hello',
         type: 'system',
+      })
+    );
+
+    await assertFails(
+      db.doc('notifications/n_4').set({
+        id: 'n_4',
+        recipientId: 'unrelated_victim',
+        senderId: 'user_notif_tester',
+        title: 'Spam',
+        message: 'Unsolicited spam notification',
       })
     );
   });
@@ -387,14 +389,14 @@ describe('LivraLink 13-Point Complete Security Rules Test Suite', () => {
     await assertFails(
       db.doc('conversations/conv_1/messages/msg_fake').set({
         id: 'msg_fake',
-        senderId: 'courier_1', // Trying to forge courier_1 identity
+        senderId: 'courier_1',
         text: 'I am giving up this order',
       })
     );
   });
 
   // 13. Legitimate operations continue working
-  test('13. Legitimate vendor, courier, and admin operations succeed', async () => {
+  test('13. Legitimate vendor, courier, and delivery/POD operations succeed', async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       await context.firestore().doc('users/vendor_ok').set({
         uid: 'vendor_ok',
@@ -418,7 +420,17 @@ describe('LivraLink 13-Point Complete Security Rules Test Suite', () => {
     });
     const vendorDb = vendorCtx.firestore();
 
-    // Create legitimate mission
+    await assertSucceeds(
+      vendorDb.doc('deliveries/m_ok').set({
+        id: 'm_ok',
+        merchantId: 'vendor_ok',
+        clientName: 'Client A',
+        clientPhone: '+22997001122',
+        deliveryFee: 2500,
+        status: 'en_attente',
+      })
+    );
+
     await assertSucceeds(
       vendorDb.doc('priority_missions/m_ok').set({
         id: 'm_ok',
@@ -435,13 +447,30 @@ describe('LivraLink 13-Point Complete Security Rules Test Suite', () => {
     });
     const courierDb = courierCtx.firestore();
 
-    // Accept mission
     await assertSucceeds(
       courierDb.doc('priority_missions/m_ok').update({
-        status: 'acceptee',
+        status: 'assignee',
         courierId: 'courier_ok',
         courierName: 'Courier OK',
-        assignedAt: new Date().toISOString(),
+        assignedAt: Date.now(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    await assertSucceeds(
+      courierDb.doc('deliveries/m_ok').update({
+        status: 'assignee',
+        courierId: 'courier_ok',
+        courierName: 'Courier OK',
+        assignedAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+    );
+
+    await assertSucceeds(
+      courierDb.doc('priority_missions/m_ok').update({
+        status: 'livree',
+        completedAt: Date.now(),
         updatedAt: new Date().toISOString(),
       })
     );
@@ -465,7 +494,6 @@ describe('LivraLink 13-Point Complete Security Rules Test Suite', () => {
     });
     const courierDb = courierCtx.firestore();
 
-    // Courier attempts to delete mission
     await assertFails(courierDb.doc('priority_missions/m_del').delete());
   });
 
@@ -488,7 +516,6 @@ describe('LivraLink 13-Point Complete Security Rules Test Suite', () => {
     });
     const db = userTargetCtx.firestore();
 
-    // Malicious update: trying to change title or senderId
     await assertFails(
       db.doc('notifications/notif_test').update({
         isRead: true,
@@ -496,10 +523,90 @@ describe('LivraLink 13-Point Complete Security Rules Test Suite', () => {
       })
     );
 
-    // Legitimate update: marking as read
     await assertSucceeds(
       db.doc('notifications/notif_test').update({
         isRead: true,
+      })
+    );
+  });
+
+  // 16. Unverified admin whitelist email is denied admin privileges
+  test('16. Unverified email matching super-admin address cannot read /users list', async () => {
+    const unverifiedAdmin = testEnv.authenticatedContext('spoof_admin', {
+      email: 'pamphile.gbede@gmail.com',
+      email_verified: false,
+    });
+    await assertFails(unverifiedAdmin.firestore().collection('users').get());
+  });
+
+  // 17. KYC self-approval is strictly blocked
+  test('17. User cannot self-approve KYC or flip isKycVerified on /users', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/courier_kyc').set({
+        uid: 'courier_kyc',
+        email: 'ckyc@test.com',
+        fullName: 'Courier KYC',
+        phone: '+22997000012',
+        role: 'livreur',
+        isKycVerified: false,
+        kycStatus: 'non_soumis',
+      });
+    });
+
+    const courierCtx = testEnv.authenticatedContext('courier_kyc', {
+      email: 'ckyc@test.com',
+      email_verified: true,
+    });
+    const db = courierCtx.firestore();
+
+    await assertFails(
+      db.doc('kyc/courier_kyc').set({
+        id: 'kyc_1',
+        userId: 'courier_kyc',
+        fullName: 'Courier KYC',
+        phone: '+22997000012',
+        status: 'valide',
+        isApproved: true,
+      })
+    );
+
+    await assertFails(
+      db.doc('users/courier_kyc').update({
+        isKycVerified: true,
+        kycStatus: 'valide',
+      })
+    );
+  });
+
+  // 18. Vendor cannot accept a delivery in /deliveries
+  test('18. Vendor cannot accept /deliveries document as courier', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/vendor_x').set({
+        uid: 'vendor_x',
+        email: 'vx@test.com',
+        fullName: 'Vendor X',
+        phone: '+22997000013',
+        role: 'vendeur',
+      });
+      await context.firestore().doc('deliveries/deliv_open').set({
+        id: 'deliv_open',
+        merchantId: 'vendor_y',
+        clientName: 'Client B',
+        clientPhone: '+22997000014',
+        deliveryFee: 1500,
+        status: 'en_attente',
+      });
+    });
+
+    const vendorCtx = testEnv.authenticatedContext('vendor_x', {
+      email: 'vx@test.com',
+      email_verified: true,
+    });
+    await assertFails(
+      vendorCtx.firestore().doc('deliveries/deliv_open').update({
+        status: 'assignee',
+        courierId: 'vendor_x',
+        updatedAt: Date.now(),
       })
     );
   });

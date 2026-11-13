@@ -3,10 +3,17 @@ import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
-import { BackButton } from '../common/BackButton';
 import { DeliveryOrder } from '../../types';
 import { EmptyState } from '../common/EmptyState';
 import { PaginationControls } from '../common/PaginationControls';
+import { GoogleMapDelivery } from '../maps/GoogleMapDelivery';
+import {
+  calculateDistanceKm,
+  estimateFallbackDurationMinutes,
+  formatTravelDuration,
+  getLocationForCommune,
+  RouteEstimationResult,
+} from '../../config/maps';
 
 export const LivreurMissions: React.FC = () => {
   const {
@@ -25,13 +32,23 @@ export const LivreurMissions: React.FC = () => {
     kycRequests,
     openKYCModal,
     openChatModal,
+    courierMissionsFilter,
+    setCourierMissionsFilter,
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'all' | 'en_cours' | 'en_attente' | 'livree'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'en_cours' | 'en_attente' | 'livree'>(courierMissionsFilter || 'all');
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [expandedMapOrderId, setExpandedMapOrderId] = useState<string | null>(null);
+  const [hasAutoExpanded, setHasAutoExpanded] = useState(false);
+  const [routeEstimates, setRouteEstimates] = useState<Record<string, RouteEstimationResult>>({});
   const itemsPerPage = 5;
+
+  React.useEffect(() => {
+    setActiveTab(courierMissionsFilter || 'all');
+    setCurrentPage(1);
+  }, [courierMissionsFilter]);
 
   const filteredOrders = deliveries.filter((d) => {
     if (activeTab === 'en_cours' && !(d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere')) return false;
@@ -55,8 +72,20 @@ export const LivreurMissions: React.FC = () => {
     currentPage * itemsPerPage
   );
 
+  React.useEffect(() => {
+    if (hasAutoExpanded || expandedMapOrderId) return;
+    const firstPending = paginatedOrders.find(
+      (d) => d.status === 'en_attente' || d.status === 'assignee' || !d.courier
+    );
+    if (firstPending) {
+      setExpandedMapOrderId(firstPending.id);
+      setHasAutoExpanded(true);
+    }
+  }, [paginatedOrders, hasAutoExpanded, expandedMapOrderId]);
+
   const handleTabChange = (tab: 'all' | 'en_cours' | 'en_attente' | 'livree') => {
     setActiveTab(tab);
+    setCourierMissionsFilter(tab);
     setCurrentPage(1);
   };
 
@@ -267,11 +296,30 @@ export const LivreurMissions: React.FC = () => {
               />
             ) : (
               <>
-                {paginatedOrders.map((order) => (
+                {paginatedOrders.map((order) => {
+                  const pickupCoords =
+                    order.pickupLocation?.coordinates && order.pickupLocation.coordinates.length === 2
+                      ? { lat: order.pickupLocation.coordinates[0], lng: order.pickupLocation.coordinates[1] }
+                      : getLocationForCommune(order.pickupLocation?.commune || 'Cotonou - Haie Vive');
+                  const dropoffCoords =
+                    order.dropoffLocation?.coordinates && order.dropoffLocation.coordinates.length === 2
+                      ? { lat: order.dropoffLocation.coordinates[0], lng: order.dropoffLocation.coordinates[1] }
+                      : getLocationForCommune(order.dropoffLocation?.commune || 'Cotonou - Cadjehoun');
+                  const fallbackKm = calculateDistanceKm(pickupCoords, dropoffCoords);
+                  const fallbackDurationText = formatTravelDuration(
+                    estimateFallbackDurationMinutes(fallbackKm, 'DRIVING')
+                  );
+                  const cachedRoute = routeEstimates[order.id];
+                  const displayKm = cachedRoute?.distanceKm ?? fallbackKm;
+                  const displayDuration = cachedRoute?.durationText ?? fallbackDurationText;
+                  const isMapExpanded = expandedMapOrderId === order.id;
+
+                  return (
                   <div
                     key={order.id}
-                    className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-all hover:border-slate-300"
+                    className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4 transition-all hover:border-slate-300"
                   >
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                     <div className="space-y-2 flex-1">
                       <div className="flex items-center gap-2.5 flex-wrap">
                         <span className="font-mono font-extrabold text-sm text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-lg border border-blue-100">
@@ -317,6 +365,12 @@ export const LivreurMissions: React.FC = () => {
                         <span className="bg-slate-100 text-slate-700 px-2.5 py-1 rounded-lg text-[11px]">
                           Colis : <strong className="text-slate-900">{order.itemDescription}</strong>
                         </span>
+                        <span className="bg-indigo-50 text-indigo-800 border border-indigo-200 px-2.5 py-1 rounded-lg text-[11px] inline-flex items-center gap-1">
+                          <span className="material-symbols-outlined text-xs text-indigo-600">schedule</span>
+                          <span>
+                            Trajet : <strong className="text-indigo-900">{displayKm} km • ~{displayDuration}</strong>
+                          </span>
+                        </span>
                         <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-lg text-[11px]">
                           COD à percevoir : <strong className="text-emerald-700">{order.itemValueCOD.toLocaleString('fr-FR')} FCFA</strong>
                         </span>
@@ -328,6 +382,20 @@ export const LivreurMissions: React.FC = () => {
 
                     {/* Actions - Mobile Optimized (Min 44px Touch Targets) */}
                     <div className="flex items-center gap-2 flex-wrap pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100 w-full lg:w-auto">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedMapOrderId(isMapExpanded ? null : order.id)}
+                        className={`min-h-[44px] px-3 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors active:scale-95 cursor-pointer ${
+                          isMapExpanded
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
+                        }`}
+                        title="Visualiser le trajet et le temps estimé sur Google Maps"
+                      >
+                        <span className="material-symbols-outlined text-base">map</span>
+                        <span>{isMapExpanded ? 'Masquer carte' : 'Trajet & Durée'}</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => handleWhatsApp(order)}
@@ -412,8 +480,43 @@ export const LivreurMissions: React.FC = () => {
                         </span>
                       )}
                     </div>
+                    </div>
+
+                    {isMapExpanded && (
+                      <div className="pt-2 border-t border-slate-100 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+                          <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                            <span className="material-symbols-outlined text-sm text-blue-600">route</span>
+                            <span>Itinéraire Retrait ➔ Livraison ({order.pickupLocation.commune} ➔ {order.dropoffLocation.commune})</span>
+                          </span>
+                          <span className="text-[11px] font-bold text-indigo-700">
+                            Estimation : ~{displayDuration} ({displayKm} km)
+                          </span>
+                        </div>
+                        <GoogleMapDelivery
+                          origin={pickupCoords}
+                          destination={dropoffCoords}
+                          originLabel={`Retrait : ${order.pickupLocation.name}`}
+                          destinationLabel={`Livraison : ${order.clientName}`}
+                          courierPosition={
+                            order.courierLat && order.courierLng
+                              ? { lat: order.courierLat, lng: order.courierLng }
+                              : undefined
+                          }
+                          courierName={order.courier?.name || 'Vous (Livreur)'}
+                          heightClass="h-[260px]"
+                          onRouteCalculated={(result) =>
+                            setRouteEstimates((prev) => ({
+                              ...prev,
+                              [order.id]: result,
+                            }))
+                          }
+                        />
+                      </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
 
                 {/* Pagination Controls */}
                 <PaginationControls
