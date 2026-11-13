@@ -2861,7 +2861,7 @@ app.get('/api/admin/sync-overview', requireAdminAuthorization as any, async (_re
 // SEO TECHNIQUE : CANONICAL DOMAIN, ROBOTS.TXT, SITEMAP.XML, X-ROBOTS-TAG & 404
 // =========================================================================
 const getCanonicalBaseUrl = (req: Request): string => {
-  const configured = process.env.PUBLIC_SITE_URL || process.env.APP_URL || '';
+  const configured = process.env.PUBLIC_SITE_URL || process.env.APP_URL || 'https://livralink.oxy-dev.cc';
   const trimmed = configured.trim();
   if (
     trimmed &&
@@ -2870,10 +2870,7 @@ const getCanonicalBaseUrl = (req: Request): string => {
   ) {
     return trimmed.replace(/\/+$/, '');
   }
-  const forwardedProto = req.headers['x-forwarded-proto'];
-  const proto = (typeof forwardedProto === 'string' ? forwardedProto.split(',')[0].trim() : req.protocol) || 'http';
-  const host = req.get('host') || `localhost:${PORT}`;
-  return `${proto}://${host}`.replace(/\/+$/, '');
+  return 'https://livralink.oxy-dev.cc';
 };
 
 const normalizeSeoPath = (pathname: string): string => {
