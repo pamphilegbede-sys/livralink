@@ -6,7 +6,7 @@ import path from 'path';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import fs from 'fs';
-import { initializeApp, getApps, App } from 'firebase-admin/app';
+import { initializeApp, cert, getApps, App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
 
@@ -19,7 +19,7 @@ if (fs.existsSync(envPath)) {
 
 console.log('[SERVER INIT] Gmail SMTP User configuré:', (process.env.GMAIL_SMTP_USER || process.env.SMTP_USER) ? 'OUI' : 'NON');
 
-const app = express();
+export const app = express();
 // In AI Studio and Cloud Run environments, DEFAULT_APP_PORT is 3000, while PORT=8080 is reserved for Nginx.
 // Always bind the Express/Vite app to port 3000 unless specified via CLI flag --port.
 let cliPort: number | null = null;
@@ -89,8 +89,8 @@ const getClientIp = (req: Request): string => {
 
 // Global API rate limiting middleware: max 120 calls per 60s per visitor IP
 app.use('/api', (req, res, next) => {
-  // Allow healthz, security audit, version, and error logs without strict throttling
-  if (req.path === '/healthz' || req.path === '/security/audit' || req.path === '/logs/error' || req.path === '/api/version' || req.path === '/version.json') {
+  // Allow only lightweight health/version probes without global throttling
+  if (req.path === '/healthz' || req.path === '/api/version' || req.path === '/version.json') {
     return next();
   }
   const ip = getClientIp(req);
@@ -220,7 +220,7 @@ const uptimeTracker: UptimeHealthTracker = {
 // Initialize Firebase Admin SDK
 let firebaseAdminApp: App | null = null;
 let firestoreAdmin: Firestore | null = null;
-let configuredDatabaseId = process.env.FIRESTORE_DATABASE_ID || '(default)';
+let configuredDatabaseId = process.env.FIREBASE_DATABASE_ID || process.env.FIRESTORE_DATABASE_ID || '(default)';
 
 try {
   let projectId = process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT || 'gen-lang-client-0654978401';
@@ -235,9 +235,21 @@ try {
 
   const existingApps = getApps();
   if (existingApps.length === 0) {
-    firebaseAdminApp = initializeApp({
-      projectId,
-    });
+    const rawServiceAccount = (process.env.FIREBASE_SERVICE_ACCOUNT_KEY || '').trim();
+    if (rawServiceAccount.startsWith('{')) {
+      try {
+        const parsedSa = JSON.parse(rawServiceAccount);
+        firebaseAdminApp = initializeApp({
+          credential: cert(parsedSa),
+          projectId: parsedSa.project_id || projectId,
+        });
+      } catch (saParseErr: any) {
+        console.warn('[FIREBASE-ADMIN] FIREBASE_SERVICE_ACCOUNT_KEY invalide, bascule ADC:', saParseErr?.message);
+        firebaseAdminApp = initializeApp({ projectId });
+      }
+    } else {
+      firebaseAdminApp = initializeApp({ projectId });
+    }
     console.log(`[FIREBASE-ADMIN] SDK initialisé avec succès pour le projet: ${projectId}`);
   } else {
     firebaseAdminApp = existingApps[0];
@@ -326,18 +338,70 @@ const authenticateFirebaseToken = async (req: AuthenticatedRequest, res: Respons
   next();
 };
 
+const checkCallerIsAdmin = async (user?: AuthenticatedRequest['user']): Promise<boolean> => {
+  if (!user?.uid || user.email_verified !== true) {
+    return false;
+  }
+  const emailLower = (user.email || '').toLowerCase().trim();
+  if (emailLower === 'pamphile.gbede@gmail.com' || Boolean(user.isAdmin)) {
+    return true;
+  }
+  if (firestoreAdmin) {
+    try {
+      const adminDoc = await firestoreAdmin.collection('admins').doc(user.uid).get();
+      if (adminDoc.exists) {
+        return true;
+      }
+      const userDoc = await firestoreAdmin.collection('users').doc(user.uid).get();
+      if (userDoc.exists && userDoc.data()?.role === 'admin') {
+        return true;
+      }
+    } catch {
+      return false;
+    }
+  }
+  return false;
+};
+
 /**
- * Middleware: Enforce Super-Admin authorization for high-privilege routes
+ * Middleware: Require any valid Firebase ID Token
+ */
+const requireAuthenticatedUser = (req: AuthenticatedRequest, res: Response, next: any) => {
+  if (!req.user?.uid) {
+    recordSecurityAnomaly(getClientIp(req), 'UNAUTHENTICATED_API_ATTEMPT', `Accès sans jeton Firebase sur: ${req.path}`);
+    return res.status(401).json({
+      success: false,
+      error: 'Authentification Firebase requise pour accéder à cette ressource.',
+    });
+  }
+  next();
+};
+
+/**
+ * Middleware: Require a valid Firebase ID Token with verified email
+ */
+const requireVerifiedUser = (req: AuthenticatedRequest, res: Response, next: any) => {
+  if (!req.user?.uid) {
+    recordSecurityAnomaly(getClientIp(req), 'UNAUTHENTICATED_API_ATTEMPT', `Accès sans jeton Firebase sur: ${req.path}`);
+    return res.status(401).json({
+      success: false,
+      error: 'Authentification Firebase requise pour accéder à cette ressource.',
+    });
+  }
+  if (req.user.email_verified !== true) {
+    recordSecurityAnomaly(getClientIp(req), 'UNVERIFIED_EMAIL_API_ATTEMPT', `Email non vérifié pour ${req.user.email || req.user.uid} sur: ${req.path}`);
+    return res.status(403).json({
+      success: false,
+      error: 'Adresse e-mail non vérifiée. Veuillez valider votre e-mail avant d\'effectuer cette opération.',
+    });
+  }
+  next();
+};
+
+/**
+ * Middleware: Enforce verified Super-Admin / Admin authorization strictly via Firebase ID token & Firestore role
  */
 const requireAdminAuthorization = async (req: AuthenticatedRequest, res: Response, next: any) => {
-  const configuredMasterKey = (process.env.ADMIN_MASTER_KEY || '').trim();
-  const adminSecret = typeof req.headers['x-admin-secret'] === 'string' ? req.headers['x-admin-secret'].trim() : '';
-  const masterKeyMatch = Boolean(configuredMasterKey && adminSecret && adminSecret === configuredMasterKey);
-
-  if (masterKeyMatch) {
-    return next();
-  }
-
   if (!req.user?.uid) {
     recordSecurityAnomaly(getClientIp(req), 'UNAUTHENTICATED_ADMIN_ROUTE_ATTEMPT', `Accès sans jeton Firebase à la route admin: ${req.path}`);
     return res.status(401).json({
@@ -346,33 +410,21 @@ const requireAdminAuthorization = async (req: AuthenticatedRequest, res: Respons
     });
   }
 
-  const emailLower = (req.user.email || '').toLowerCase().trim();
-  const isVerifiedSuperAdmin = Boolean(req.user.email_verified && emailLower === 'pamphile.gbede@gmail.com');
-  let isFirestoreAdmin = false;
-
-  if (!isVerifiedSuperAdmin && !req.user.isAdmin && firestoreAdmin) {
-    try {
-      const adminDoc = await firestoreAdmin.collection('admins').doc(req.user.uid).get();
-      if (adminDoc.exists) {
-        isFirestoreAdmin = true;
-      } else {
-        const userDoc = await firestoreAdmin.collection('users').doc(req.user.uid).get();
-        if (userDoc.exists && userDoc.data()?.role === 'admin') {
-          isFirestoreAdmin = true;
-        }
-      }
-    } catch {
-      // Ignore transient Admin SDK read error; verified claims/whitelist still apply
-    }
+  if (req.user.email_verified !== true) {
+    recordSecurityAnomaly(getClientIp(req), 'UNVERIFIED_ADMIN_ATTEMPT', `Tentative d'accès admin avec e-mail non vérifié (${req.user.email || req.user.uid}) sur: ${req.path}`);
+    return res.status(403).json({
+      success: false,
+      error: 'Accès refusé. Adresse e-mail administrateur vérifiée requise.',
+    });
   }
 
-  const isAdminAuthorized = isVerifiedSuperAdmin || (Boolean(req.user.isAdmin) && Boolean(req.user.email_verified)) || isFirestoreAdmin;
+  const isAdminAuthorized = await checkCallerIsAdmin(req.user);
 
   if (!isAdminAuthorized) {
     recordSecurityAnomaly(getClientIp(req), 'UNAUTHORIZED_ADMIN_ROUTE_ATTEMPT', `Tentative d'accès non autorisée par ${req.user.email || req.user.uid} sur: ${req.path}`);
     return res.status(403).json({
       success: false,
-      error: 'Accès refusé. Droits d\'administration Super-Admin vérifiés requis pour exécuter cette action.',
+      error: 'Accès refusé. Droits d\'administration vérifiés requis pour exécuter cette action.',
     });
   }
   next();
@@ -380,8 +432,15 @@ const requireAdminAuthorization = async (req: AuthenticatedRequest, res: Respons
 
 app.use('/api', authenticateFirebaseToken as any);
 
-// Secret salt for HMAC-SHA256 OTP hashing (never exposed to client)
-const OTP_SECRET_SALT = process.env.OTP_SECRET_SALT || 'livralink-gmail-otp-secret-salt-2026';
+// Secret salt for HMAC-SHA256 OTP & POD token signing (ephemeral CSPRNG fallback if env missing, never a static literal)
+const OTP_SECRET_SALT = (() => {
+  const configured = (process.env.OTP_SECRET_SALT || process.env.POD_OTP_HMAC_SECRET || '').trim();
+  if (configured.length >= 16) {
+    return configured;
+  }
+  console.warn('[SECURITY WARN] OTP_SECRET_SALT / POD_OTP_HMAC_SECRET non configuré ou trop court — utilisation d\'une clé éphémère aléatoire au démarrage.');
+  return crypto.randomBytes(32).toString('hex');
+})();
 
 interface SecureOTPEntry {
   hashedCode: string;
@@ -526,10 +585,31 @@ const processQueuedEmails = async (): Promise<{ processedCount: number; successC
   return { processedCount: queuedItems.length, successCount };
 };
 
-// Periodic queue processor interval (runs every 45 seconds in background)
-setInterval(() => {
-  processQueuedEmails().catch(() => {});
-}, 45 * 1000);
+// Periodic queue processor interval (runs every 45 seconds in background outside test mode)
+if (process.env.NODE_ENV !== 'test') {
+  const queueTimer = setInterval(() => {
+    processQueuedEmails().catch(() => {});
+  }, 45 * 1000);
+  if (typeof queueTimer.unref === 'function') queueTimer.unref();
+}
+
+const getAppPublicBaseUrl = (req?: Request): string => {
+  const configured =
+    process.env.APP_PUBLIC_URL ||
+    process.env.PUBLIC_SITE_URL ||
+    process.env.APP_URL ||
+    '';
+  const trimmed = configured.trim();
+  if (trimmed && /^https?:\/\/.+/i.test(trimmed) && !trimmed.includes('MY_APP_URL')) {
+    return trimmed.replace(/\/+$/, '');
+  }
+  const host = req?.get?.('host');
+  if (host && !host.includes('127.0.0.1') && !host.includes('localhost')) {
+    const proto = (req?.headers?.['x-forwarded-proto'] as string)?.split(',')[0]?.trim() || req?.protocol || 'https';
+    return `${proto}://${host}`;
+  }
+  return 'https://livralink.oxy-dev.cc';
+};
 
 const hashOTPCode = (email: string, code: string): string => {
   return crypto
@@ -691,7 +771,7 @@ app.post('/api/auth/send-reset-code', async (req: Request, res: Response): Promi
 
             <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0;">
               <p style="font-size: 11px; color: #94a3b8; margin: 0;">
-                © ${new Date().getFullYear()} LivraLink CI — Plateforme logistique et livraison sécurisée.
+                © ${new Date().getFullYear()} LivraLink Bénin — Plateforme logistique et livraison sécurisée.
               </p>
             </div>
           </div>
@@ -740,7 +820,7 @@ app.post('/api/auth/send-reset-code', async (req: Request, res: Response): Promi
  * Verifies the 6-digit code against the stored hash, validates expiration and attempts,
  * and issues a single-use cryptographic resetToken upon success.
  */
-app.post('/api/auth/verify-reset-code', (req: Request, res: Response): void => {
+app.post('/api/auth/verify-reset-code', async (req: Request, res: Response): Promise<void> => {
   try {
     const ip = getClientIp(req);
     // Defense: IP rate limit (max 15 verification attempts per 10 minutes)
@@ -835,9 +915,23 @@ app.post('/api/auth/verify-reset-code', (req: Request, res: Response): void => {
       expiresAt: Date.now() + 10 * 60 * 1000,
     });
 
+    let resolvedRole = 'vendeur';
+    if (firestoreAdmin) {
+      try {
+        const userSnap = await firestoreAdmin.collection('users').where('email', '==', cleanEmail).limit(1).get();
+        if (!userSnap.empty) {
+          const r = userSnap.docs[0].data()?.role;
+          if (r === 'livreur' || r === 'vendeur' || r === 'admin' || r === 'client') {
+            resolvedRole = r;
+          }
+        }
+      } catch {}
+    }
+
     res.json({
       success: true,
       resetToken: rawResetToken,
+      role: resolvedRole,
       message: 'Code de sécurité validé avec succès.',
     });
   } catch (error: any) {
@@ -948,7 +1042,7 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response): Promis
           </p>
         </div>
         <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0;">
-          <p style="font-size: 11px; color: #94a3b8; margin: 0;">© ${new Date().getFullYear()} LivraLink CI — Plateforme logistique et livraison sécurisée.</p>
+          <p style="font-size: 11px; color: #94a3b8; margin: 0;">© ${new Date().getFullYear()} LivraLink Bénin — Plateforme logistique et livraison sécurisée.</p>
         </div>
       </div>
     `;
@@ -992,6 +1086,47 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response): Promis
   }
 });
 
+/**
+ * POST /api/auth/admin-force-reset
+ * Administrator-only forced password reset via Firebase Admin SDK
+ */
+app.post('/api/auth/admin-force-reset', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { email, newPassword } = req.body || {};
+    const EMAIL_REGEX = /^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$/;
+    if (!email || typeof email !== 'string' || !EMAIL_REGEX.test(email.trim())) {
+      res.status(400).json({ success: false, error: 'Adresse e-mail valide requise.' });
+      return;
+    }
+    if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 8) {
+      res.status(400).json({ success: false, error: 'Le nouveau mot de passe doit contenir au moins 8 caractères.' });
+      return;
+    }
+    if (!firebaseAdminApp) {
+      res.status(503).json({ success: false, error: 'Firebase Admin SDK indisponible.' });
+      return;
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const adminAuth = getAuth(firebaseAdminApp);
+    const userRecord = await adminAuth.getUserByEmail(cleanEmail);
+    await adminAuth.updateUser(userRecord.uid, { password: newPassword });
+
+    console.log(`[ADMIN-FORCE-RESET] Mot de passe réinitialisé par ${req.user?.email || req.user?.uid} pour ${cleanEmail}`);
+    res.json({
+      success: true,
+      message: `Le mot de passe de ${cleanEmail} a été réinitialisé avec succès via Firebase Admin.`,
+    });
+  } catch (err: any) {
+    if (err?.code === 'auth/user-not-found') {
+      res.status(404).json({ success: false, error: 'Aucun compte Firebase Auth trouvé pour cet e-mail.' });
+      return;
+    }
+    console.error('[ADMIN-FORCE-RESET ERROR]:', err?.message || err);
+    res.status(500).json({ success: false, error: 'Erreur lors de la réinitialisation administrative du mot de passe.' });
+  }
+});
+
 // =========================================================================
 // EMAIL SERVICES: BIENVENUE, CHANGEMENT MOT DE PASSE & MISSIONS PRIORITAIRES
 // =========================================================================
@@ -1001,7 +1136,7 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response): Promis
  * Dispatches a welcome email to a newly registered merchant or courier.
  */
 // Welcome email handler function
-const handleWelcomeEmailRequest = async (req: Request, res: Response): Promise<void> => {
+const handleWelcomeEmailRequest = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { email, fullName, role, storeName, vehicleType, phone } = req.body || {};
 
@@ -1012,6 +1147,13 @@ const handleWelcomeEmailRequest = async (req: Request, res: Response): Promise<v
     }
 
     const cleanEmail = email.trim().toLowerCase();
+    const callerEmail = (req.user?.email || '').trim().toLowerCase();
+    const isAdmin = await checkCallerIsAdmin(req.user);
+    if (!isAdmin && callerEmail !== cleanEmail) {
+      recordSecurityAnomaly(getClientIp(req), 'UNAUTHORIZED_EMAIL_SPOOF', `Tentative d'envoi welcome email pour ${cleanEmail} par ${callerEmail || req.user?.uid}`);
+      res.status(403).json({ success: false, error: 'Vous ne pouvez envoyer cet e-mail que pour votre propre adresse.' });
+      return;
+    }
     const cleanName = (fullName || cleanEmail.split('@')[0]).trim().slice(0, 100);
     const safeName = escapeHtml(cleanName);
     const safeStore = storeName ? escapeHtml(storeName.trim().slice(0, 100)) : '';
@@ -1026,9 +1168,9 @@ const handleWelcomeEmailRequest = async (req: Request, res: Response): Promise<v
     const subject = `Bienvenue sur LivraLink, ${safeName} ! 🚀 Votre compte ${roleLabel} est prêt`;
     const previewText = `Félicitations ! Votre compte LivraLink ${roleLabel} a été créé avec succès. Découvrez comment utiliser votre espace.`;
 
+    const appBaseUrl = escapeHtml(getAppPublicBaseUrl(req));
     const htmlContent = `
       <div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 580px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); color: #0f172a;">
-        {/* Header */}
         <div style="background-color: #0f172a; padding: 28px 24px; text-align: center;">
           <h1 style="color: #ffffff; margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.5px;">
             Livra<span style="color: #2563eb;">Link</span>
@@ -1038,7 +1180,6 @@ const handleWelcomeEmailRequest = async (req: Request, res: Response): Promise<v
           </p>
         </div>
 
-        {/* Content Body */}
         <div style="padding: 32px 24px;">
           <div style="display: inline-block; background-color: ${roleBadgeBg}; color: ${roleBadgeText}; font-weight: 800; font-size: 12px; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid ${isVendeur ? '#bfdbfe' : '#bbf7d0'};">
             🎉 COMPTE ${roleLabel.toUpperCase()} ACTIVÉ
@@ -1052,11 +1193,10 @@ const handleWelcomeEmailRequest = async (req: Request, res: Response): Promise<v
             ${
               isVendeur
                 ? 'Votre compte marchand est désormais actif. LivraLink vous permet de gérer vos livraisons urbaines en toute simplicité avec suivi GPS en direct et certification par code secret OTP.'
-                : 'Votre compte livreur partenaire est créé avec succès. Rejoignez notre réseau de coursier certifiés à Cotonou et Calavi et profitez d\'une rétribution directe à 100 FCFA/km net.'
+                : 'Votre compte livreur partenaire est créé avec succès. Rejoignez notre réseau de coursiers certifiés à Cotonou et Calavi et profitez d\'une rétribution directe à 100 FCFA/km net.'
             }
           </p>
 
-          {/* Account Summary Box */}
           <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 20px; margin-bottom: 24px;">
             <h3 style="font-size: 12px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px; margin: 0 0 12px 0;">
               Coordonnées de votre compte
@@ -1088,7 +1228,6 @@ const handleWelcomeEmailRequest = async (req: Request, res: Response): Promise<v
             </table>
           </div>
 
-          {/* Role-tailored Onboarding Guide */}
           <div style="background-color: #f1f5f9; border-left: 4px solid #2563eb; border-radius: 12px; padding: 20px; margin-bottom: 28px;">
             <h3 style="font-size: 14px; font-weight: 800; color: #0f172a; margin: 0 0 12px 0;">
               💡 Comment utiliser votre espace ${isVendeur ? 'Vendeur' : 'Livreur'} :
@@ -1125,9 +1264,8 @@ const handleWelcomeEmailRequest = async (req: Request, res: Response): Promise<v
             }
           </div>
 
-          {/* Primary CTA Button */}
           <div style="text-align: center; margin: 28px 0;">
-            <a href="https://ais-dev-ra34vpbmrgqe3eimwdz2y2-319073276082.europe-west3.run.app" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: 800; font-size: 14px; padding: 14px 32px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(37,99,235,0.25);">
+            <a href="${appBaseUrl}" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: 800; font-size: 14px; padding: 14px 32px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(37,99,235,0.25);">
               Accéder à mon espace ${isVendeur ? 'Vendeur' : 'Livreur'} →
             </a>
           </div>
@@ -1137,10 +1275,9 @@ const handleWelcomeEmailRequest = async (req: Request, res: Response): Promise<v
           </p>
         </div>
 
-        {/* Footer */}
         <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0;">
           <p style="font-size: 11px; color: #94a3b8; margin: 0;">
-            © ${new Date().getFullYear()} LivraLink — Tous droits réservés. Cotonou, Bénin.
+            © ${new Date().getFullYear()} LivraLink Bénin — Tous droits réservés. Cotonou, Bénin.
           </p>
         </div>
       </div>
@@ -1189,14 +1326,14 @@ const handleWelcomeEmailRequest = async (req: Request, res: Response): Promise<v
   }
 };
 
-app.post('/api/email/welcome', handleWelcomeEmailRequest);
-app.post('/api/email/bienvenue', handleWelcomeEmailRequest);
+app.post('/api/email/welcome', requireAuthenticatedUser as any, handleWelcomeEmailRequest as any);
+app.post('/api/email/bienvenue', requireAuthenticatedUser as any, handleWelcomeEmailRequest as any);
 
 /**
  * POST /api/email/password-changed
  * Dispatches a security notification email when a user modifies their password.
  */
-app.post('/api/email/password-changed', async (req: Request, res: Response): Promise<void> => {
+app.post('/api/email/password-changed', requireAuthenticatedUser as any, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { email, fullName } = req.body || {};
 
@@ -1206,6 +1343,13 @@ app.post('/api/email/password-changed', async (req: Request, res: Response): Pro
     }
 
     const cleanEmail = email.trim().toLowerCase();
+    const callerEmail = (req.user?.email || '').trim().toLowerCase();
+    const isAdmin = await checkCallerIsAdmin(req.user);
+    if (!isAdmin && callerEmail !== cleanEmail) {
+      recordSecurityAnomaly(getClientIp(req), 'UNAUTHORIZED_EMAIL_SPOOF', `Tentative d'envoi password-changed pour ${cleanEmail} par ${callerEmail || req.user?.uid}`);
+      res.status(403).json({ success: false, error: 'Accès refusé pour cette adresse e-mail.' });
+      return;
+    }
     const cleanName = (fullName || cleanEmail.split('@')[0]).trim().slice(0, 100);
     const safeName = escapeHtml(cleanName);
     const subject = '🔐 LivraLink : Votre mot de passe a été modifié';
@@ -1278,7 +1422,7 @@ app.post('/api/email/password-changed', async (req: Request, res: Response): Pro
  * POST /api/email/kyc-approved
  * Dispatches an email notification when a user's KYC verification status is confirmed or updated by Admin.
  */
-app.post('/api/email/kyc-approved', async (req: Request, res: Response): Promise<void> => {
+app.post('/api/email/kyc-approved', requireAdminAuthorization as any, async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, fullName, role, status, reason } = req.body || {};
 
@@ -1335,7 +1479,7 @@ app.post('/api/email/kyc-approved', async (req: Request, res: Response): Promise
               `
           }
           <div style="text-align: center; margin: 24px 0 10px 0;">
-            <a href="https://ais-dev-ra34vpbmrgqe3eimwdz2y2-319073276082.europe-west3.run.app" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: 800; font-size: 14px; padding: 12px 28px; border-radius: 12px;">
+            <a href="${escapeHtml(getAppPublicBaseUrl(req))}" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: 800; font-size: 14px; padding: 12px 28px; border-radius: 12px;">
               Accéder à LivraLink →
             </a>
           </div>
@@ -1393,7 +1537,7 @@ app.post('/api/email/kyc-approved', async (req: Request, res: Response): Promise
  * POST /api/email/kyc-submitted
  * Dispatches an email receipt when a user submits their KYC documents.
  */
-app.post('/api/email/kyc-submitted', async (req: Request, res: Response): Promise<void> => {
+app.post('/api/email/kyc-submitted', requireAuthenticatedUser as any, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { email, fullName, role, idType, idNumber } = req.body || {};
 
@@ -1403,6 +1547,12 @@ app.post('/api/email/kyc-submitted', async (req: Request, res: Response): Promis
     }
 
     const cleanEmail = email.trim().toLowerCase();
+    const callerEmail = (req.user?.email || '').trim().toLowerCase();
+    const isAdmin = await checkCallerIsAdmin(req.user);
+    if (!isAdmin && callerEmail !== cleanEmail) {
+      res.status(403).json({ success: false, error: 'Accès refusé pour cet e-mail KYC.' });
+      return;
+    }
     const cleanName = (fullName || cleanEmail.split('@')[0]).trim().slice(0, 100);
     const safeName = escapeHtml(cleanName);
     const roleLabel = role === 'vendeur' ? 'Vendeur / Marchand' : 'Livreur Partenaire';
@@ -1471,13 +1621,29 @@ app.post('/api/email/kyc-submitted', async (req: Request, res: Response): Promis
  * POST /api/email/priority-mission
  * Dispatches an email notification to couriers about a newly created priority mission.
  */
-app.post('/api/email/priority-mission', async (req: Request, res: Response): Promise<void> => {
+app.post('/api/email/priority-mission', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { email, courierName, orderId, pickupName, dropoffCommune, feeFCFA, codFCFA } = req.body || {};
 
-    if (!email) {
+    if (!email || typeof email !== 'string') {
       res.status(400).json({ success: false, error: 'Email du livreur requis.' });
       return;
+    }
+
+    const isAdmin = await checkCallerIsAdmin(req.user);
+    const cleanDocId = String(orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!isAdmin) {
+      if (!cleanDocId || !firestoreAdmin) {
+        res.status(403).json({ success: false, error: 'Mission introuvable ou autorisation insuffisante.' });
+        return;
+      }
+      const deliverySnap = await firestoreAdmin.collection('deliveries').doc(cleanDocId).get();
+      const missionSnap = !deliverySnap.exists ? await firestoreAdmin.collection('priority_missions').doc(cleanDocId).get() : null;
+      const orderData = deliverySnap.exists ? deliverySnap.data() : (missionSnap?.exists ? missionSnap.data() : null);
+      if (!orderData || orderData.merchantId !== req.user?.uid) {
+        res.status(403).json({ success: false, error: 'Seul le vendeur propriétaire de la course ou un administrateur peut notifier un coursier.' });
+        return;
+      }
     }
 
     const cleanEmail = email.trim().toLowerCase();
@@ -1511,7 +1677,7 @@ app.post('/api/email/priority-mission', async (req: Request, res: Response): Pro
             ${safeCod ? `<p style="margin: 4px 0; font-size: 13px; color: #2563eb;"><strong>💵 Montant COD :</strong> ${safeCod.toLocaleString('fr-FR')} FCFA</p>` : ''}
           </div>
           <div style="text-align: center; margin: 20px 0;">
-            <a href="https://ais-dev-ra34vpbmrgqe3eimwdz2y2-319073276082.europe-west3.run.app" style="display: inline-block; background-color: #f59e0b; color: #000; text-decoration: none; font-weight: 700; font-size: 13px; padding: 12px 24px; border-radius: 10px;">
+            <a href="${escapeHtml(getAppPublicBaseUrl(req))}" style="display: inline-block; background-color: #f59e0b; color: #000; text-decoration: none; font-weight: 700; font-size: 13px; padding: 12px 24px; border-radius: 10px;">
               Ouvrir l'application &amp; Accepter la course →
             </a>
           </div>
@@ -1564,7 +1730,7 @@ app.post('/api/email/priority-mission', async (req: Request, res: Response): Pro
  * Centralized endpoint for dispatching automated platform activity email notifications
  * (Creation, Acceptance, Pickup, Delivery, Cancellation, Payment, Security)
  */
-app.post('/api/email/notification', async (req: Request, res: Response): Promise<void> => {
+app.post('/api/email/notification', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { eventType, recipientEmail, recipientName, details } = req.body || {};
 
@@ -1575,9 +1741,57 @@ app.post('/api/email/notification', async (req: Request, res: Response): Promise
     }
 
     const cleanEmail = recipientEmail.trim().toLowerCase();
+    const callerEmail = (req.user?.email || '').trim().toLowerCase();
+    const callerUid = req.user?.uid || '';
+    const isAdmin = await checkCallerIsAdmin(req.user);
+    const d = details || {};
+
+    if (!isAdmin) {
+      const deliveryEventTypes = ['delivery_created', 'delivery_accepted', 'delivery_picked_up', 'delivery_completed', 'delivery_cancelled'];
+      if (deliveryEventTypes.includes(eventType)) {
+        const cleanOrderId = String(d.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+        if (!cleanOrderId || !firestoreAdmin) {
+          res.status(403).json({ success: false, error: 'Référence de livraison vérifiable requise.' });
+          return;
+        }
+        const deliverySnap = await firestoreAdmin.collection('deliveries').doc(cleanOrderId).get();
+        const missionSnap = !deliverySnap.exists ? await firestoreAdmin.collection('priority_missions').doc(cleanOrderId).get() : null;
+        const orderData = deliverySnap.exists ? deliverySnap.data() : (missionSnap?.exists ? missionSnap.data() : null);
+        const assignedCourierId =
+          typeof orderData?.courierId === 'string' && orderData.courierId.trim()
+            ? orderData.courierId.trim()
+            : typeof orderData?.courier?.id === 'string' && orderData.courier.id.trim()
+            ? orderData.courier.id.trim()
+            : '';
+        if (!orderData || (orderData.merchantId !== callerUid && assignedCourierId !== callerUid)) {
+          res.status(403).json({ success: false, error: 'Vous n\'êtes pas participant de cette livraison.' });
+          return;
+        }
+        const allowedEmails = new Set<string>([callerEmail]);
+        if (typeof orderData.merchantEmail === 'string' && orderData.merchantEmail.trim()) {
+          allowedEmails.add(orderData.merchantEmail.trim().toLowerCase());
+        }
+        if (assignedCourierId) {
+          try {
+            const cDoc = await firestoreAdmin.collection('users').doc(assignedCourierId).get();
+            const cEmail = cDoc.data()?.email;
+            if (typeof cEmail === 'string' && cEmail.trim()) {
+              allowedEmails.add(cEmail.trim().toLowerCase());
+            }
+          } catch {}
+        }
+        if (!allowedEmails.has(cleanEmail)) {
+          res.status(403).json({ success: false, error: 'Destinataire e-mail non autorisé pour cette livraison.' });
+          return;
+        }
+      } else if (callerEmail !== cleanEmail) {
+        res.status(403).json({ success: false, error: 'Action réservée à l\'administrateur ou au titulaire du compte.' });
+        return;
+      }
+    }
+
     const cleanName = (recipientName || cleanEmail.split('@')[0]).trim().slice(0, 100);
     const safeName = escapeHtml(cleanName);
-    const d = details || {};
 
     // Durable anti-doublons key check
     const dedupKey = req.body?.dedupKey || (d.orderId ? `${d.orderId}:${eventType}` : `${cleanEmail}:${eventType}:${new Date().toISOString().slice(0, 10)}`);
@@ -1790,7 +2004,7 @@ app.post('/api/email/notification', async (req: Request, res: Response): Promise
           ${bodyHtml}
 
           <div style="text-align: center; margin: 28px 0;">
-            <a href="https://ais-dev-ra34vpbmrgqe3eimwdz2y2-319073276082.europe-west3.run.app" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: 800; font-size: 13px; padding: 12px 28px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(37,99,235,0.25);">
+            <a href="${escapeHtml(getAppPublicBaseUrl(req))}" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: 800; font-size: 13px; padding: 12px 28px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(37,99,235,0.25);">
               Ouvrir mon application LivraLink →
             </a>
           </div>
@@ -1989,7 +2203,17 @@ const broadcastAnnouncementsHistory: AnnouncementRecord[] = [];
  */
 app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { title, message, audience, channel, targetUid, targetEmail } = req.body || {};
+    const {
+      title,
+      message,
+      audience,
+      targetCategory,
+      channel,
+      sendEmailCopy,
+      targetUid,
+      targetEmail,
+      targetUserEmail,
+    } = req.body || {};
 
     if (!title || typeof title !== 'string' || title.trim().length === 0) {
       return res.status(400).json({ success: false, error: 'Un titre de communication est requis (max 256 caractères).' });
@@ -2001,9 +2225,29 @@ app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: A
 
     const cleanTitle = title.trim().slice(0, 256);
     const cleanMessage = message.trim().slice(0, 4096);
-    const validAudience = ['tous', 'vendeurs', 'livreurs', 'admins', 'individuel'].includes(audience) ? audience : 'tous';
-    const validChannel = ['notification', 'email', 'both'].includes(channel) ? channel : 'both';
+    const rawAudience = String(audience || targetCategory || 'tous').toLowerCase().trim();
+    const mappedAudience =
+      rawAudience === 'all' ? 'tous' : rawAudience === 'individual' ? 'individuel' : rawAudience;
+    const validAudience = (['tous', 'vendeurs', 'livreurs', 'admins', 'individuel'].includes(mappedAudience)
+      ? mappedAudience
+      : 'tous') as AnnouncementRecord['audience'];
+
+    const resolvedChannelInput =
+      channel ||
+      (sendEmailCopy === false ? 'notification' : sendEmailCopy === true ? 'both' : 'both');
+    const validChannel = (['notification', 'email', 'both'].includes(resolvedChannelInput)
+      ? resolvedChannelInput
+      : 'both') as AnnouncementRecord['channel'];
+
+    const resolvedTargetUid = typeof targetUid === 'string' && targetUid.trim() ? targetUid.trim() : undefined;
+    const rawTargetEmailOrUid = typeof (targetEmail || targetUserEmail) === 'string'
+      ? String(targetEmail || targetUserEmail).trim()
+      : '';
+    const resolvedTargetEmail = rawTargetEmailOrUid.includes('@') ? rawTargetEmailOrUid : undefined;
+    const resolvedFallbackUid = resolvedTargetUid || (!rawTargetEmailOrUid.includes('@') && rawTargetEmailOrUid ? rawTargetEmailOrUid : undefined);
+
     const adminEmail = req.user?.email || 'Pamphile.gbede@gmail.com';
+    const adminUid = req.user?.uid || 'system_admin';
 
     // Retrieve target users from Firestore
     let targetUsers: Array<{ uid: string; email?: string; fullName?: string; role?: string }> = [];
@@ -2013,9 +2257,10 @@ app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: A
         const usersSnap = await firestoreAdmin.collection('users').get();
         usersSnap.forEach((docSnap) => {
           const u = docSnap.data();
-          if (u && u.uid) {
+          const uidVal = String(u?.uid || docSnap.id || '').trim();
+          if (uidVal) {
             targetUsers.push({
-              uid: u.uid,
+              uid: uidVal,
               email: u.email,
               fullName: u.fullName || u.storeName,
               role: u.role,
@@ -2029,10 +2274,12 @@ app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: A
 
     // Filter recipients based on audience
     if (validAudience === 'individuel') {
-      if (targetUid) {
-        targetUsers = targetUsers.filter((u) => u.uid === targetUid);
-      } else if (targetEmail) {
-        targetUsers = targetUsers.filter((u) => u.email?.toLowerCase().trim() === targetEmail.toLowerCase().trim());
+      if (resolvedFallbackUid) {
+        targetUsers = targetUsers.filter((u) => u.uid === resolvedFallbackUid);
+      } else if (resolvedTargetEmail) {
+        targetUsers = targetUsers.filter((u) => u.email?.toLowerCase().trim() === resolvedTargetEmail.toLowerCase());
+      } else {
+        targetUsers = [];
       }
     } else if (validAudience === 'vendeurs') {
       targetUsers = targetUsers.filter((u) => u.role === 'vendeur');
@@ -2042,31 +2289,36 @@ app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: A
       targetUsers = targetUsers.filter((u) => u.role === 'admin' || u.email?.toLowerCase() === 'pamphile.gbede@gmail.com');
     }
 
-    // If targetUsers is empty, construct fallback target if targetUid or targetEmail is provided
-    if (targetUsers.length === 0 && (targetUid || targetEmail)) {
-      targetUsers = [{ uid: targetUid || `uid_${Date.now()}`, email: targetEmail, fullName: 'Utilisateur Cible' }];
+    // If targetUsers is empty, construct fallback target ONLY when explicit individual uid/email is provided
+    if (targetUsers.length === 0 && (resolvedFallbackUid || resolvedTargetEmail)) {
+      targetUsers = [{ uid: resolvedFallbackUid || `uid_${Date.now()}`, email: resolvedTargetEmail, fullName: 'Utilisateur Cible' }];
     }
 
     let successNotifCount = 0;
     let successEmailCount = 0;
     const errors: string[] = [];
 
-    const nowIso = new Date().toISOString();
+    const nowEpoch = Date.now();
+    const nowIso = new Date(nowEpoch).toISOString();
+    const nowTimeStr = new Date(nowEpoch).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const transporter = (validChannel === 'email' || validChannel === 'both') ? getGmailTransporter() : null;
 
     // Dispatch individual notifications to Firestore /notifications collection with recipientId
     for (const target of targetUsers) {
       if (validChannel === 'notification' || validChannel === 'both') {
-        const notifId = `notif_broadcast_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const notifId = `notif_broadcast_${nowEpoch}_${Math.random().toString(36).substring(2, 7)}`;
         const notifDoc = {
           id: notifId,
+          senderId: adminUid,
           recipientId: target.uid,
           type: 'system',
           title: `📢 ${cleanTitle}`,
           message: cleanMessage,
           category: 'annonce',
           isRead: false,
-          timestamp: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-          createdAt: nowIso,
+          read: false,
+          timestamp: nowTimeStr,
+          createdAt: nowEpoch,
         };
 
         if (firestoreAdmin) {
@@ -2081,7 +2333,7 @@ app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: A
         }
       }
 
-      // Dispatch individual emails if requested
+      // Dispatch individual emails via Gmail SMTP if requested and email is present
       if ((validChannel === 'email' || validChannel === 'both') && target.email) {
         try {
           const emailSubject = `📢 LivraLink : ${cleanTitle}`;
@@ -2093,13 +2345,26 @@ app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: A
               </div>
               <div style="padding: 28px 24px;">
                 <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 0 0 12px 0;">${escapeHtml(cleanTitle)}</h2>
-                <p style="font-size: 14px; color: #334155; line-height: 1.6; whitespace-pre-wrap; margin: 0 0 20px 0;">${escapeHtml(cleanMessage)}</p>
+                <p style="font-size: 14px; color: #334155; line-height: 1.6; white-space: pre-wrap; margin: 0 0 20px 0;">${escapeHtml(cleanMessage)}</p>
                 <div style="border-top: 1px solid #f1f5f9; padding-top: 16px; font-size: 11px; color: #94a3b8;">
-                  Message transmis par la Direction LivraLink à <strong>${escapeHtml(target.fullName || target.email)}</strong>.
+                  Message transmis par la Direction LivraLink Bénin à <strong>${escapeHtml(target.fullName || target.email)}</strong>.
                 </div>
               </div>
             </div>
           `;
+
+          let deliveredViaSmtp = false;
+          if (transporter) {
+            const rawFrom = activeSmtpConfig.from || process.env.GMAIL_SMTP_FROM || 'LivraLink <Pamphile.gbede@gmail.com>';
+            await transporter.sendMail({
+              from: rawFrom.replace(/\\"/g, '').trim(),
+              to: target.email,
+              subject: emailSubject,
+              text: `${cleanTitle}\n\n${cleanMessage}\n\n— Direction LivraLink Bénin`,
+              html: emailHtml,
+            });
+            deliveredViaSmtp = true;
+          }
 
           await recordSentEmail({
             type: 'custom',
@@ -2108,9 +2373,11 @@ app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: A
             subject: emailSubject,
             previewText: cleanMessage.slice(0, 150),
             htmlContent: emailHtml,
-            deliveredViaSmtp: true,
+            deliveredViaSmtp,
           });
-          successEmailCount++;
+          if (deliveredViaSmtp) {
+            successEmailCount++;
+          }
         } catch (mErr: any) {
           errors.push(`Erreur e-mail pour ${target.email}: ${mErr?.message}`);
         }
@@ -2118,13 +2385,13 @@ app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: A
     }
 
     const record: AnnouncementRecord = {
-      id: `broadcast_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `broadcast_${nowEpoch}_${Math.random().toString(36).substring(2, 6)}`,
       title: cleanTitle,
       message: cleanMessage,
       audience: validAudience,
       channel: validChannel,
-      targetUid,
-      targetEmail,
+      targetUid: resolvedFallbackUid,
+      targetEmail: resolvedTargetEmail,
       recipientCount: targetUsers.length,
       sentAt: nowIso,
       sentBy: adminEmail,
@@ -2343,7 +2610,7 @@ app.get(['/api/version', '/version.json'], (_req: Request, res: Response) => {
 });
 
 // Security configuration & defensive audit status endpoint
-app.get('/api/security/audit', (_req: Request, res: Response) => {
+app.get('/api/security/audit', requireAdminAuthorization as any, (_req: Request, res: Response) => {
   res.json({
     securityStatus: 'FORTIFIED',
     timestamp: new Date().toISOString(),
@@ -2391,7 +2658,7 @@ app.get('/api/security/audit', (_req: Request, res: Response) => {
 // =========================================================================
 // POINT 02 & 03: ENDPOINT D'AUDIT DU BUDGET & PLAFONDS D'APPELS D'API
 // =========================================================================
-app.get('/api/security/budget', (_req: Request, res: Response) => {
+app.get('/api/security/budget', requireAdminAuthorization as any, (_req: Request, res: Response) => {
   checkAndResetDailyQuotas();
   const totalCost = calculateTotalEstimatedCostToday();
   res.json({
@@ -2428,16 +2695,421 @@ app.get('/api/security/budget', (_req: Request, res: Response) => {
 });
 
 // =========================================================================
+// TRUSTED BACKEND DELIVERY OTP VERIFICATION, POD COMPLETION & NOTIFICATIONS
+// =========================================================================
+const podOtpVerifyAttempts = new Map<string, { failures: number; resetAt: number }>();
+
+const getAssignedCourierIdFromOrder = (data: Record<string, any> | undefined): string => {
+  if (!data) return '';
+  if (typeof data.courierId === 'string' && data.courierId.trim().length > 0) {
+    return data.courierId.trim();
+  }
+  if (data.courier && typeof data.courier.id === 'string' && data.courier.id.trim().length > 0) {
+    return data.courier.id.trim();
+  }
+  return '';
+};
+
+const signPodOtpToken = (orderDocId: string, courierUid: string, expiresAt: number): string => {
+  const payload = `${orderDocId}:${courierUid}:${expiresAt}`;
+  const sig = crypto.createHmac('sha256', OTP_SECRET_SALT).update(payload).digest('hex');
+  return `${expiresAt}.${sig}`;
+};
+
+const verifyPodOtpToken = (token: string, orderDocId: string, courierUid: string): boolean => {
+  if (typeof token !== 'string' || !token.includes('.')) return false;
+  const [expiresStr, providedSig] = token.split('.');
+  const expiresAt = parseInt(expiresStr, 10);
+  if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) return false;
+  if (!/^[a-f0-9]{64}$/i.test(providedSig || '')) return false;
+  const expectedSig = crypto
+    .createHmac('sha256', OTP_SECRET_SALT)
+    .update(`${orderDocId}:${courierUid}:${expiresAt}`)
+    .digest('hex');
+  const a = Buffer.from(providedSig, 'hex');
+  const b = Buffer.from(expectedSig, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+
+const isTrustedFirebaseStorageUrl = (url: unknown): url is string => {
+  if (typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed || trimmed.length > 2000) return false;
+  return (
+    trimmed.startsWith('https://firebasestorage.googleapis.com/') ||
+    trimmed.startsWith('https://storage.googleapis.com/')
+  );
+};
+
+app.post('/api/deliveries/:orderId/otp/verify', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!firestoreAdmin) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const cleanDocId = String(req.params.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!cleanDocId) {
+      return res.status(400).json({ success: false, error: 'Identifiant de livraison invalide.' });
+    }
+    const rawCode = String(req.body?.otpCode || '').trim();
+    if (!/^\d{4}$/.test(rawCode)) {
+      return res.status(400).json({ success: false, error: 'Code OTP à 4 chiffres requis.' });
+    }
+
+    const callerUid = req.user!.uid;
+    const isAdmin = await checkCallerIsAdmin(req.user);
+
+    const attemptKey = `${cleanDocId}:${callerUid}`;
+    const now = Date.now();
+    const attemptEntry = podOtpVerifyAttempts.get(attemptKey);
+    if (attemptEntry && now < attemptEntry.resetAt && attemptEntry.failures >= 5) {
+      return res.status(429).json({
+        success: false,
+        error: 'Trop de tentatives de vérification OTP pour cette course. Veuillez patienter 10 minutes.',
+      });
+    }
+
+    const deliveryRef = firestoreAdmin.collection('deliveries').doc(cleanDocId);
+    const [deliverySnap, otpSnap] = await Promise.all([
+      deliveryRef.get(),
+      deliveryRef.collection('private').doc('otp').get(),
+    ]);
+
+    if (!deliverySnap.exists) {
+      return res.status(404).json({ success: false, error: 'Livraison introuvable.' });
+    }
+
+    const deliveryData = deliverySnap.data() || {};
+    const assignedCourierId = getAssignedCourierIdFromOrder(deliveryData);
+
+    if (!isAdmin) {
+      if (!assignedCourierId || assignedCourierId !== callerUid) {
+        recordSecurityAnomaly(getClientIp(req), 'UNAUTHORIZED_OTP_VERIFY', `Tentative OTP sur ${cleanDocId} par non-assigné ${callerUid}`);
+        return res.status(403).json({ success: false, error: 'Seul le livreur assigné à cette course peut vérifier le code OTP.' });
+      }
+      if (!['colis_recupere', 'en_cours'].includes(deliveryData.status)) {
+        return res.status(400).json({ success: false, error: 'Le colis doit être récupéré ou en cours de livraison avant de vérifier le code OTP.' });
+      }
+    }
+
+    const storedOtp = String(otpSnap.exists ? otpSnap.data()?.otpCode || '' : '').trim();
+    if (!/^\d{4}$/.test(storedOtp)) {
+      return res.status(400).json({ success: false, error: 'Aucun code OTP actif enregistré pour cette livraison.' });
+    }
+
+    const a = Buffer.from(rawCode, 'utf8');
+    const b = Buffer.from(storedOtp, 'utf8');
+    const isMatch = a.length === b.length && crypto.timingSafeEqual(a, b);
+
+    if (!isMatch) {
+      const nextFailures = (!attemptEntry || now >= attemptEntry.resetAt) ? 1 : attemptEntry.failures + 1;
+      podOtpVerifyAttempts.set(attemptKey, { failures: nextFailures, resetAt: now + 10 * 60 * 1000 });
+      return res.status(400).json({
+        success: false,
+        verified: false,
+        error: `Code OTP incorrect (#${rawCode}). Demandez au client le code à 4 chiffres transmis par le vendeur.`,
+      });
+    }
+
+    podOtpVerifyAttempts.delete(attemptKey);
+    const expiresAt = now + 15 * 60 * 1000;
+    const podOtpToken = signPodOtpToken(cleanDocId, callerUid, expiresAt);
+
+    return res.json({
+      success: true,
+      verified: true,
+      podOtpToken,
+      expiresAt,
+      message: 'Code OTP vérifié avec succès.',
+    });
+  } catch (err: any) {
+    console.error('[DELIVERY-OTP-VERIFY ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la vérification du code OTP.' });
+  }
+});
+
+app.post('/api/deliveries/:orderId/complete-pod', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!firestoreAdmin) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const cleanDocId = String(req.params.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!cleanDocId) {
+      return res.status(400).json({ success: false, error: 'Identifiant de livraison invalide.' });
+    }
+
+    const callerUid = req.user!.uid;
+    const isAdmin = await checkCallerIsAdmin(req.user);
+    const { otpCode, podOtpToken, photoUrl, signatureDataUrl, signedByName } = req.body || {};
+
+    const deliveryRef = firestoreAdmin.collection('deliveries').doc(cleanDocId);
+    const missionRef = firestoreAdmin.collection('priority_missions').doc(cleanDocId);
+    const [deliverySnap, missionSnap, otpSnap] = await Promise.all([
+      deliveryRef.get(),
+      missionRef.get(),
+      deliveryRef.collection('private').doc('otp').get(),
+    ]);
+
+    if (!deliverySnap.exists) {
+      return res.status(404).json({ success: false, error: 'Livraison introuvable dans Firestore.' });
+    }
+
+    const deliveryData = deliverySnap.data() || {};
+    if (deliveryData.status === 'livree' || deliveryData.status === 'echec') {
+      return res.status(409).json({ success: false, error: 'Cette livraison est déjà clôturée.' });
+    }
+
+    const assignedCourierId = getAssignedCourierIdFromOrder(deliveryData);
+    if (!isAdmin) {
+      if (!assignedCourierId || assignedCourierId !== callerUid) {
+        recordSecurityAnomaly(getClientIp(req), 'UNAUTHORIZED_POD_COMPLETION', `Tentative POD sur ${cleanDocId} par non-assigné ${callerUid}`);
+        return res.status(403).json({ success: false, error: 'Seul le livreur assigné peut certifier la livraison.' });
+      }
+      if (!['colis_recupere', 'en_cours'].includes(deliveryData.status)) {
+        return res.status(400).json({ success: false, error: 'Statut invalide : le colis doit être récupéré ou en transit avant certification POD.' });
+      }
+      if (!isTrustedFirebaseStorageUrl(photoUrl) || !isTrustedFirebaseStorageUrl(signatureDataUrl)) {
+        return res.status(400).json({ success: false, error: 'Les preuves photo et signature doivent être téléchargées dans Firebase Storage avant validation finale.' });
+      }
+    }
+
+    // Verify OTP (via signed podOtpToken OR direct timing-safe check against private/otp; admins can force-complete)
+    const cleanOtp = String(otpCode || '').trim();
+    let otpVerified = false;
+    if (podOtpToken && verifyPodOtpToken(String(podOtpToken), cleanDocId, callerUid)) {
+      otpVerified = true;
+    } else if (/^\d{4}$/.test(cleanOtp) && otpSnap.exists) {
+      const storedOtp = String(otpSnap.data()?.otpCode || '').trim();
+      if (/^\d{4}$/.test(storedOtp)) {
+        const a = Buffer.from(cleanOtp, 'utf8');
+        const b = Buffer.from(storedOtp, 'utf8');
+        otpVerified = a.length === b.length && crypto.timingSafeEqual(a, b);
+      }
+    }
+
+    if (!otpVerified && !isAdmin) {
+      return res.status(403).json({ success: false, error: 'Validation du code secret OTP requise avant de clôturer la livraison.' });
+    }
+
+    const cleanSigner = String(signedByName || deliveryData.clientName || 'Destinataire').trim().slice(0, 128);
+    const nowTime = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const nowEpoch = Date.now();
+    const statusNote = isAdmin && !otpVerified
+      ? `Livrée avec succès (Validation Administrative par ${req.user?.email || callerUid})`
+      : `Livrée avec succès (Preuve Tri-Facteur certifiée • Signature de ${cleanSigner})`;
+
+    const podData = {
+      type: isAdmin && !otpVerified ? 'admin_override' : 'complete_tri_factor',
+      otpVerified,
+      otpCode: otpVerified ? '••••' : 'ADMIN',
+      photoUrl: isTrustedFirebaseStorageUrl(photoUrl) ? photoUrl.trim() : '',
+      signatureDataUrl: isTrustedFirebaseStorageUrl(signatureDataUrl) ? signatureDataUrl.trim() : '',
+      signedByName: cleanSigner,
+      validatedAt: nowTime,
+      validatedTimestamp: nowEpoch,
+      verifiedByServer: true,
+    };
+
+    const batch = firestoreAdmin.batch();
+    batch.update(deliveryRef, {
+      status: 'livree',
+      statusNote,
+      podData,
+      deliveredAt: nowEpoch,
+      updatedAt: nowEpoch,
+    });
+    if (missionSnap.exists) {
+      batch.update(missionRef, {
+        status: 'livree',
+        completedAt: nowEpoch,
+        updatedAt: new Date(nowEpoch).toISOString(),
+      });
+    }
+
+    // Create trusted server-side notifications for merchant & courier
+    const orderDisplayId = String(deliveryData.id || `#${cleanDocId}`);
+    if (deliveryData.merchantId) {
+      const mNotifId = `notif_pod_m_${cleanDocId}_${nowEpoch}`.replace(/[^a-zA-Z0-9_-]/g, '');
+      batch.set(firestoreAdmin.collection('notifications').doc(mNotifId), {
+        id: mNotifId,
+        senderId: 'system_backend',
+        recipientId: deliveryData.merchantId,
+        title: '✅ Certificat de livraison POD validé',
+        message: `La livraison ${orderDisplayId} a été remise à ${cleanSigner} et certifiée par le serveur.`,
+        type: 'pod_validated',
+        orderId: orderDisplayId,
+        orderDocId: cleanDocId,
+        actionView: 'vendeur_tracking',
+        isRead: false,
+        read: false,
+        createdAt: nowEpoch,
+        timestamp: nowTime,
+      });
+    }
+    if (assignedCourierId && assignedCourierId !== deliveryData.merchantId) {
+      const cNotifId = `notif_pod_c_${cleanDocId}_${nowEpoch}`.replace(/[^a-zA-Z0-9_-]/g, '');
+      batch.set(firestoreAdmin.collection('notifications').doc(cNotifId), {
+        id: cNotifId,
+        senderId: 'system_backend',
+        recipientId: assignedCourierId,
+        title: '🎉 Livraison certifiée',
+        message: `La preuve POD de la course ${orderDisplayId} a été enregistrée avec succès.`,
+        type: 'pod_validated',
+        orderId: orderDisplayId,
+        orderDocId: cleanDocId,
+        actionView: 'livreur_missions',
+        isRead: false,
+        read: false,
+        createdAt: nowEpoch,
+        timestamp: nowTime,
+      });
+    }
+
+    await batch.commit();
+
+    return res.json({
+      success: true,
+      orderId: orderDisplayId,
+      podData,
+      deliveredAt: nowEpoch,
+      statusNote,
+    });
+  } catch (err: any) {
+    console.error('[COMPLETE-POD ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la certification finale de la livraison.' });
+  }
+});
+
+app.post('/api/notifications/dispatch', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!firestoreAdmin) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const callerUid = req.user!.uid;
+    const isAdmin = await checkCallerIsAdmin(req.user);
+    const { type, recipientId, title, message, orderId, actionView, dedupKey } = req.body || {};
+
+    const cleanTitle = String(title || '').trim().slice(0, 256);
+    const cleanMessage = String(message || '').trim().slice(0, 2048);
+    if (!cleanTitle || !cleanMessage) {
+      return res.status(400).json({ success: false, error: 'Titre et message requis.' });
+    }
+
+    const allowedDeliveryTypes = ['order_created', 'order_accepted', 'order_status', 'pod_validated', 'priority_mission'];
+    const requestedType = String(type || 'order_status').trim();
+
+    let verifiedRecipientId = '';
+    let resolvedOrderDocId = '';
+
+    if (isAdmin && recipientId && typeof recipientId === 'string') {
+      verifiedRecipientId = recipientId.replace(/[^a-zA-Z0-9_-]/g, '');
+    } else {
+      if (!allowedDeliveryTypes.includes(requestedType)) {
+        return res.status(403).json({ success: false, error: 'Type de notification réservé à l\'administration ou au système.' });
+      }
+      const cleanOrderDocId = String(orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      if (!cleanOrderDocId) {
+        return res.status(400).json({ success: false, error: 'Identifiant de commande vérifiable requis.' });
+      }
+      const deliverySnap = await firestoreAdmin.collection('deliveries').doc(cleanOrderDocId).get();
+      const missionSnap = !deliverySnap.exists ? await firestoreAdmin.collection('priority_missions').doc(cleanOrderDocId).get() : null;
+      const orderData = deliverySnap.exists ? deliverySnap.data() : (missionSnap?.exists ? missionSnap.data() : null);
+
+      if (!orderData) {
+        return res.status(404).json({ success: false, error: 'Livraison introuvable pour cette notification.' });
+      }
+
+      const assignedCourierId = getAssignedCourierIdFromOrder(orderData);
+      const isMerchantCaller = orderData.merchantId === callerUid;
+      const isAssignedCourierCaller = Boolean(assignedCourierId && assignedCourierId === callerUid);
+      if (!isMerchantCaller && !isAssignedCourierCaller) {
+        return res.status(403).json({ success: false, error: 'Vous n\'êtes pas autorisé à notifier pour cette livraison.' });
+      }
+
+      // Authenticate event against actual Firestore state
+      const status = String(orderData.status || '');
+      if (requestedType === 'order_accepted' && !['assignee', 'acceptee', 'colis_recupere', 'en_cours', 'livree'].includes(status)) {
+        return res.status(409).json({ success: false, error: 'Transition de statut non confirmée dans Firestore.' });
+      }
+      if (requestedType === 'pod_validated' && status !== 'livree') {
+        return res.status(409).json({ success: false, error: 'Livraison non marquée livrée dans Firestore.' });
+      }
+
+      resolvedOrderDocId = cleanOrderDocId;
+      // Target counterparty (never spoof arbitrary third-party UIDs)
+      if (isMerchantCaller && assignedCourierId && recipientId === assignedCourierId) {
+        verifiedRecipientId = assignedCourierId;
+      } else if (isAssignedCourierCaller && orderData.merchantId) {
+        verifiedRecipientId = String(orderData.merchantId);
+      } else {
+        verifiedRecipientId = callerUid;
+      }
+    }
+
+    if (!verifiedRecipientId) {
+      return res.status(400).json({ success: false, error: 'Destinataire vérifié introuvable.' });
+    }
+
+    // Unambiguous SHA-256 JSON canonical ID when dedupKey is provided
+    const notifId = dedupKey
+      ? `notif_${crypto
+          .createHash('sha256')
+          .update(JSON.stringify([requestedType, verifiedRecipientId, resolvedOrderDocId || null, String(dedupKey)]))
+          .digest('hex')
+          .slice(0, 32)}`
+      : `notif_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+
+    const nowEpoch = Date.now();
+    const notifPayload: Record<string, any> = {
+      id: notifId,
+      senderId: isAdmin ? callerUid : 'system_backend',
+      recipientId: verifiedRecipientId,
+      title: cleanTitle,
+      message: cleanMessage,
+      type: requestedType,
+      isRead: false,
+      read: false,
+      createdAt: nowEpoch,
+      timestamp: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+    };
+    if (resolvedOrderDocId) notifPayload.orderDocId = resolvedOrderDocId;
+    if (orderId) notifPayload.orderId = String(orderId).slice(0, 64);
+    if (actionView) notifPayload.actionView = String(actionView).slice(0, 64);
+
+    await firestoreAdmin.collection('notifications').doc(notifId).set(notifPayload, { merge: false });
+
+    return res.status(201).json({ success: true, id: notifId, notification: notifPayload });
+  } catch (err: any) {
+    if (err?.code === 6 || String(err?.message || '').includes('ALREADY_EXISTS')) {
+      return res.json({ success: true, duplicateBlocked: true });
+    }
+    console.error('[NOTIFICATIONS-DISPATCH ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la création de la notification sécurisée.' });
+  }
+});
+
+// =========================================================================
 // POINT 10: VÉRIFICATION & VERROU D'IDEMPOTENCE POUR PAIEMENT / RETRAIT
 // =========================================================================
-app.post('/api/wallet/verify-idempotency', (req: Request, res: Response) => {
+app.post('/api/wallet/verify-idempotency', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
   const { idempotencyKey, userId, amount } = req.body || {};
   if (!idempotencyKey || typeof idempotencyKey !== 'string') {
     return res.status(400).json({ allowed: false, error: 'Clé d\'idempotence manquante ou invalide.' });
   }
 
-  // Check if this exact transaction was already completed
-  if (processedIdempotencyKeys.has(idempotencyKey)) {
+  const callerUid = req.user!.uid;
+  if (userId && userId !== callerUid) {
+    recordSecurityAnomaly(getClientIp(req), 'WALLET_ID_SPOOF_ATTEMPT', `Tentative verify-idempotency pour ${userId} par ${callerUid}`);
+    return res.status(403).json({ allowed: false, error: 'Accès refusé : identifiant portefeuille non conforme.' });
+  }
+
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 1000) {
+    return res.status(400).json({ allowed: false, error: 'Montant de retrait invalide (minimum 1 000 FCFA).' });
+  }
+
+  const scopedKey = `${callerUid}:${idempotencyKey}`;
+  const docKeyId = crypto.createHash('sha256').update(scopedKey).digest('hex').slice(0, 40);
+
+  if (processedIdempotencyKeys.has(scopedKey)) {
     return res.status(409).json({
       allowed: false,
       alreadyProcessed: true,
@@ -2445,8 +3117,23 @@ app.post('/api/wallet/verify-idempotency', (req: Request, res: Response) => {
     });
   }
 
-  // Check if an identical payout for the same user is currently processing
-  const userLockKey = `lock_${userId || 'anon'}`;
+  if (firestoreAdmin) {
+    try {
+      const existingKeySnap = await firestoreAdmin.collection('payout_idempotency').doc(docKeyId).get();
+      if (existingKeySnap.exists && existingKeySnap.data()?.status === 'committed') {
+        processedIdempotencyKeys.add(scopedKey);
+        return res.status(409).json({
+          allowed: false,
+          alreadyProcessed: true,
+          error: 'Cette opération de retrait a déjà été exécutée (registre Firestore). Double débit prévenu.',
+        });
+      }
+    } catch (fsErr: any) {
+      console.warn('[WALLET IDEMPOTENCY] Firestore check fallback:', fsErr?.message);
+    }
+  }
+
+  const userLockKey = `lock_${callerUid}`;
   const lockTime = inFlightPayoutLocks.get(userLockKey);
   const now = Date.now();
 
@@ -2458,8 +3145,21 @@ app.post('/api/wallet/verify-idempotency', (req: Request, res: Response) => {
     });
   }
 
-  // Acquire lock for 8 seconds
   inFlightPayoutLocks.set(userLockKey, now);
+
+  if (firestoreAdmin) {
+    try {
+      await firestoreAdmin.collection('payout_idempotency').doc(docKeyId).set({
+        id: docKeyId,
+        uid: callerUid,
+        idempotencyKey: String(idempotencyKey).slice(0, 128),
+        amount,
+        status: 'locked',
+        lockedUntil: now + 8000,
+        createdAt: now,
+      }, { merge: true });
+    } catch {}
+  }
 
   res.json({
     allowed: true,
@@ -2468,17 +3168,55 @@ app.post('/api/wallet/verify-idempotency', (req: Request, res: Response) => {
   });
 });
 
-app.post('/api/wallet/commit-payout', (req: Request, res: Response) => {
+app.post('/api/wallet/commit-payout', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
   const { idempotencyKey, userId, amount } = req.body || {};
-  if (!idempotencyKey) {
+  if (!idempotencyKey || typeof idempotencyKey !== 'string') {
     return res.status(400).json({ success: false, error: 'Clé d\'idempotence requise.' });
   }
 
-  // Mark as processed permanently
-  processedIdempotencyKeys.add(idempotencyKey);
-  if (userId) {
-    inFlightPayoutLocks.delete(`lock_${userId}`);
+  const callerUid = req.user!.uid;
+  if (userId && userId !== callerUid) {
+    recordSecurityAnomaly(getClientIp(req), 'WALLET_ID_SPOOF_ATTEMPT', `Tentative commit-payout pour ${userId} par ${callerUid}`);
+    return res.status(403).json({ success: false, error: 'Accès refusé : identifiant portefeuille non conforme.' });
   }
+
+  const scopedKey = `${callerUid}:${idempotencyKey}`;
+  const docKeyId = crypto.createHash('sha256').update(scopedKey).digest('hex').slice(0, 40);
+  if (processedIdempotencyKeys.has(scopedKey)) {
+    return res.status(409).json({
+      success: false,
+      alreadyProcessed: true,
+      error: 'Ce retrait a déjà été confirmé précédemment.',
+    });
+  }
+
+  if (firestoreAdmin) {
+    try {
+      const docRef = firestoreAdmin.collection('payout_idempotency').doc(docKeyId);
+      const snap = await docRef.get();
+      if (snap.exists && snap.data()?.status === 'committed') {
+        processedIdempotencyKeys.add(scopedKey);
+        return res.status(409).json({
+          success: false,
+          alreadyProcessed: true,
+          error: 'Ce retrait a déjà été confirmé dans Firestore.',
+        });
+      }
+      await docRef.set({
+        id: docKeyId,
+        uid: callerUid,
+        idempotencyKey: String(idempotencyKey).slice(0, 128),
+        amount: typeof amount === 'number' && Number.isFinite(amount) ? amount : null,
+        status: 'committed',
+        committedAt: Date.now(),
+      }, { merge: true });
+    } catch (fsErr: any) {
+      console.warn('[WALLET COMMIT] Firestore persist fallback:', fsErr?.message);
+    }
+  }
+
+  processedIdempotencyKeys.add(scopedKey);
+  inFlightPayoutLocks.delete(`lock_${callerUid}`);
 
   res.json({
     success: true,
@@ -2490,17 +3228,18 @@ app.post('/api/wallet/commit-payout', (req: Request, res: Response) => {
 // =========================================================================
 // POINT 18: JOURNAL D'AUDIT CENTRALISÉ DES ERREURS
 // =========================================================================
-app.post('/api/logs/error', (req: Request, res: Response) => {
+app.post('/api/logs/error', requireAuthenticatedUser as any, (req: AuthenticatedRequest, res: Response) => {
   const { message, source, stack, details } = req.body || {};
   const ip = getClientIp(req);
+  const safeDetails = details && typeof details === 'object' ? JSON.stringify(details).slice(0, 500) : undefined;
   const entry: ErrorLogEntry = {
     id: `LOG-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     timestamp: new Date().toISOString(),
     ip,
     message: String(message || 'Erreur non spécifiée').slice(0, 500),
-    source: String(source || 'client').slice(0, 100),
+    source: `${req.user?.uid || 'auth'}:${String(source || 'client').slice(0, 80)}`,
     stack: stack ? String(stack).slice(0, 2000) : undefined,
-    details,
+    details: safeDetails,
   };
 
   errorAuditRingBuffer.unshift(entry);
@@ -2536,7 +3275,7 @@ app.get('/api/monitoring/heartbeat', (_req: Request, res: Response) => {
   });
 });
 
-app.get('/api/monitoring/status', (_req: Request, res: Response) => {
+app.get('/api/monitoring/status', requireAdminAuthorization as any, (_req: Request, res: Response) => {
   res.json({
     ...uptimeTracker,
     systemUptime: process.uptime(),
@@ -3389,4 +4128,6 @@ async function startServer() {
   bindServer();
 }
 
-startServer();
+if (process.env.NODE_ENV !== 'test') {
+  startServer();
+}

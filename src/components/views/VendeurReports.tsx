@@ -4,6 +4,7 @@ import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
 import { filterVendorDeliveries, buildVendorDeliveryCsv } from '../../utils/deliveryIsolation';
+import { buildVendorPdfReportBytes } from '../../utils/pdfReportGenerator';
 
 export const VendeurReports: React.FC = () => {
   const {
@@ -61,10 +62,36 @@ export const VendeurReports: React.FC = () => {
     .slice(0, 3);
 
   const handleExportPDF = () => {
-    showToast('Export du rapport consolidé PDF en cours...', 'info');
-    setTimeout(() => {
-      showToast('Rapport PDF téléchargé avec succès !', 'success');
-    }, 1200);
+    try {
+      const rangeLabels: Record<'today' | 'week' | 'month' | 'year', string> = {
+        today: "Aujourd'hui",
+        week: '7 derniers jours',
+        month: 'Ce mois',
+        year: 'Annee complete',
+      };
+      const { pdfBytes, filename } = buildVendorPdfReportBytes({
+        storeName: merchantSettings.storeName || userProfile?.storeName || 'Boutique LivraLink',
+        timeRangeLabel: rangeLabels[timeRange],
+        totalOrders,
+        deliveredOrders,
+        deliverySuccessRate,
+        totalCODCollected,
+        totalDeliveryFees,
+        deliveries: merchantDeliveries,
+      });
+      const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      showToast(`Rapport PDF téléchargé (${merchantDeliveries.length} course${merchantDeliveries.length > 1 ? 's' : ''}) !`, 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Erreur lors de la génération du rapport PDF.', 'error');
+    }
   };
 
   const handleExportExcel = () => {

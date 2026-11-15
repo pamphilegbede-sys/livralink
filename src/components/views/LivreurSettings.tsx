@@ -7,6 +7,8 @@ import { BackButton } from '../common/BackButton';
 import { BeninZoneSelector } from '../common/BeninZoneSelector';
 import { DarkModeToggle } from '../common/DarkModeToggle';
 import { WorkingHoursScheduler } from '../common/WorkingHoursScheduler';
+import { doc, updateDoc } from 'firebase/firestore';
+import { auth, db } from '../../firebase/config';
 
 interface ValidationResult {
   id: string;
@@ -111,6 +113,16 @@ export const LivreurSettings: React.FC = () => {
       try {
         localStorage.setItem(`livralink_courier_settings_${userProfile.uid}`, JSON.stringify(updated));
       } catch {}
+    }
+    if (auth.currentUser && auth.currentUser.emailVerified && userProfile?.uid === auth.currentUser.uid) {
+      updateDoc(doc(db, 'users', auth.currentUser.uid), {
+        fullName: fullName.trim(),
+        phone: phone.trim(),
+        vehicleType,
+        updatedAt: new Date().toISOString(),
+      }).catch((err: any) => {
+        console.warn('Notice synchro profil livreur Firestore:', err?.message || err);
+      });
     }
     showToast('Paramètres Livreur enregistrés avec succès !', 'success');
   };
@@ -632,7 +644,7 @@ export const LivreurSettings: React.FC = () => {
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-blue-600 dark:text-blue-400">shield</span>
               <span className="text-slate-700 dark:text-slate-300 font-bold">
-                Session Livreur Sécurisée • Assistance Dispatch 24/7 (01 02 03 04)
+                Session Livreur Sécurisée • Support Dispatch (support@livralink.oxy-dev.cc)
               </span>
             </div>
 

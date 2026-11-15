@@ -35,6 +35,16 @@ export async function uploadFileToStorage(
   fileOrDataUrl: File | Blob | string,
   customContentType?: string
 ): Promise<string> {
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error('Authentification Firebase requise pour téléverser un fichier vers le stockage sécurisé.');
+  }
+
+  const baseCustomMetadata = {
+    uploadedBy: currentUser.uid,
+    uploadedAt: new Date().toISOString(),
+  };
+
   try {
     const storageRef = ref(storage, storagePath);
 
@@ -43,43 +53,33 @@ export async function uploadFileToStorage(
         const { blob, contentType } = dataUrlToBlob(fileOrDataUrl);
         const metadata = {
           contentType: customContentType || contentType,
-          customMetadata: {
-            uploadedBy: auth.currentUser?.uid || 'anonymous',
-            uploadedAt: new Date().toISOString(),
-          },
+          customMetadata: baseCustomMetadata,
         };
         await uploadBytes(storageRef, blob, metadata);
-      } else if (fileOrDataUrl.startsWith('http://') || fileOrDataUrl.startsWith('https://')) {
-        // If it's already an uploaded cloud URL, return as-is
+      } else if (fileOrDataUrl.startsWith('https://firebasestorage.googleapis.com/') || fileOrDataUrl.includes('.firebasestorage.app/')) {
+        // Already uploaded to trusted Firebase Storage
         return fileOrDataUrl;
+      } else if (fileOrDataUrl.startsWith('http://') || fileOrDataUrl.startsWith('https://')) {
+        throw new Error('URL externe non autorisée comme preuve stockée. Veuillez capturer ou téléverser un fichier.');
       } else {
-        // Raw string (e.g., svg or base64 without prefix)
         await uploadString(storageRef, fileOrDataUrl, 'raw', {
           contentType: customContentType || 'text/plain',
+          customMetadata: baseCustomMetadata,
         });
       }
     } else {
-      // File or Blob
       const metadata = {
         contentType: customContentType || (fileOrDataUrl as File).type || 'application/octet-stream',
-        customMetadata: {
-          uploadedBy: auth.currentUser?.uid || 'anonymous',
-          uploadedAt: new Date().toISOString(),
-        },
+        customMetadata: baseCustomMetadata,
       };
       await uploadBytes(storageRef, fileOrDataUrl, metadata);
     }
 
     const downloadUrl = await getDownloadURL(storageRef);
-    console.log(`[Firebase Storage] Fichier téléchargé avec succès: ${storagePath}`);
     return downloadUrl;
   } catch (error: any) {
-    console.warn(`[Firebase Storage] Note de stockage (${storagePath}):`, error?.message || error);
-    // If offline or storage network issues, return the original data URL safely to prevent UX disruption
-    if (typeof fileOrDataUrl === 'string') {
-      return fileOrDataUrl;
-    }
-    return URL.createObjectURL(fileOrDataUrl);
+    const msg = error?.message || 'Échec du téléversement vers Firebase Storage.';
+    throw new Error(`Erreur de stockage (${storagePath}) : ${msg}`);
   }
 }
 

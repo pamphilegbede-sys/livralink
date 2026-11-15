@@ -11,47 +11,146 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isMasterAdminEmail() {
+      return isVerifiedUser() &&
+             request.auth.token.email != null &&
+             request.auth.token.email.matches('(?i)^pamphile\\.gbede@gmail\\.com$');
+    }
+
+    // Synchronized with Firestore admins collection & users.role == 'admin' on named database
+    // (Max 2 Firestore lookups when called standalone)
     function isAdmin() {
-      return isSignedIn() && (
-        (request.auth.token.email == "pamphile.gbede@gmail.com" && request.auth.token.email_verified == true)
+      return isMasterAdminEmail() || (
+        isVerifiedUser() && (
+          firestore.exists(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/admins/$(request.auth.uid)) ||
+          (
+            firestore.exists(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/users/$(request.auth.uid)) &&
+            firestore.get(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/users/$(request.auth.uid)).data.role == 'admin'
+          )
+        )
       );
     }
 
+    // Single-lookup admin check used alongside a resource lookup (keeps total lookups <= 2)
+    function isAdminSingleLookup() {
+      return isMasterAdminEmail() || (
+        isVerifiedUser() &&
+        firestore.exists(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function hasValidUploaderMetadata() {
+      return request.resource != null &&
+             request.resource.metadata != null &&
+             'uploadedBy' in request.resource.metadata &&
+             request.resource.metadata.uploadedBy == request.auth.uid;
+    }
+
+    function isAssignedCourierForOrder(orderData) {
+      return (
+        ('courierId' in orderData && orderData.courierId is string && orderData.courierId.size() >= 1 && orderData.courierId == request.auth.uid) ||
+        ('courier' in orderData && orderData.courier is map && 'id' in orderData.courier && orderData.courier.id is string && orderData.courier.id.size() >= 1 && orderData.courier.id == request.auth.uid)
+      );
+    }
+
+    function isDeliveryParticipant(orderId) {
+      return isVerifiedUser() &&
+             firestore.exists(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/deliveries/$(orderId)) &&
+             (
+               firestore.get(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/deliveries/$(orderId)).data.merchantId == request.auth.uid ||
+               isAssignedCourierForOrder(firestore.get(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/deliveries/$(orderId)).data)
+             );
+    }
+
+    function isKycVerifiedCourier() {
+      return isVerifiedUser() &&
+             firestore.exists(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/users/$(request.auth.uid)) &&
+             firestore.get(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/users/$(request.auth.uid)).data.role == 'livreur' &&
+             firestore.get(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/users/$(request.auth.uid)).data.isKycVerified == true;
+    }
+
     // 1. User Profile Avatars: /avatars/{userId}/{fileName}
-    // - Read: any authenticated user
-    // - Write: only the owner or super-admin, image only, max 5MB
     match /avatars/{userId}/{fileName} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn() && (request.auth.uid == userId || isAdmin())
-                   && request.resource.size < 5 * 1024 * 1024
-                   && request.resource.contentType.matches('image/.*');
+      allow create, update: if isSignedIn()
+                            && (request.auth.uid == userId || isAdmin())
+                            && request.resource != null
+                            && request.resource.size < 5 * 1024 * 1024
+                            && request.resource.contentType.matches('image/.*')
+                            && hasValidUploaderMetadata();
+      allow delete: if isSignedIn() && (request.auth.uid == userId || isAdmin());
     }
 
     // 2. KYC Identification Documents: /kyc/{userId}/{fileName}
-    // - Read: only the owner or super-admin (strictly private)
-    // - Write: only the owner, max 10MB, images or PDF documents
+    //    - Read: owner or admin
+    //    - Create: verified owner (when dossier not yet submitted or refused) or admin, no overwrite of submitted/validated docs
     match /kyc/{userId}/{fileName} {
       allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      allow write: if isSignedIn() && (request.auth.uid == userId || isAdmin())
-                   && request.resource.size < 10 * 1024 * 1024
-                   && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf');
+      allow create: if isVerifiedUser()
+                    && request.resource != null
+                    && request.resource.size < 10 * 1024 * 1024
+                    && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf')
+                    && hasValidUploaderMetadata()
+                    && (
+                      (
+                        request.auth.uid == userId && (
+                          !firestore.exists(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/kyc/$(userId)) ||
+                          firestore.get(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/kyc/$(userId)).data.status == 'refuse'
+                        )
+                      ) ||
+                      isAdmin()
+                    );
+      allow update, delete: if isAdmin();
     }
 
     // 3. Proof of Delivery (POD) Photos & Signatures: /pod/{orderId}/{fileName}
-    // - Read: authenticated participants & admin
-    // - Write: authenticated couriers & admin, max 10MB, images only
+    //    - Read: delivery participants (merchant or assigned courier) or admin
+    //    - Create only (immutable proofs): assigned courier during active delivery ('colis_recupere' or 'en_cours')
     match /pod/{orderId}/{fileName} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn()
-                   && request.resource.size < 10 * 1024 * 1024
-                   && request.resource.contentType.matches('image/.*');
+      allow read: if isVerifiedUser() && (
+        isMasterAdminEmail() ||
+        isDeliveryParticipant(orderId) ||
+        isAdminSingleLookup()
+      );
+      allow create: if isKycVerifiedCourier()
+                    && request.resource != null
+                    && request.resource.size < 10 * 1024 * 1024
+                    && request.resource.contentType.matches('image/.*')
+                    && hasValidUploaderMetadata()
+                    && firestore.exists(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/deliveries/$(orderId))
+                    && firestore.get(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/deliveries/$(orderId)).data.status in ['colis_recupere', 'en_cours']
+                    && isAssignedCourierForOrder(firestore.get(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/deliveries/$(orderId)).data);
+      allow update, delete: if isAdmin();
     }
 
     // 4. Chat attachments / Media: /chat/{conversationId}/{fileName}
-    // - Read, write: authenticated participants, max 15MB
+    //    - Read: verified conversation participants or admin (no request.resource check on read!)
+    //    - Create: verified conversation participants, max 15MB, image/pdf/audio
     match /chat/{conversationId}/{fileName} {
-      allow read, write: if isSignedIn()
-                         && request.resource.size < 15 * 1024 * 1024;
+      allow read: if isVerifiedUser() && (
+        isMasterAdminEmail() ||
+        (
+          firestore.exists(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/conversations/$(conversationId)) &&
+          request.auth.uid in firestore.get(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/conversations/$(conversationId)).data.participantIds
+        ) ||
+        isAdminSingleLookup()
+      );
+      allow create: if isVerifiedUser()
+                    && request.resource != null
+                    && request.resource.size < 15 * 1024 * 1024
+                    && (
+                      request.resource.contentType.matches('image/.*') ||
+                      request.resource.contentType == 'application/pdf' ||
+                      request.resource.contentType.matches('audio/.*')
+                    )
+                    && hasValidUploaderMetadata()
+                    && firestore.exists(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/conversations/$(conversationId))
+                    && request.auth.uid in firestore.get(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/conversations/$(conversationId)).data.participantIds;
+      allow update, delete: if isAdmin();
     }
   }
 }

@@ -60,7 +60,7 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
   }, [deliveries]);
 
   const totalPlatformCommissions = useMemo(() => {
-    const rate = (pricingRules?.commissionRatePercent ?? 10) / 100;
+    const rate = (pricingRules?.commissionRatePercent ?? 0) / 100;
     return Math.round(totalDeliveryFees * rate);
   }, [totalDeliveryFees, pricingRules]);
 
@@ -252,7 +252,7 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
             className="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs shadow-2xs flex items-center gap-1.5 cursor-pointer"
           >
             <span className="material-symbols-outlined text-base">add</span>
-            <span>Simuler course</span>
+            <span>Simuler course (Test Admin)</span>
           </button>
         </div>
       </section>
@@ -321,7 +321,7 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
               {totalVolumeCOD.toLocaleString('fr-FR')} <span className="text-sm font-normal text-slate-400">FCFA</span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Frais générés : {totalDeliveryFees.toLocaleString('fr-FR')} FCFA · Com ({pricingRules?.commissionRatePercent ?? 10}%) : +{totalPlatformCommissions.toLocaleString('fr-FR')} FCFA
+              Frais générés : {totalDeliveryFees.toLocaleString('fr-FR')} FCFA · Com ({pricingRules?.commissionRatePercent ?? 0}%) : +{totalPlatformCommissions.toLocaleString('fr-FR')} FCFA
             </p>
           </div>
           <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500">

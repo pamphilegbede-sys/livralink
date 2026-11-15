@@ -416,7 +416,7 @@ export const LivreurMissions: React.FC = () => {
                         <span>Chat Vendeur</span>
                       </button>
 
-                      {(order.status === 'en_attente' || order.status === 'assignee' || !order.courier) && (
+                      {order.status === 'en_attente' && !order.courier && (
                         <div className="flex items-center gap-2 flex-1 sm:flex-initial">
                           <button
                             type="button"
@@ -444,7 +444,7 @@ export const LivreurMissions: React.FC = () => {
                         </div>
                       )}
 
-                      {order.status === 'acceptee' && (
+                      {(order.status === 'acceptee' || order.status === 'assignee') && (
                         <button
                           type="button"
                           disabled={processingId === order.id}

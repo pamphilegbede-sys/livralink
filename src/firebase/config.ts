@@ -11,7 +11,7 @@ try {
 
 // Firebase configuration from provisioned project or environment variables
 export const firebaseConfig = {
-  apiKey: (appletConfig as any)?.apiKey || import.meta.env?.VITE_FIREBASE_API_KEY || 'AIzaSyCtWzkQ0shbK9X_cf8Wi8UMyrXKRFWNmwg',
+  apiKey: (appletConfig as any)?.apiKey || import.meta.env?.VITE_FIREBASE_API_KEY || '',
   authDomain: (appletConfig as any)?.authDomain || import.meta.env?.VITE_FIREBASE_AUTH_DOMAIN || 'gen-lang-client-0654978401.firebaseapp.com',
   projectId: (appletConfig as any)?.projectId || import.meta.env?.VITE_FIREBASE_PROJECT_ID || 'gen-lang-client-0654978401',
   storageBucket: (appletConfig as any)?.storageBucket || import.meta.env?.VITE_FIREBASE_STORAGE_BUCKET || 'gen-lang-client-0654978401.firebasestorage.app',

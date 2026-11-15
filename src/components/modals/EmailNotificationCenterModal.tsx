@@ -47,19 +47,23 @@ export const EmailNotificationCenterModal: React.FC<EmailNotificationCenterModal
   });
 
   const handleSendTestWelcome = async () => {
+    const targetEmail = userProfile?.email;
+    if (!targetEmail) {
+      showToast('Aucune adresse e-mail authentifiée disponible pour cet utilisateur.', 'error');
+      return;
+    }
     setIsSendingTest(true);
-    const targetEmail = userProfile?.email || 'test.utilisateur@livralink.bj';
-    const targetName = userProfile?.fullName || 'Utilisateur Test';
+    const targetName = userProfile?.fullName || 'Utilisateur LivraLink';
     const targetRole = currentRole === 'livreur' ? 'livreur' : 'vendeur';
 
     try {
-      const res = await sendWelcomeEmail({
+      await sendWelcomeEmail({
         email: targetEmail,
         fullName: targetName,
         role: targetRole,
-        storeName: targetRole === 'vendeur' ? 'Boutique Test LivraLink' : undefined,
-        vehicleType: targetRole === 'livreur' ? 'Moto 125cc' : undefined,
-        phone: userProfile?.phone || '+229 97 00 00 00',
+        storeName: targetRole === 'vendeur' ? (userProfile?.storeName || 'Ma Boutique LivraLink') : undefined,
+        vehicleType: targetRole === 'livreur' ? (userProfile?.vehicleType || 'Moto 125cc') : undefined,
+        phone: userProfile?.phone || '',
       });
 
       showToast(`E-mail de bienvenue envoyé à ${targetEmail} !`, 'success');
@@ -72,9 +76,13 @@ export const EmailNotificationCenterModal: React.FC<EmailNotificationCenterModal
   };
 
   const handleSendTestPasswordConfirm = async () => {
+    const targetEmail = userProfile?.email;
+    if (!targetEmail) {
+      showToast('Aucune adresse e-mail authentifiée disponible pour cet utilisateur.', 'error');
+      return;
+    }
     setIsSendingTest(true);
-    const targetEmail = userProfile?.email || 'test.utilisateur@livralink.bj';
-    const targetName = userProfile?.fullName || 'Utilisateur Test';
+    const targetName = userProfile?.fullName || 'Utilisateur LivraLink';
 
     try {
       await sendPasswordChangedConfirmationEmail({

@@ -442,13 +442,13 @@ export const VendeurFAQSection: React.FC<{
         <button
           type="button"
           onClick={() => {
-            showToast('Ligne directe assistance LivraLink : 01 02 03 04', 'info');
+            showToast('Support LivraLink : support@livralink.oxy-dev.cc', 'info');
             handleSupportClick();
           }}
           className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs shrink-0 transition-all cursor-pointer shadow-2xs flex items-center justify-center gap-1.5"
         >
-          <span className="material-symbols-outlined text-sm text-emerald-600">call</span>
-          <span>Contact Direct 01 02 03 04</span>
+          <span className="material-symbols-outlined text-sm text-emerald-600">support_agent</span>
+          <span>Contacter le Support</span>
         </button>
       </div>
     </section>

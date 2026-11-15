@@ -13,7 +13,7 @@ export interface AutomatedTestResult {
 
 export const runDeliveryStepValidationTestSuite = async (
   updateStatusFn: (orderId: string, newStatus: any, note?: string, callerRoleOverride?: UserRole) => { success: boolean; reason?: string },
-  validatePodFn: (orderId: string, data: any, code?: string, callerRoleOverride?: UserRole) => { success: boolean; reason?: string }
+  validatePodFn: (orderId: string, data: any, code?: string, callerRoleOverride?: UserRole) => Promise<{ success: boolean; reason?: string }> | { success: boolean; reason?: string }
 ): Promise<AutomatedTestResult[]> => {
   const results: AutomatedTestResult[] = [];
 
@@ -40,7 +40,7 @@ export const runDeliveryStepValidationTestSuite = async (
   // Test 2: Livreur assigné certifie la livraison avec preuve POD Tri-Facteur
   // -------------------------------------------------------------------------
   const startT2 = performance.now();
-  const resT2 = validatePodFn('#LL-4190', {
+  const resT2 = await validatePodFn('#LL-4190', {
     otpCode: '8492',
     photoUrl: 'https://images.unsplash.com/photo-1549465220-1a8b9238cd48?w=500',
     signatureDataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
@@ -83,7 +83,7 @@ export const runDeliveryStepValidationTestSuite = async (
   // Test 4: Vendeur tente de certifier un POD de livraison (Blocage Sécurité)
   // -------------------------------------------------------------------------
   const startT4 = performance.now();
-  const resT4 = validatePodFn('#LL-4190', {
+  const resT4 = await validatePodFn('#LL-4190', {
     otpCode: '8492',
     photoUrl: '...',
     signatureDataUrl: '...',

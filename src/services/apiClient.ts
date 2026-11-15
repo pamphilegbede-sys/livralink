@@ -2,6 +2,7 @@
  * Resilient API Client with Rate Limiting, Circuit Breaker, Retries, and Timeouts
  * Points 01, 02, 03, 07, 08, 18
  */
+import { auth } from '../firebase/config';
 
 export interface RequestOptions extends RequestInit {
   timeoutMs?: number;
@@ -73,9 +74,14 @@ export async function logErrorToRemote(payload: {
   details?: any;
 }): Promise<void> {
   try {
+    if (!auth.currentUser) return;
+    const token = await auth.currentUser.getIdToken();
     await fetch('/api/logs/error', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify({
         ...payload,
         timestamp: new Date().toISOString(),

@@ -16,6 +16,10 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function hasVerifiedEmail() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -32,55 +36,70 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-#]+$');
     }
 
-    // Strict Super-Admin & Authorized Admin Check (requires verified email for whitelist match)
+    // Strict Super-Admin & Authorized Admin Check (requires verified email)
+    function isSuperAdmin() {
+      return hasVerifiedEmail() &&
+             request.auth.token.email != null &&
+             request.auth.token.email.matches('(?i)^pamphile\\.gbede@gmail\\.com$');
+    }
+
     function isAdmin() {
-      return isSignedIn() && (
-        (
-          request.auth.token.email != null &&
-          request.auth.token.email_verified == true &&
-          request.auth.token.email.matches('(?i)^pamphile\\.gbede@gmail\\.com$')
-        ) ||
+      return hasVerifiedEmail() && (
+        isSuperAdmin() ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
       );
     }
 
     function isVendeur() {
-      return isSignedIn() &&
-             request.auth.token.email_verified == true &&
+      return hasVerifiedEmail() &&
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'vendeur';
     }
 
     function isLivreur() {
-      return isSignedIn() &&
-             request.auth.token.email_verified == true &&
+      return hasVerifiedEmail() &&
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'livreur';
     }
 
+    function isKycVerifiedLivreur() {
+      return isLivreur() &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isKycVerified == true;
+    }
+
     function isClient() {
-      return isSignedIn() &&
-             request.auth.token.email_verified == true &&
+      return hasVerifiedEmail() &&
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'client';
     }
 
+    // Safe Courier Assignment Helpers (supports both courierId and courier.id without trusting empty strings)
+    function hasValidCourierId(data) {
+      return (
+        ('courierId' in data && data.courierId is string && data.courierId.size() >= 1 && data.courierId.size() <= 128) ||
+        ('courier' in data && data.courier is map && 'id' in data.courier && data.courier.id is string && data.courier.id.size() >= 1 && data.courier.id.size() <= 128)
+      );
+    }
+
+    function getCourierId(data) {
+      return ('courierId' in data && data.courierId is string && data.courierId.size() >= 1)
+        ? data.courierId
+        : (('courier' in data && data.courier is map && 'id' in data.courier && data.courier.id is string && data.courier.id.size() >= 1)
+            ? data.courier.id
+            : '');
+    }
+
+    function noCourierAssigned(data) {
+      return !('courierId' in data) &&
+             (!('courier' in data) || !(data.courier is map) || !('id' in data.courier));
+    }
+
     // -------------------------------------------------------------------------
-    // User Blueprint Validation (Anti-Privilege Escalation & Schema Hardening)
+    // User Blueprint Validation (Anti-Privilege Escalation & Legacy-Safe Updates)
     // -------------------------------------------------------------------------
-    function isValidUser(data) {
+    function isValidUserTypes(data) {
       return data.keys().hasAll(['uid', 'email', 'fullName', 'phone', 'role']) &&
-             data.keys().hasOnly([
-               'uid', 'email', 'fullName', 'phone', 'role', 'status', 'channel',
-               'preferredRateDiscountPercent', 'avatarUrl',
-               'storeName', 'storeCommune', 'storeAddress', 'storeCoordinates',
-               'vehicleType', 'gpsCoordinates', 'locationCommune', 'locationAddress',
-               'locationLat', 'locationLng', 'locationUpdatedAt',
-               'isKycVerified', 'kycStatus', 'kycRejectionReason', 'kycSubmittedAt',
-               'mfaEnabled', 'mfaMethod',
-               'createdAt', 'updatedAt'
-             ]) &&
              data.uid == request.auth.uid &&
              data.email is string && data.email.size() >= 5 && data.email.size() <= 128 &&
              data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 128 &&
@@ -104,11 +123,26 @@ service cloud.firestore {
              (!('mfaEnabled' in data) || (data.mfaEnabled is bool));
     }
 
+    function isValidUserOnCreate(data) {
+      return isValidUserTypes(data) &&
+             data.keys().hasOnly([
+               'uid', 'email', 'fullName', 'phone', 'role', 'status', 'channel',
+               'preferredRateDiscountPercent', 'avatarUrl',
+               'storeName', 'storeCommune', 'storeAddress', 'storeCoordinates',
+               'vehicleType', 'gpsCoordinates', 'locationCommune', 'locationAddress',
+               'locationLat', 'locationLng', 'locationUpdatedAt',
+               'isKycVerified', 'kycStatus', 'kycRejectionReason', 'kycSubmittedAt',
+               'mfaEnabled', 'mfaMethod',
+               'createdAt', 'updatedAt'
+             ]);
+    }
+
     // -------------------------------------------------------------------------
-    // Delivery Blueprint Validation & Status Machine
+    // Delivery Blueprint Validation & Strict Status Machine
     // -------------------------------------------------------------------------
     function isValidDelivery(data) {
       return data.keys().hasAll(['id', 'clientName', 'clientPhone', 'status', 'deliveryFee', 'merchantId']) &&
+             !('otpCode' in data) &&
              data.id is string && data.id.size() >= 1 && data.id.size() <= 64 &&
              data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 128 &&
              data.clientPhone is string && data.clientPhone.size() <= 32 &&
@@ -117,14 +151,16 @@ service cloud.firestore {
              data.status in ['en_attente', 'assignee', 'acceptee', 'colis_recupere', 'en_cours', 'livree', 'echec'] &&
              (!('itemValueCOD' in data) || (data.itemValueCOD is number && data.itemValueCOD >= 0)) &&
              (!('courierId' in data) || (data.courierId is string && data.courierId.size() >= 1 && data.courierId.size() <= 128)) &&
-             (!('courierName' in data) || (data.courierName is string && data.courierName.size() <= 128));
+             (!('courierName' in data) || (data.courierName is string && data.courierName.size() <= 128)) &&
+             (!('otpRequired' in data) || data.otpRequired is bool);
     }
 
-    function isValidStatusTransition(oldStatus, newStatus) {
-      return (oldStatus == 'en_attente' && newStatus in ['assignee', 'acceptee']) ||
-             (oldStatus in ['assignee', 'acceptee'] && newStatus in ['colis_recupere', 'en_cours', 'livree', 'echec']) ||
-             (oldStatus == 'colis_recupere' && newStatus in ['en_cours', 'livree', 'echec']) ||
-             (oldStatus == 'en_cours' && newStatus in ['livree', 'echec']);
+    function isCourierStatusTransition(oldStatus, newStatus) {
+      // Couriers advance through pickup and transit, or report failure.
+      // Transition to 'livree' is strictly performed server-side after OTP & Storage verification (or by Admin).
+      return ((oldStatus in ['assignee', 'acceptee']) && newStatus in ['colis_recupere', 'echec']) ||
+             (oldStatus == 'colis_recupere' && newStatus in ['en_cours', 'echec']) ||
+             (oldStatus == 'en_cours' && newStatus == 'echec');
     }
 
     // -------------------------------------------------------------------------
@@ -134,25 +170,9 @@ service cloud.firestore {
       return data.keys().hasAll(['id', 'recipientId', 'senderId', 'title', 'message']) &&
              isValidId(data.id) &&
              isValidId(data.recipientId) &&
-             data.senderId is string && (data.senderId == request.auth.uid || isAdmin()) &&
+             data.senderId is string &&
              data.title is string && data.title.size() >= 1 && data.title.size() <= 256 &&
-             data.message is string && data.message.size() >= 1 && data.message.size() <= 2048 &&
-             (!('type' in data) || !(data.type in ['system', 'admin', 'broadcast']) || isAdmin());
-    }
-
-    function isAuthorizedDeliveryCounterparty(orderDocId, senderUid, recipientUid) {
-      return exists(/databases/$(database)/documents/deliveries/$(orderDocId)) && (
-        (
-          get(/databases/$(database)/documents/deliveries/$(orderDocId)).data.merchantId == senderUid &&
-          'courierId' in get(/databases/$(database)/documents/deliveries/$(orderDocId)).data &&
-          get(/databases/$(database)/documents/deliveries/$(orderDocId)).data.courierId == recipientUid
-        ) ||
-        (
-          'courierId' in get(/databases/$(database)/documents/deliveries/$(orderDocId)).data &&
-          get(/databases/$(database)/documents/deliveries/$(orderDocId)).data.courierId == senderUid &&
-          get(/databases/$(database)/documents/deliveries/$(orderDocId)).data.merchantId == recipientUid
-        )
-      );
+             data.message is string && data.message.size() >= 1 && data.message.size() <= 2048;
     }
 
     // -------------------------------------------------------------------------
@@ -176,7 +196,9 @@ service cloud.firestore {
       return data.keys().hasAll(['participantIds']) &&
              data.participantIds is list &&
              data.participantIds.size() >= 2 &&
-             data.participantIds.size() <= 10;
+             data.participantIds.size() <= 10 &&
+             data.participantIds[0] is string &&
+             data.participantIds[1] is string;
     }
 
     // -------------------------------------------------------------------------
@@ -185,12 +207,12 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
       allow list: if isAdmin();
-      allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming());
+      allow create: if isValidId(userId) && isOwner(userId) && isValidUserOnCreate(incoming());
       allow update: if isValidId(userId) && (
         isAdmin() ||
         (
           isOwner(userId) &&
-          isValidUser(incoming()) &&
+          isValidUserTypes(incoming()) &&
           incoming().uid == existing().uid &&
           incoming().email == existing().email &&
           incoming().role == existing().role &&
@@ -201,7 +223,15 @@ service cloud.firestore {
             !('kycStatus' in incoming()) ||
             ('kycStatus' in existing() && incoming().kycStatus == existing().kycStatus) ||
             (incoming().kycStatus == 'en_attente' && (!('kycStatus' in existing()) || existing().kycStatus in ['non_soumis', 'refuse']))
-          )
+          ) &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'fullName', 'phone', 'channel', 'avatarUrl',
+            'storeName', 'storeCommune', 'storeAddress', 'storeCoordinates',
+            'vehicleType', 'gpsCoordinates', 'locationCommune', 'locationAddress',
+            'locationLat', 'locationLng', 'locationUpdatedAt',
+            'kycStatus', 'kycSubmittedAt',
+            'mfaEnabled', 'mfaMethod', 'updatedAt'
+          ])
         )
       );
       allow delete: if isAdmin();
@@ -211,69 +241,112 @@ service cloud.firestore {
     // 2. Deliveries Collection (/deliveries)
     // -------------------------------------------------------------------------
     match /deliveries/{deliveryId} {
-      allow get: if isValidId(deliveryId) && (
+      allow get: if isValidId(deliveryId) && hasVerifiedEmail() && (
         isAdmin() ||
-        (isSignedIn() && resource.data.merchantId == request.auth.uid) ||
-        (isSignedIn() && 'courierId' in resource.data && resource.data.courierId == request.auth.uid) ||
-        (isSignedIn() && 'clientId' in resource.data && resource.data.clientId == request.auth.uid) ||
-        (isLivreur() && resource.data.status == 'en_attente')
+        resource.data.merchantId == request.auth.uid ||
+        getCourierId(resource.data) == request.auth.uid ||
+        ('clientId' in resource.data && resource.data.clientId == request.auth.uid) ||
+        (isKycVerifiedLivreur() && resource.data.status == 'en_attente' && noCourierAssigned(resource.data))
       );
 
-      allow list: if isSignedIn() && (
+      allow list: if hasVerifiedEmail() && (
         isAdmin() ||
         (isVendeur() && resource.data.merchantId == request.auth.uid) ||
-        (isLivreur() && (('courierId' in resource.data && resource.data.courierId == request.auth.uid) || resource.data.status == 'en_attente')) ||
+        (isKycVerifiedLivreur() && (
+          resource.data.courierId == request.auth.uid ||
+          resource.data.status == 'en_attente'
+        )) ||
         (isClient() && 'clientId' in resource.data && resource.data.clientId == request.auth.uid)
       );
 
       allow create: if isValidId(deliveryId) &&
-                    isSignedIn() &&
+                    hasVerifiedEmail() &&
                     (isVendeur() || isAdmin()) &&
                     isValidDelivery(incoming()) &&
                     (incoming().merchantId == request.auth.uid || isAdmin()) &&
                     incoming().status == 'en_attente' &&
-                    (!('courierId' in incoming()));
+                    noCourierAssigned(incoming()) &&
+                    !('podData' in incoming()) &&
+                    !('deliveredAt' in incoming()) &&
+                    incoming().keys().hasOnly([
+                      'id', 'orderId', 'merchantId', 'merchantEmail', 'merchantStoreName',
+                      'clientId', 'clientName', 'clientPhone', 'clientNote', 'channel',
+                      'pickupLocation', 'dropoffLocation', 'itemDescription', 'itemWeightKg',
+                      'itemFormat', 'isFragile', 'itemValueCOD', 'deliveryFee',
+                      'totalCustomerPayable', 'status', 'statusNote', 'createdAt',
+                      'updatedAt', 'estimatedArrival', 'otpRequired', 'timeline'
+                    ]);
 
       allow update: if isValidId(deliveryId) &&
-                    isSignedIn() &&
+                    hasVerifiedEmail() &&
                     isValidDelivery(incoming()) &&
                     incoming().id == existing().id &&
                     incoming().merchantId == existing().merchantId &&
                     (
                       isAdmin() ||
                       (
+                        // Post-delivery rating by owning vendor (only once, immutable proof & status)
+                        isVendeur() &&
+                        existing().merchantId == request.auth.uid &&
+                        existing().status == 'livree' &&
+                        incoming().status == existing().status &&
+                        !('courierRating' in existing()) &&
+                        'courierRating' in incoming() &&
+                        incoming().diff(existing()).affectedKeys().hasOnly(['courierRating', 'updatedAt'])
+                      ) ||
+                      (
                         !(existing().status in ['livree', 'echec']) &&
                         (
+                          // Owning vendor edits while still pending and unassigned
                           (
                             isVendeur() &&
                             existing().merchantId == request.auth.uid &&
                             existing().status == 'en_attente' &&
+                            noCourierAssigned(existing()) &&
+                            noCourierAssigned(incoming()) &&
                             incoming().status == existing().status &&
-                            (!('courierId' in incoming())) &&
                             incoming().diff(existing()).affectedKeys().hasOnly([
-                              'clientName', 'clientPhone', 'itemValueCOD', 'deliveryFee', 'totalCustomerPayable', 'updatedAt'
+                              'clientName', 'clientPhone', 'clientNote', 'itemDescription',
+                              'itemWeightKg', 'itemFormat', 'isFragile',
+                              'itemValueCOD', 'deliveryFee', 'totalCustomerPayable',
+                              'pickupLocation', 'dropoffLocation', 'updatedAt'
                             ])
                           ) ||
+                          // KYC-verified courier claiming an open unassigned mission
                           (
-                            isLivreur() &&
+                            isKycVerifiedLivreur() &&
                             existing().status == 'en_attente' &&
-                            !('courierId' in existing()) &&
+                            noCourierAssigned(existing()) &&
                             'courierId' in incoming() &&
+                            incoming().courierId is string &&
                             incoming().courierId == request.auth.uid &&
+                            (!('courier' in incoming()) || (incoming().courier is map && incoming().courier.id == request.auth.uid)) &&
                             incoming().status in ['assignee', 'acceptee'] &&
                             incoming().diff(existing()).affectedKeys().hasOnly([
-                              'courierId', 'courierName', 'assignedAt', 'status', 'updatedAt'
+                              'courierId', 'courierName', 'courier', 'assignedAt', 'status', 'statusNote', 'updatedAt'
                             ])
                           ) ||
+                          // Assigned KYC-verified courier advancing pickup/transit/failure (NOT 'livree'!)
                           (
-                            isLivreur() &&
-                            'courierId' in existing() &&
-                            existing().courierId == request.auth.uid &&
-                            'courierId' in incoming() &&
-                            incoming().courierId == existing().courierId &&
-                            isValidStatusTransition(existing().status, incoming().status) &&
+                            isKycVerifiedLivreur() &&
+                            hasValidCourierId(existing()) &&
+                            getCourierId(existing()) == request.auth.uid &&
+                            getCourierId(incoming()) == getCourierId(existing()) &&
+                            isCourierStatusTransition(existing().status, incoming().status) &&
                             incoming().diff(existing()).affectedKeys().hasOnly([
-                              'status', 'statusNote', 'updatedAt', 'podData', 'deliveredAt'
+                              'status', 'statusNote', 'courierLat', 'courierLng', 'courierLocationUpdatedAt', 'updatedAt'
+                            ])
+                          ) ||
+                          // Assigned KYC-verified courier updating live GPS coordinates during active delivery
+                          (
+                            isKycVerifiedLivreur() &&
+                            hasValidCourierId(existing()) &&
+                            getCourierId(existing()) == request.auth.uid &&
+                            getCourierId(incoming()) == getCourierId(existing()) &&
+                            existing().status in ['assignee', 'acceptee', 'colis_recupere', 'en_cours'] &&
+                            incoming().status == existing().status &&
+                            incoming().diff(existing()).affectedKeys().hasOnly([
+                              'courierLat', 'courierLng', 'courierLocationUpdatedAt', 'updatedAt'
                             ])
                           )
                         )
@@ -281,30 +354,55 @@ service cloud.firestore {
                     );
 
       allow delete: if isAdmin();
+
+      // Private delivery OTP storage (readable/writable ONLY by owning vendor or admin; NEVER readable by couriers)
+      match /private/{privateDocId} {
+        allow get, list: if isValidId(deliveryId) && hasVerifiedEmail() && (
+          isAdmin() ||
+          (
+            isVendeur() &&
+            exists(/databases/$(database)/documents/deliveries/$(deliveryId)) &&
+            get(/databases/$(database)/documents/deliveries/$(deliveryId)).data.merchantId == request.auth.uid
+          )
+        );
+        allow create, update: if isValidId(deliveryId) && privateDocId == 'otp' && hasVerifiedEmail() && (
+          isAdmin() ||
+          (
+            isVendeur() &&
+            exists(/databases/$(database)/documents/deliveries/$(deliveryId)) &&
+            get(/databases/$(database)/documents/deliveries/$(deliveryId)).data.merchantId == request.auth.uid &&
+            !(get(/databases/$(database)/documents/deliveries/$(deliveryId)).data.status in ['livree', 'echec']) &&
+            incoming().keys().hasAll(['otpCode', 'merchantId']) &&
+            incoming().keys().hasOnly(['otpCode', 'merchantId', 'generatedAt', 'updatedAt']) &&
+            incoming().merchantId == request.auth.uid &&
+            incoming().otpCode is string &&
+            incoming().otpCode.matches('^[0-9]{4}$')
+          )
+        );
+        allow delete: if isAdmin();
+      }
     }
 
     // -------------------------------------------------------------------------
     // 3. Isolated Notifications Collection (/notifications)
+    //    Business notifications MUST be created by trusted backend/Admin SDK.
     // -------------------------------------------------------------------------
     match /notifications/{notificationId} {
-      allow get, list: if isSignedIn() && (resource.data.recipientId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() &&
-                    isValidId(notificationId) &&
-                    isValidNotification(incoming()) &&
-                    (
-                      isAdmin() ||
-                      incoming().recipientId == request.auth.uid ||
-                      ('orderDocId' in incoming() && incoming().orderDocId is string && isAuthorizedDeliveryCounterparty(incoming().orderDocId, request.auth.uid, incoming().recipientId))
-                    );
-      allow update: if isSignedIn() && isValidId(notificationId) && (
+      allow get, list: if hasVerifiedEmail() && (resource.data.recipientId == request.auth.uid || isAdmin());
+      allow create: if isAdmin() && isValidId(notificationId) && isValidNotification(incoming());
+      allow update: if hasVerifiedEmail() && isValidId(notificationId) && (
         isAdmin() ||
         (
           resource.data.recipientId == request.auth.uid &&
           incoming().recipientId == existing().recipientId &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'read', 'updatedAt'])
+          existing().isRead == false &&
+          incoming().isRead == true &&
+          (!('read' in incoming()) || incoming().read == true) &&
+          (!('readAt' in incoming()) || incoming().readAt is number || incoming().readAt is string) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'read', 'readAt', 'updatedAt'])
         )
       );
-      allow delete: if isSignedIn() && isValidId(notificationId) && (resource.data.recipientId == request.auth.uid || isAdmin());
+      allow delete: if hasVerifiedEmail() && isValidId(notificationId) && (resource.data.recipientId == request.auth.uid || isAdmin());
     }
 
     // -------------------------------------------------------------------------
@@ -314,6 +412,7 @@ service cloud.firestore {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
       allow list: if isAdmin();
       allow create: if isValidId(userId) &&
+                    hasVerifiedEmail() &&
                     isOwner(userId) &&
                     isValidKYCDossier(incoming()) &&
                     incoming().userId == request.auth.uid &&
@@ -321,11 +420,20 @@ service cloud.firestore {
       allow update: if isValidId(userId) && (
         isAdmin() ||
         (
+          hasVerifiedEmail() &&
           isOwner(userId) &&
           isValidKYCDossier(incoming()) &&
           existing().status == 'refuse' &&
+          incoming().id == existing().id &&
+          incoming().userId == existing().userId &&
           incoming().userId == request.auth.uid &&
-          incoming().status == 'en_attente'
+          incoming().status == 'en_attente' &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'fullName', 'phone', 'email', 'vehicleType', 'vehiclePlate',
+            'idType', 'idNumber', 'ifuNumber', 'npi', 'operatingZone',
+            'documentPhotoUrl', 'documents', 'status', 'isApproved',
+            'verified', 'submittedAt', 'updatedAt'
+          ])
         )
       );
       allow delete: if isAdmin();
@@ -335,30 +443,39 @@ service cloud.firestore {
     // 5. Isolated Messaging & Chat (/conversations)
     // -------------------------------------------------------------------------
     match /conversations/{conversationId} {
-      allow get, list: if isSignedIn() && (request.auth.uid in resource.data.participantIds || isAdmin());
-      allow create: if isSignedIn() &&
+      allow get, list: if hasVerifiedEmail() && (request.auth.uid in resource.data.participantIds || isAdmin());
+      allow create: if hasVerifiedEmail() &&
                     isValidId(conversationId) &&
                     isValidConversation(incoming()) &&
                     request.auth.uid in incoming().participantIds;
-      allow update: if isSignedIn() && isValidId(conversationId) && (
+      allow update: if hasVerifiedEmail() && isValidId(conversationId) && (
         isAdmin() ||
         (
           request.auth.uid in existing().participantIds &&
           isValidConversation(incoming()) &&
-          incoming().participantIds == existing().participantIds
+          incoming().participantIds == existing().participantIds &&
+          (!('id' in existing()) || incoming().id == existing().id) &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'lastMessage', 'lastMessageAt', 'updatedAt', 'unreadCount', 'orderId', 'title'
+          ])
         )
       );
       allow delete: if isAdmin();
 
       match /messages/{messageId} {
-        allow get, list: if isSignedIn() && (
+        allow get, list: if hasVerifiedEmail() && (
           request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds || isAdmin()
         );
-        allow create: if isSignedIn() &&
+        allow create: if hasVerifiedEmail() &&
                       isValidId(messageId) &&
                       request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds &&
                       incoming().keys().hasAll(['id', 'senderId', 'text']) &&
+                      incoming().keys().hasOnly([
+                        'id', 'senderId', 'senderName', 'senderRole', 'text',
+                        'attachmentUrl', 'attachmentType', 'createdAt', 'timestamp', 'isRead', 'read'
+                      ]) &&
                       isValidId(incoming().id) &&
+                      incoming().id == messageId &&
                       incoming().text is string &&
                       incoming().text.size() >= 1 &&
                       incoming().text.size() <= 4000 &&
@@ -371,7 +488,8 @@ service cloud.firestore {
     // 6. Admin Broadcast Announcements (/announcements)
     // -------------------------------------------------------------------------
     match /announcements/{announcementId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow write: if isSuperAdmin();
     }
 
     // -------------------------------------------------------------------------
@@ -393,28 +511,46 @@ service cloud.firestore {
     // 7. Admins Collection (/admins)
     // -------------------------------------------------------------------------
     match /admins/{adminId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow write: if isSuperAdmin();
     }
 
     // -------------------------------------------------------------------------
     // 8. Priority Missions Collection (/priority_missions)
     // -------------------------------------------------------------------------
     match /priority_missions/{missionId} {
-      allow get, list: if isSignedIn() && (
+      allow get: if isValidId(missionId) && hasVerifiedEmail() && (
         isAdmin() ||
-        (isLivreur() && (resource.data.status == 'en_attente' || ('courierId' in resource.data && resource.data.courierId == request.auth.uid))) ||
+        (isKycVerifiedLivreur() && (
+          (resource.data.status == 'en_attente' && noCourierAssigned(resource.data)) ||
+          getCourierId(resource.data) == request.auth.uid
+        )) ||
         (isVendeur() && ('merchantId' in resource.data && resource.data.merchantId == request.auth.uid))
       );
 
+      allow list: if hasVerifiedEmail() && (
+        isAdmin() ||
+        (isKycVerifiedLivreur() && (
+          resource.data.status == 'en_attente' ||
+          resource.data.courierId == request.auth.uid
+        )) ||
+        (isVendeur() && resource.data.merchantId == request.auth.uid)
+      );
+
       allow create: if isValidId(missionId) &&
-                    isSignedIn() &&
+                    hasVerifiedEmail() &&
                     isValidPriorityMission(incoming()) &&
                     incoming().status == 'en_attente' &&
-                    (!('courierId' in incoming())) &&
-                    ((isVendeur() && incoming().merchantId == request.auth.uid) || isAdmin());
+                    noCourierAssigned(incoming()) &&
+                    ((isVendeur() && incoming().merchantId == request.auth.uid) || isAdmin()) &&
+                    incoming().keys().hasOnly([
+                      'id', 'orderId', 'merchantId', 'storeName', 'pickupCommune',
+                      'dropoffCommune', 'fee', 'cod', 'itemDescription', 'urgency',
+                      'status', 'createdAt', 'updatedAt'
+                    ]);
 
       allow update: if isValidId(missionId) &&
-                    isSignedIn() &&
+                    hasVerifiedEmail() &&
                     isValidPriorityMission(incoming()) &&
                     incoming().id == existing().id &&
                     incoming().orderId == existing().orderId &&
@@ -422,35 +558,43 @@ service cloud.firestore {
                     (
                       isAdmin() ||
                       (
-                        isVendeur() &&
-                        ('merchantId' in existing() && existing().merchantId == request.auth.uid) &&
-                        existing().status == 'en_attente' &&
-                        incoming().status == existing().status &&
-                        (!('courierId' in incoming())) &&
-                        incoming().diff(existing()).affectedKeys().hasOnly([
-                          'fee', 'cod', 'pickupCommune', 'dropoffCommune', 'itemDescription',
-                          'storeName', 'urgency', 'updatedAt'
-                        ])
-                      ) ||
-                      (
-                        isLivreur() &&
-                        existing().status == 'en_attente' &&
-                        !('courierId' in existing()) &&
-                        incoming().status in ['assignee', 'acceptee'] &&
-                        'courierId' in incoming() &&
-                        incoming().courierId == request.auth.uid &&
-                        incoming().diff(existing()).affectedKeys().hasOnly([
-                          'status', 'courierId', 'courierName', 'assignedAt', 'updatedAt'
-                        ])
-                      ) ||
-                      (
-                        isLivreur() &&
-                        ('courierId' in existing() && existing().courierId == request.auth.uid) &&
-                        ('courierId' in incoming() && incoming().courierId == existing().courierId) &&
-                        isValidStatusTransition(existing().status, incoming().status) &&
-                        incoming().diff(existing()).affectedKeys().hasOnly([
-                          'status', 'updatedAt', 'podData', 'completedAt'
-                        ])
+                        !(existing().status in ['livree', 'echec']) &&
+                        (
+                          (
+                            isVendeur() &&
+                            ('merchantId' in existing() && existing().merchantId == request.auth.uid) &&
+                            existing().status == 'en_attente' &&
+                            noCourierAssigned(existing()) &&
+                            noCourierAssigned(incoming()) &&
+                            incoming().status == existing().status &&
+                            incoming().diff(existing()).affectedKeys().hasOnly([
+                              'fee', 'cod', 'pickupCommune', 'dropoffCommune', 'itemDescription',
+                              'storeName', 'urgency', 'updatedAt'
+                            ])
+                          ) ||
+                          (
+                            isKycVerifiedLivreur() &&
+                            existing().status == 'en_attente' &&
+                            noCourierAssigned(existing()) &&
+                            incoming().status in ['assignee', 'acceptee'] &&
+                            'courierId' in incoming() &&
+                            incoming().courierId is string &&
+                            incoming().courierId == request.auth.uid &&
+                            incoming().diff(existing()).affectedKeys().hasOnly([
+                              'status', 'courierId', 'courierName', 'assignedAt', 'updatedAt'
+                            ])
+                          ) ||
+                          (
+                            isKycVerifiedLivreur() &&
+                            hasValidCourierId(existing()) &&
+                            getCourierId(existing()) == request.auth.uid &&
+                            getCourierId(incoming()) == getCourierId(existing()) &&
+                            isCourierStatusTransition(existing().status, incoming().status) &&
+                            incoming().diff(existing()).affectedKeys().hasOnly([
+                              'status', 'updatedAt'
+                            ])
+                          )
+                        )
                       )
                     );
 

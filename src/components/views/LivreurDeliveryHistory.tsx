@@ -534,7 +534,9 @@ export const LivreurDeliveryHistory: React.FC<{
               <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 space-y-1">
                 <p className="text-[10px] font-bold text-slate-400 uppercase">Code Secret OTP Client</p>
                 <p className="font-extrabold text-emerald-600 text-sm tracking-widest font-mono">
-                  🔑 #{inspectPodOrder.podData?.otpCode || inspectPodOrder.otpCode || '8492'}
+                  🔑 {inspectPodOrder.podData?.otpCode && inspectPodOrder.podData.otpCode !== '••••'
+                    ? `#${inspectPodOrder.podData.otpCode}`
+                    : (inspectPodOrder.podData?.otpVerified ? '•••• (Certifié OTP)' : 'Non renseigné')}
                 </p>
               </div>
 

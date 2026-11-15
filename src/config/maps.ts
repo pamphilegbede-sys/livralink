@@ -4,7 +4,7 @@
 export const GOOGLE_MAPS_API_KEY =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GOOGLE_MAPS_API_KEY) ||
   (typeof process !== 'undefined' && process.env?.VITE_GOOGLE_MAPS_API_KEY) ||
-  'AIzaSyBLh57o8sYGPEtQn7H4DMRAihFykyXbFgM';
+  '';
 
 export const RATE_PER_KM_FCFA = 100; // 100 FCFA par kilomètre
 

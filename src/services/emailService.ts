@@ -90,9 +90,10 @@ export const sendWelcomeEmail = async (payload: {
   };
 
   try {
+    const headers = await getAdminAuthHeaders(true);
     const res = await fetch('/api/email/welcome', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
     const data = await res.json();
@@ -135,9 +136,10 @@ export const sendPasswordChangedConfirmationEmail = async (payload: {
   };
 
   try {
+    const headers = await getAdminAuthHeaders(true);
     const res = await fetch('/api/email/password-changed', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
     const data = await res.json();
@@ -198,9 +200,10 @@ export const sendKycConfirmationEmail = async (payload: {
   };
 
   try {
+    const headers = await getAdminAuthHeaders(true);
     const res = await fetch('/api/email/kyc-approved', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
     const data = await res.json();
@@ -250,9 +253,10 @@ export const sendKycSubmissionEmail = async (payload: {
   };
 
   try {
+    const headers = await getAdminAuthHeaders(true);
     const res = await fetch('/api/email/kyc-submitted', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
     const data = await res.json();
@@ -282,9 +286,10 @@ export const sendPriorityMissionEmail = async (payload: {
   codFCFA?: number;
 }): Promise<{ success: boolean; emailDelivered?: boolean }> => {
   try {
+    const headers = await getAdminAuthHeaders(true);
     const res = await fetch('/api/email/priority-mission', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
     const data = await res.json();
@@ -428,9 +433,10 @@ export const sendPlatformNotification = async (
   payload: AutomatedEmailPayload
 ): Promise<{ success: boolean; emailDelivered?: boolean; message?: string }> => {
   try {
+    const headers = await getAdminAuthHeaders(true);
     const res = await fetch('/api/email/notification', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
     const data = await res.json();

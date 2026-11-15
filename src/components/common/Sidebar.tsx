@@ -98,7 +98,7 @@ export const Sidebar: React.FC = () => {
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
               <span className="text-xs font-bold">Réseau Opérationnel</span>
             </div>
-            <span className="text-[10px] font-mono text-slate-400">HUB CI</span>
+            <span className="text-[10px] font-mono text-slate-400">HUB BJ</span>
           </div>
         )}
 
@@ -685,7 +685,7 @@ export const Sidebar: React.FC = () => {
       {/* Footer Navigation Tabs (Help, Logout, Profile preview) - Always Pinned */}
       <div className="p-4 border-t border-slate-200 dark:border-slate-800 space-y-2 shrink-0 bg-white dark:bg-slate-900 transition-colors">
         <button
-          onClick={() => showToast('Centre d\'assistance LivraLink 24/7 disponible au 01 02 03 04', 'info')}
+          onClick={() => showToast('Support LivraLink disponible via la Messagerie ou à support@livralink.oxy-dev.cc', 'info')}
           className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-slate-600 hover:bg-slate-50 text-xs font-medium transition-colors"
         >
           <span className="material-symbols-outlined text-lg">help</span>
@@ -729,7 +729,7 @@ export const Sidebar: React.FC = () => {
                     ? merchantSettings.storeName
                     : effectiveNavRole === 'livreur'
                     ? courierSettings.fullName
-                    : 'Super Admin CI'}
+                    : 'Super Admin Bénin'}
                 </p>
                 <p className="text-[10px] font-bold text-emerald-600 truncate">
                   {effectiveNavRole === 'vendeur' ? 'Vendeur Certifié' : effectiveNavRole === 'livreur' ? 'Livreur Certifié' : 'Superviseur National'}

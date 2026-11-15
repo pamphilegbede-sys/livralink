@@ -640,7 +640,7 @@ export const AdminConsole: React.FC = () => {
         name: 'Domicile Client',
         commune: newOrderDropoffCommune,
         address: newOrderDropoffAddress.trim(),
-        coordinates: [5.33, -4.01]
+        coordinates: [6.3654, 2.4183]
       },
       itemValueCOD: codVal,
       deliveryFee: feeVal,
@@ -1168,7 +1168,7 @@ export const AdminConsole: React.FC = () => {
               <BackButton />
               <div>
                 <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 font-semibold mb-1">
-                  <span className="text-blue-600 font-bold">Plateforme LivraLink CI</span>
+                  <span className="text-blue-600 font-bold">Plateforme LivraLink Bénin</span>
                   <span>›</span>
                   <span>Console Administrateur</span>
                   <span>›</span>
@@ -1364,7 +1364,7 @@ export const AdminConsole: React.FC = () => {
                           onClick={() => setResetAccessUser({
                             id: c.id,
                             name: c.name,
-                            email: c.email || `${c.name.toLowerCase().replace(/[^a-z0-9]/g, '.')}@livralink.bj`,
+                            email: c.email || '',
                             phone: c.phone,
                             role: 'livreur',
                             status: c.status,
@@ -1477,7 +1477,7 @@ export const AdminConsole: React.FC = () => {
                           onClick={() => setResetAccessUser({
                             id: m.id,
                             name: m.storeName,
-                            email: m.email || `${m.storeName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@livralink.bj`,
+                            email: m.email || '',
                             phone: m.phone,
                             role: 'vendeur',
                             status: m.status,
@@ -1623,7 +1623,7 @@ export const AdminConsole: React.FC = () => {
                                 onClick={() => setResetAccessUser({
                                   id: c.id,
                                   name: c.name,
-                                  email: c.email || `${c.name.toLowerCase().replace(/[^a-z0-9]/g, '.')}@livralink.bj`,
+                                  email: c.email || '',
                                   phone: c.phone,
                                   role: 'livreur',
                                   status: c.status,
@@ -1752,7 +1752,7 @@ export const AdminConsole: React.FC = () => {
                                 onClick={() => setResetAccessUser({
                                   id: m.id,
                                   name: m.storeName,
-                                  email: m.email || `${m.storeName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@livralink.bj`,
+                                  email: m.email || '',
                                   phone: m.phone,
                                   role: 'vendeur',
                                   status: m.status,
@@ -2279,7 +2279,7 @@ export const AdminConsole: React.FC = () => {
                               onClick={() => setResetAccessUser({
                                 id: courier.id,
                                 name: courier.name,
-                                email: courier.email || `${courier.name.toLowerCase().replace(/[^a-z0-9]/g, '.')}@livralink.bj`,
+                                email: courier.email || '',
                                 phone: courier.phone,
                                 role: 'livreur',
                                 status: courier.status,
@@ -2572,7 +2572,7 @@ export const AdminConsole: React.FC = () => {
                               onClick={() => setResetAccessUser({
                                 id: merchant.id,
                                 name: merchant.storeName,
-                                email: merchant.email || `${merchant.storeName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@livralink.bj`,
+                                email: merchant.email || '',
                                 phone: merchant.phone,
                                 role: 'vendeur',
                                 status: merchant.status,
@@ -5984,23 +5984,29 @@ export const AdminConsole: React.FC = () => {
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-center gap-4">
-                  <div className="relative w-full sm:w-64 h-40 rounded-2xl overflow-hidden border-2 border-slate-300 bg-slate-900 group shrink-0">
-                    <img
-                      src={
-                        reviewingKycItem.documentPhotoUrl ||
-                        'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=60'
-                      }
-                      alt="Photo document KYC"
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setIsZoomingKycPhoto(!isZoomingKycPhoto)}
-                      className="absolute bottom-2 right-2 px-2.5 py-1 bg-black/75 hover:bg-black text-white text-[10px] font-bold rounded-lg backdrop-blur-xs flex items-center gap-1 cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-xs">zoom_in</span>
-                      <span>Agrandir</span>
-                    </button>
+                  <div className="relative w-full sm:w-64 h-40 rounded-2xl overflow-hidden border-2 border-slate-300 bg-slate-900 group shrink-0 flex items-center justify-center">
+                    {reviewingKycItem.documentPhotoUrl ? (
+                      <>
+                        <img
+                          src={reviewingKycItem.documentPhotoUrl}
+                          alt="Photo document KYC"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setIsZoomingKycPhoto(!isZoomingKycPhoto)}
+                          className="absolute bottom-2 right-2 px-2.5 py-1 bg-black/75 hover:bg-black text-white text-[10px] font-bold rounded-lg backdrop-blur-xs flex items-center gap-1 cursor-pointer"
+                        >
+                          <span className="material-symbols-outlined text-xs">zoom_in</span>
+                          <span>Agrandir</span>
+                        </button>
+                      </>
+                    ) : (
+                      <div className="text-center p-4 space-y-1.5">
+                        <span className="material-symbols-outlined text-3xl text-slate-400">image_not_supported</span>
+                        <p className="text-[11px] font-bold text-slate-300">Document d&apos;identité non transmis</p>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-2 text-xs text-slate-600 flex-1">
@@ -6013,17 +6019,14 @@ export const AdminConsole: React.FC = () => {
                   </div>
                 </div>
 
-                {isZoomingKycPhoto && (
+                {isZoomingKycPhoto && reviewingKycItem.documentPhotoUrl && (
                   <div className="p-3 bg-slate-900 rounded-2xl animate-in fade-in duration-200">
                     <p className="text-[10px] text-slate-400 mb-2 flex items-center justify-between">
                       <span>Vue Haute Résolution Agrandie</span>
                       <button onClick={() => setIsZoomingKycPhoto(false)} className="text-white hover:underline cursor-pointer">Réduire</button>
                     </p>
                     <img
-                      src={
-                        reviewingKycItem.documentPhotoUrl ||
-                        'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=60'
-                      }
+                      src={reviewingKycItem.documentPhotoUrl}
                       alt="Photo document KYC zoom"
                       className="w-full h-auto max-h-[60vh] object-contain rounded-xl mx-auto"
                     />

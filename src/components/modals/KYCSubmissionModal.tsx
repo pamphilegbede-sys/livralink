@@ -25,6 +25,7 @@ interface KYCSubmissionModalProps {
 export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, onClose }) => {
   const {
     userProfile,
+    firebaseUser,
     courierSettings,
     selectedCourier,
     kycRequests,
@@ -36,7 +37,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     userProfile?.fullName || courierSettings.fullName || selectedCourier?.name || '';
   const activeCourierPhone =
     userProfile?.phone || courierSettings.phone || selectedCourier?.phone || '';
-  const activeCourierId = userProfile?.uid || selectedCourier?.id || 'c-awa';
+  const activeCourierId = userProfile?.uid || firebaseUser?.uid || selectedCourier?.id || '';
 
   // Find existing KYC submission for this courier
   const existingKyc = kycRequests.find(
@@ -94,8 +95,13 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!activeCourierId) {
+      showToast('Authentification requise pour soumettre votre dossier KYC.', 'error');
+      return;
+    }
 
     if (!lastName.trim() || !firstName.trim()) {
       showToast('Veuillez renseigner votre Nom et vos Prénoms séparément.', 'error');
@@ -127,6 +133,11 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       return;
     }
 
+    if (!photoPreview) {
+      showToast('La photo de votre pièce d\'identité est obligatoire.', 'error');
+      return;
+    }
+
     if (!hasAgreedTerms) {
       showToast('Veuillez accepter les conditions de vérification KYC.', 'error');
       return;
@@ -150,8 +161,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       idNumber: idNumber.trim(),
       ifuNumber: ifuNumber.trim() || undefined,
       operatingZone: operatingZone.trim(),
-      documentPhotoUrl:
-        photoPreview || 'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=60',
+      documentPhotoUrl: photoPreview,
       documents: {
         cni: true,
         permis: true,
@@ -160,10 +170,14 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       status: 'en_attente',
     };
 
-    submitKYCRequest(newKycData);
-    setIsSubmitting(false);
-    showToast('Votre dossier KYC a été soumis avec succès ! L\'administrateur va procéder à la vérification.', 'success');
-    onClose();
+    try {
+      await submitKYCRequest(newKycData);
+      onClose();
+    } catch (err: any) {
+      showToast(err?.message || 'Erreur lors de la soumission du dossier KYC.', 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

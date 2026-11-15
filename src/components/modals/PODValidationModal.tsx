@@ -1,10 +1,24 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
+import { auth } from '../../firebase/config';
 
 export const PODValidationModal: React.FC = () => {
-  const { isPODModalOpen, setIsPODModalOpen, selectedDelivery, validatePOD, showToast, featureFlags, currentRole, userProfile } = useApp();
+  const {
+    isPODModalOpen,
+    setIsPODModalOpen,
+    selectedDelivery,
+    validatePOD,
+    showToast,
+    featureFlags,
+    currentRole,
+    userProfile,
+    isAdminAuthenticated,
+    privateOtps,
+    fetchOrderPrivateOtp,
+  } = useApp();
 
-  const isSeller = currentRole === 'vendeur' || userProfile?.role === 'vendeur';
+  const isAdminDirect = isAdminAuthenticated && currentRole === 'admin';
+  const isSeller = !isAdminDirect && (currentRole === 'vendeur' || userProfile?.role === 'vendeur');
 
   const requireOtp = featureFlags?.requireOtpPOD ?? true;
   const requirePhoto = featureFlags?.requireLivePhotoPOD ?? true;
@@ -16,6 +30,8 @@ export const PODValidationModal: React.FC = () => {
   // --- Step 1: Code OTP state ---
   const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '']);
   const [isOtpVerified, setIsOtpVerified] = useState(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [podOtpToken, setPodOtpToken] = useState<string | null>(null);
   const [otpError, setOtpError] = useState<string | null>(null);
   const otpInputRefs = [
     useRef<HTMLInputElement>(null),
@@ -50,6 +66,8 @@ export const PODValidationModal: React.FC = () => {
       setCurrentStep(1);
       setOtpDigits(['', '', '', '']);
       setIsOtpVerified(false);
+      setIsVerifyingOtp(false);
+      setPodOtpToken(null);
       setOtpError(null);
       setPhotoDataUrl(null);
       setCameraError(null);
@@ -57,10 +75,13 @@ export const PODValidationModal: React.FC = () => {
       setHasSignaturePoints(false);
       setSignatureDataUrl(null);
       setIsSubmitting(false);
+      if (isSeller) {
+        void fetchOrderPrivateOtp(selectedDelivery.id);
+      }
     } else {
       stopCameraStream();
     }
-  }, [isPODModalOpen, selectedDelivery]);
+  }, [isPODModalOpen, selectedDelivery, isSeller, fetchOrderPrivateOtp]);
 
   // Clean camera stream on unmount
   useEffect(() => {
@@ -110,9 +131,9 @@ export const PODValidationModal: React.FC = () => {
       };
       bindVideo(10);
     } catch (err: unknown) {
-      console.warn('getUserMedia camera stream failed, enabling fallback trigger:', err);
+      console.warn('getUserMedia camera stream failed, enabling native mobile camera trigger:', err);
       setIsCameraActive(false);
-      setCameraError('Caméra directe non accessible. Utilisez le bouton "Caméra mobile" ou "Simuler la photo".');
+      setCameraError('Caméra directe indisponible dans le navigateur. Utilisez le bouton "Caméra mobile" ci-dessous pour prendre une photo réelle du colis.');
     }
   }, []);
 
@@ -127,7 +148,7 @@ export const PODValidationModal: React.FC = () => {
   // Handle direct snapshot capture from live video
   const takeDirectSnapshot = () => {
     if (!videoRef.current && !streamRef.current) {
-      generateSimulatedPhoto();
+      setCameraError('Flux caméra inactif. Activez la caméra ou utilisez "Caméra mobile".');
       return;
     }
     setIsCapturing(true);
@@ -139,7 +160,7 @@ export const PODValidationModal: React.FC = () => {
       canvas.height = video?.videoHeight || 480;
       const ctx = canvas.getContext('2d');
 
-      if (ctx && video) {
+      if (ctx && video && video.videoWidth > 0) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
         // Watermark: Timestamp + Live certification mark
@@ -155,57 +176,13 @@ export const PODValidationModal: React.FC = () => {
         stopCameraStream();
         showToast('Photo du colis capturée en direct avec succès !', 'success');
       } else {
-        generateSimulatedPhoto();
+        setCameraError('Image vidéo indisponible. Utilisez "Caméra mobile" pour capturer la photo du colis.');
       }
     } catch (err) {
-      console.error('Snapshot failed, falling back to simulated photo', err);
-      generateSimulatedPhoto();
+      console.error('Snapshot failed:', err);
+      setCameraError('Échec de capture directe. Utilisez "Caméra mobile".');
     } finally {
       setIsCapturing(false);
-    }
-  };
-
-  // Instant photo generator for testing or environments without webcams
-  const generateSimulatedPhoto = () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 640;
-    canvas.height = 480;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      const grad = ctx.createLinearGradient(0, 0, 640, 480);
-      grad.addColorStop(0, '#1e293b');
-      grad.addColorStop(1, '#0f172a');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, 640, 480);
-
-      // Package Box Illustration
-      ctx.fillStyle = '#b45309';
-      ctx.fillRect(170, 110, 300, 240);
-      ctx.strokeStyle = '#f59e0b';
-      ctx.lineWidth = 4;
-      ctx.strokeRect(170, 110, 300, 240);
-
-      // Tape lines
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(170, 210, 300, 40);
-
-      // Text stamp
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 20px sans-serif';
-      ctx.fillText('LIVRALINK • COLIS CERTIFIÉ', 185, 180);
-
-      // Watermark
-      const now = new Date().toLocaleString('fr-FR');
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
-      ctx.fillRect(0, 440, 640, 40);
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 13px sans-serif';
-      ctx.fillText(`LIVRALINK POD • ${selectedDelivery?.id} • ${now} • SANS VISAGE`, 15, 465);
-
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      setPhotoDataUrl(dataUrl);
-      stopCameraStream();
-      showToast('Photo du colis certifiée enregistrée avec succès !', 'success');
     }
   };
 
@@ -253,15 +230,54 @@ export const PODValidationModal: React.FC = () => {
     }
   };
 
-  const verifyOtpCode = (enteredCode: string) => {
-    const expectedOtp = selectedDelivery?.otpCode || '8492';
-    if (enteredCode === expectedOtp) {
-      setIsOtpVerified(true);
-      setOtpError(null);
-      showToast('Code secret OTP client certifié avec succès !', 'success');
-    } else {
+  const verifyOtpCode = async (enteredCode: string) => {
+    if (!selectedDelivery) return;
+    if (!/^\d{4}$/.test(enteredCode)) {
       setIsOtpVerified(false);
-      setOtpError(`Code OTP incorrect (#${enteredCode}). Demandez au client le code 4 chiffres transmis par le vendeur.`);
+      setPodOtpToken(null);
+      setOtpError('Saisissez un code à 4 chiffres.');
+      return;
+    }
+
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setIsOtpVerified(false);
+      setPodOtpToken(null);
+      setOtpError('Session Firebase expirée. Veuillez vous reconnecter.');
+      return;
+    }
+
+    setIsVerifyingOtp(true);
+    setOtpError(null);
+    const cleanDocId = selectedDelivery.id.replace(/[^a-zA-Z0-9_-]/g, '');
+
+    try {
+      const idToken = await currentUser.getIdToken();
+      const res = await fetch(`/api/deliveries/${encodeURIComponent(cleanDocId)}/otp/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ otpCode: enteredCode }),
+      });
+      const data = await res.json();
+      if (res.ok && data.verified && data.podOtpToken) {
+        setIsOtpVerified(true);
+        setPodOtpToken(data.podOtpToken);
+        setOtpError(null);
+        showToast('Code secret OTP client certifié avec succès !', 'success');
+      } else {
+        setIsOtpVerified(false);
+        setPodOtpToken(null);
+        setOtpError(data.error || `Code OTP incorrect (#${enteredCode}). Demandez au client le code à 4 chiffres transmis par le vendeur.`);
+      }
+    } catch {
+      setIsOtpVerified(false);
+      setPodOtpToken(null);
+      setOtpError('Impossible de vérifier le code OTP sur le serveur. Vérifiez votre connexion.');
+    } finally {
+      setIsVerifyingOtp(false);
     }
   };
 
@@ -367,7 +383,7 @@ export const PODValidationModal: React.FC = () => {
   };
 
   // Final validation submission (respecting master feature flags)
-  const handleFinalCertification = () => {
+  const handleFinalCertification = async () => {
     if (isSubmitting || !selectedDelivery) return;
 
     if (requireOtp && !isOtpVerified) {
@@ -398,17 +414,23 @@ export const PODValidationModal: React.FC = () => {
     setIsSubmitting(true);
     stopCameraStream();
 
-    const fullCode = otpDigits.join('') || selectedDelivery.otpCode || '0000';
-    validatePOD(selectedDelivery.id, {
-      otpCode: fullCode,
-      photoUrl: photoDataUrl || 'https://images.unsplash.com/photo-1549465220-1a8b9238cd48?w=500&auto=format&fit=crop&q=60',
-      signatureDataUrl: signatureDataUrl || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80"><text x="10" y="40" font-family="sans-serif" font-size="20" fill="navy">Validé par Admin</text></svg>',
-      signedByName: trimmedSigner || selectedDelivery.clientName || 'Destinataire Validé',
-    });
-
-    setTimeout(() => {
+    const fullCode = otpDigits.join('');
+    try {
+      const result = await validatePOD(selectedDelivery.id, {
+        otpCode: fullCode,
+        podOtpToken: podOtpToken || undefined,
+        photoUrl: photoDataUrl || '',
+        signatureDataUrl: signatureDataUrl || '',
+        signedByName: trimmedSigner,
+      });
+      if (!result.success) {
+        showToast(result.reason || 'Impossible de certifier la livraison.', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Erreur lors de la certification POD.', 'error');
+    } finally {
       setIsSubmitting(false);
-    }, 1200);
+    }
   };
 
   if (!isPODModalOpen || !selectedDelivery) return null;
@@ -416,8 +438,13 @@ export const PODValidationModal: React.FC = () => {
   // --- SELLER READ-ONLY VERIFICATION VIEW ---
   if (isSeller) {
     const isDelivered = selectedDelivery.status === 'livree';
-    const otpCodeRecorded = selectedDelivery.podData?.otpCode || selectedDelivery.otpCode || '8492';
-    const isOtpRecorded = isDelivered || Boolean(selectedDelivery.podData?.otpCode);
+    const otpCodeRecorded =
+      privateOtps[selectedDelivery.id] ||
+      (selectedDelivery.podData?.otpCode && selectedDelivery.podData.otpCode !== '••••'
+        ? selectedDelivery.podData.otpCode
+        : selectedDelivery.otpCode) ||
+      (selectedDelivery.podData?.otpVerified ? '•••• (Certifié)' : '—');
+    const isOtpRecorded = isDelivered || Boolean(selectedDelivery.podData?.otpVerified || selectedDelivery.podData?.otpCode);
     const photoUrl = selectedDelivery.podData?.photoUrl;
     const signatureUrl = selectedDelivery.podData?.signatureDataUrl;
     const signedByName = selectedDelivery.podData?.signedByName || selectedDelivery.clientName;
@@ -625,6 +652,102 @@ export const PODValidationModal: React.FC = () => {
     );
   }
 
+  if (isAdminDirect) {
+    const handleAdminDirectOverride = async () => {
+      if (isSubmitting || !selectedDelivery) return;
+      setIsSubmitting(true);
+      try {
+        const result = await validatePOD(
+          selectedDelivery.id,
+          {
+            otpCode: '',
+            photoUrl: selectedDelivery.podData?.photoUrl || '',
+            signatureDataUrl: selectedDelivery.podData?.signatureDataUrl || '',
+            signedByName: signerName.trim() || selectedDelivery.clientName || 'Destinataire',
+          },
+          undefined,
+          undefined
+        );
+        if (!result.success) {
+          showToast(result.reason || 'Impossible de clôturer la livraison en mode Admin.', 'error');
+        }
+      } catch (err: any) {
+        showToast(err?.message || 'Erreur lors de la validation administrative POD.', 'error');
+      } finally {
+        setIsSubmitting(false);
+      }
+    };
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-md animate-fade-in overflow-y-auto font-['Plus_Jakarta_Sans']">
+        <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 max-w-lg w-full shadow-2xl border border-slate-200 dark:border-slate-800 space-y-5 my-auto text-slate-900 dark:text-slate-100">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+            <div className="flex items-center gap-2.5">
+              <span className="w-9 h-9 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-xl">admin_panel_settings</span>
+              </span>
+              <div>
+                <h3 className="font-extrabold text-slate-900 dark:text-white text-base leading-snug">
+                  Validation Administrative POD
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                  Course <strong className="text-blue-700 dark:text-blue-400 font-mono">{selectedDelivery.id}</strong> • {selectedDelivery.clientName}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsPODModalOpen(false)}
+              className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-xl transition-colors cursor-pointer"
+              title="Fermer"
+            >
+              <span className="material-symbols-outlined text-xl">close</span>
+            </button>
+          </div>
+
+          <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 rounded-2xl border border-amber-200 dark:border-amber-900/60 text-xs text-amber-950 dark:text-amber-200 space-y-1">
+            <strong className="block font-bold">Supervision Super-Admin :</strong>
+            <p className="text-[11px] leading-relaxed">
+              Cette action certifie la clôture de la livraison directement via le serveur sécurisé (dérogation administrative enregistrée dans le journal d&apos;audit et notifiée au vendeur et au livreur).
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+              Nom du destinataire / signataire enregistré
+            </label>
+            <input
+              type="text"
+              value={signerName}
+              onChange={(e) => setSignerName(e.target.value)}
+              placeholder={selectedDelivery.clientName || 'Nom du destinataire'}
+              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium"
+            />
+          </div>
+
+          <div className="flex items-center gap-2.5 pt-2">
+            <button
+              type="button"
+              onClick={() => setIsPODModalOpen(false)}
+              className="flex-1 py-3 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs cursor-pointer"
+            >
+              Annuler
+            </button>
+            <button
+              type="button"
+              disabled={isSubmitting || selectedDelivery.status === 'livree'}
+              onClick={handleAdminDirectOverride}
+              className="flex-1 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs cursor-pointer flex items-center justify-center gap-1.5 shadow-md"
+            >
+              <span className="material-symbols-outlined text-base">verified</span>
+              <span>{isSubmitting ? 'Certification...' : 'Clôturer (Override Admin)'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const isAllComplete =
     (!requireOtp || isOtpVerified) &&
     (!requirePhoto || Boolean(photoDataUrl)) &&
@@ -785,6 +908,13 @@ export const PODValidationModal: React.FC = () => {
             </div>
 
             {/* OTP Status Messages */}
+            {isVerifyingOtp && (
+              <div className="p-3 bg-blue-50 rounded-xl text-blue-700 text-xs font-bold flex items-center justify-center gap-2 border border-blue-200">
+                <span className="w-3.5 h-3.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></span>
+                <span>Vérification sécurisée du code OTP auprès du serveur...</span>
+              </div>
+            )}
+
             {isOtpVerified && (
               <div className="p-3 bg-emerald-100/80 rounded-xl text-emerald-800 text-xs font-bold flex items-center justify-center gap-2 border border-emerald-300">
                 <span className="material-symbols-outlined text-base">verified</span>
@@ -897,10 +1027,10 @@ export const PODValidationModal: React.FC = () => {
                     </button>
                     <button
                       type="button"
-                      onClick={generateSimulatedPhoto}
-                      className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+                      onClick={() => directFileInputRef.current?.click()}
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
                     >
-                      Capturer Photo Colis Certifiée
+                      Ouvrir la caméra mobile
                     </button>
                   </div>
                 </div>

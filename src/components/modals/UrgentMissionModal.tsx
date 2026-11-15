@@ -68,7 +68,7 @@ export const UrgentMissionModal: React.FC = () => {
             </div>
             <div className="flex justify-between border-t border-white/10 pt-1 font-bold text-white">
               <span>Votre gain net direct :</span>
-              <span className="text-emerald-300 font-black">3 750 FCFA</span>
+              <span className="text-emerald-300 font-black">750 FCFA</span>
             </div>
           </div>
         </div>

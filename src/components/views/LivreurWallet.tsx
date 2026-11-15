@@ -4,6 +4,7 @@ import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
 import { BackButton } from '../common/BackButton';
+import { auth } from '../../firebase/config';
 
 export const LivreurWallet: React.FC = () => {
   const { courierSettings, showToast, couriers, selectedCourier, userProfile, deliveries } = useApp();
@@ -58,17 +59,30 @@ export const LivreurWallet: React.FC = () => {
       return;
     }
 
+    const currentUser = auth.currentUser;
+    const authenticatedUid = userProfile?.uid || currentUser?.uid || '';
+    if (!currentUser || !authenticatedUid) {
+      showToast('Authentification Firebase requise pour effectuer un retrait.', 'error');
+      return;
+    }
+
     setIsRequesting(true);
-    const idempotencyKey = `payout_${courierSettings.phone || 'courier'}_${numericAmount}_${Date.now()}`;
+    const idempotencyKey = `payout_${authenticatedUid}_${numericAmount}_${Date.now()}`;
 
     try {
+      const idToken = await currentUser.getIdToken();
+      const authHeaders = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`,
+      };
+
       // Step 1: Verify & Lock Idempotency Key (Point 10)
       const res = await fetch('/api/wallet/verify-idempotency', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({
           idempotencyKey,
-          userId: courierSettings.phone || 'courier_default',
+          userId: authenticatedUid,
           amount: numericAmount,
         }),
       });
@@ -81,19 +95,25 @@ export const LivreurWallet: React.FC = () => {
       }
 
       // Step 2: Commit payout safely
-      await fetch('/api/wallet/commit-payout', {
+      const commitRes = await fetch('/api/wallet/commit-payout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({
           idempotencyKey,
-          userId: courierSettings.phone || 'courier_default',
+          userId: authenticatedUid,
           amount: numericAmount,
         }),
       });
+      const commitData = await commitRes.json();
+      if (!commitRes.ok || !commitData.success) {
+        showToast(commitData.error || 'Échec de validation du retrait côté serveur.', 'error');
+        setIsRequesting(false);
+        return;
+      }
 
       showToast(`Demande de virement de ${numericAmount.toLocaleString('fr-FR')} FCFA envoyée avec succès vers ${payoutOperator.toUpperCase()} (${courierSettings.payoutPhone || courierSettings.phone}) ! Double débit strictement verrouillé.`, 'success');
-    } catch {
-      showToast('Retrait enregistré en mode résilient hors-ligne.', 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Impossible de joindre le serveur de paiement pour valider le retrait.', 'error');
     } finally {
       setTimeout(() => setIsRequesting(false), 2000);
     }
@@ -233,7 +253,7 @@ export const LivreurWallet: React.FC = () => {
                 myDeliveries.map((d) => {
                   const txId = `TR-${d.id.replace('LL-', '')}`;
                   const isEarning = d.status === 'livree' || d.status === 'en_cours';
-                  const amountText = `+${(d.deliveryFee || 2000).toLocaleString('fr-FR')} FCFA`;
+                  const amountText = `+${(d.deliveryFee ?? 0).toLocaleString('fr-FR')} FCFA`;
 
                   return (
                     <div key={d.id} className="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors">

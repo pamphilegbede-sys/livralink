@@ -7,6 +7,8 @@ import { BackButton } from '../common/BackButton';
 import { BENIN_DEPARTMENTS, getLocationForCommune } from '../../config/maps';
 import { BeninZoneSelector } from '../common/BeninZoneSelector';
 import { DarkModeToggle } from '../common/DarkModeToggle';
+import { doc, updateDoc } from 'firebase/firestore';
+import { auth, db } from '../../firebase/config';
 
 interface ValidationResult {
   id: string;
@@ -39,6 +41,7 @@ export const VendeurSettings: React.FC = () => {
   const [defaultExpress, setDefaultExpress] = useState(merchantSettings.defaultExpress);
   const [frequentZones, setFrequentZones] = useState<string[]>(merchantSettings.frequentZones || []);
   const [permanentInstructions, setPermanentInstructions] = useState(merchantSettings.permanentInstructions || '');
+  const [defaultPaymentMethod, setDefaultPaymentMethod] = useState(merchantSettings.defaultPaymentMethod || 'Règlement Direct (Cash / MoMo)');
 
   // Notifications
   const [notifyOnCreated, setNotifyOnCreated] = useState(merchantSettings.notifyOnCreated);
@@ -63,6 +66,7 @@ export const VendeurSettings: React.FC = () => {
     setDefaultExpress(merchantSettings.defaultExpress);
     setFrequentZones(merchantSettings.frequentZones || []);
     setPermanentInstructions(merchantSettings.permanentInstructions || '');
+    setDefaultPaymentMethod(merchantSettings.defaultPaymentMethod || 'Règlement Direct (Cash / MoMo)');
     setNotifyOnCreated(merchantSettings.notifyOnCreated);
     setNotifyOnStatusChange(merchantSettings.notifyOnStatusChange);
     setNotifyOnCourierAssigned(merchantSettings.notifyOnCourierAssigned);
@@ -115,6 +119,7 @@ export const VendeurSettings: React.FC = () => {
       defaultExpress,
       frequentZones,
       permanentInstructions,
+      defaultPaymentMethod,
       notifyOnCreated,
       notifyOnStatusChange,
       notifyOnCourierAssigned,
@@ -126,6 +131,19 @@ export const VendeurSettings: React.FC = () => {
       try {
         localStorage.setItem(`livralink_merchant_settings_${userProfile.uid}`, JSON.stringify(updated));
       } catch {}
+    }
+    if (auth.currentUser && auth.currentUser.emailVerified && userProfile?.uid === auth.currentUser.uid) {
+      updateDoc(doc(db, 'users', auth.currentUser.uid), {
+        fullName: managerName.trim(),
+        phone: phone.trim(),
+        storeName: storeName.trim(),
+        storeCommune,
+        storeAddress: defaultPickupAddress.trim(),
+        ...(coords ? { storeCoordinates: [coords.lat, coords.lng] } : {}),
+        updatedAt: new Date().toISOString(),
+      }).catch((err: any) => {
+        console.warn('Notice synchro profil vendeur Firestore:', err?.message || err);
+      });
     }
     showToast('Paramètres Vendeur enregistrés avec succès !', 'success');
   };
@@ -597,20 +615,45 @@ export const VendeurSettings: React.FC = () => {
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                <div className="p-4 rounded-2xl border-2 border-blue-600 bg-blue-50/40 dark:bg-blue-950/30 space-y-1">
-                  <span className="px-2 py-0.5 rounded bg-blue-600 text-white font-bold text-[10px]">Par défaut</span>
-                  <h4 className="font-extrabold text-slate-900 dark:text-white">MTN Mobile Money Bénin</h4>
-                  <p className="text-slate-500 dark:text-slate-400 font-mono">+229 97 •• •• 42</p>
-                  <span className="text-emerald-600 font-bold text-[11px] block">Débit direct sans frais</span>
+              <div className="space-y-3 text-xs">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">
+                  Mode de règlement préféré lors des remises (Modèle Direct MVP)
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[
+                    { id: 'Règlement Direct (Cash / MoMo)', title: 'Cash & Mobile Money Direct', desc: 'Paiement direct entre client, livreur et boutique' },
+                    { id: 'MTN Mobile Money Bénin (Direct)', title: 'MTN Mobile Money Bénin', desc: `Numéro marchand : ${phone || userProfile?.phone || 'Non renseigné'}` },
+                    { id: 'Moov Money Bénin (Direct)', title: 'Moov Money Bénin', desc: `Numéro marchand : ${phone || userProfile?.phone || 'Non renseigné'}` },
+                    { id: 'Celtiis Cash Bénin (Direct)', title: 'Celtiis Cash Bénin', desc: `Numéro marchand : ${phone || userProfile?.phone || 'Non renseigné'}` },
+                  ].map((option) => {
+                    const isSelected = defaultPaymentMethod === option.id;
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => setDefaultPaymentMethod(option.id)}
+                        className={`text-left p-4 rounded-2xl border-2 transition-all cursor-pointer space-y-1 ${
+                          isSelected
+                            ? 'border-blue-600 bg-blue-50/40 dark:bg-blue-950/30'
+                            : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${
+                            isSelected ? 'bg-blue-600 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                          }`}>
+                            {isSelected ? 'Sélectionné ✓' : 'Disponible'}
+                          </span>
+                        </div>
+                        <h4 className="font-extrabold text-slate-900 dark:text-white">{option.title}</h4>
+                        <p className="text-slate-500 dark:text-slate-400 font-mono text-[11px]">{option.desc}</p>
+                      </button>
+                    );
+                  })}
                 </div>
-
-                <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 space-y-1">
-                  <span className="px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-[10px]">Secondaire</span>
-                  <h4 className="font-extrabold text-slate-900 dark:text-white">Moov Money Bénin</h4>
-                  <p className="text-slate-500 dark:text-slate-400 font-mono">+229 95 •• •• 90</p>
-                  <span className="text-slate-400 text-[11px] block">Opérationnel</span>
-                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Note MVP : LivraLink ne prélève aucune commission (0%) et n&apos;effectue pas encore de débit automatique en ligne. Les montants COD et frais de course sont réglés directement entre les parties.
+                </p>
               </div>
             </div>
           )}
@@ -692,7 +735,7 @@ export const VendeurSettings: React.FC = () => {
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-blue-600 dark:text-blue-400">shield</span>
               <span className="text-slate-700 dark:text-slate-300 font-bold">
-                Session Vendeur Sécurisée • Assistance Hotline 24/7 (01 02 03 04)
+                Session Vendeur Sécurisée • Support LivraLink (support@livralink.oxy-dev.cc)
               </span>
             </div>
 

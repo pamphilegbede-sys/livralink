@@ -20,6 +20,8 @@ export const VendeurTracking: React.FC = () => {
     updateDeliveryStatus,
     duplicateDeliveryOrder,
     generateNewOTP,
+    privateOtps,
+    fetchOrderPrivateOtp,
     firebaseUser,
     userProfile,
     isAdminAuthenticated,
@@ -59,6 +61,12 @@ export const VendeurTracking: React.FC = () => {
 
   const currentOrder = merchantDeliveries.find((d) => d.id === activeCourseId) || merchantDeliveries[0];
 
+  React.useEffect(() => {
+    if (currentOrder?.id) {
+      void fetchOrderPrivateOtp(currentOrder.id);
+    }
+  }, [currentOrder?.id, fetchOrderPrivateOtp]);
+
   // Calcul dynamique des compteurs de statut pour les onglets
   const countAll = merchantDeliveries.length;
   const countPending = merchantDeliveries.filter((d) => d.status === 'en_attente' || d.status === 'assignee').length;
@@ -94,37 +102,50 @@ export const VendeurTracking: React.FC = () => {
   };
 
   const handleShareTrackingLink = () => {
-    const trackingUrl = `https://livralink.bj/track/${currentOrder.id.replace('#', '')}`;
+    const cleanCode = currentOrder.id.replace('#', '');
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://livralink.oxy-dev.cc';
+    const trackingUrl = `${origin}/?track=${encodeURIComponent(cleanCode)}`;
     navigator.clipboard.writeText(trackingUrl);
-    showToast(`Lien de suivi client copié : ${trackingUrl}`, 'success');
+    showToast(`Référence de suivi copiée : ${trackingUrl}`, 'success');
   };
 
   const handleDirectWhatsApp = () => {
-    const msg = `Bonjour ${currentOrder.clientName}, votre colis LivraLink (${currentOrder.id}) est en cours de livraison par ${currentOrder.courier?.name || 'votre coursier'}. Suivi direct : https://livralink.bj/track/${currentOrder.id.replace('#', '')}`;
+    const cleanCode = currentOrder.id.replace('#', '');
+    const msg = `Bonjour ${currentOrder.clientName}, votre colis LivraLink (${currentOrder.id}) est en cours de livraison par ${currentOrder.courier?.name || 'votre coursier'}. Référence commande : ${cleanCode}.`;
     openWhatsAppModal(currentOrder.clientPhone, currentOrder.clientName, msg);
   };
 
   const handleRelaunch = (orderId: string) => {
-    updateDeliveryStatus(orderId, 'en_attente', 'Recherche coursier relancée par le vendeur');
+    openLivreurSearchModal(orderId);
     showToast(`Recherche de coursier relancée pour ${orderId}`, 'info');
   };
 
-  const currentOtp = currentOrder?.otpCode || '8492';
+  const currentOtp = (currentOrder?.id && privateOtps[currentOrder.id]) || currentOrder?.otpCode || '••••';
 
   const handleCopyOtp = () => {
+    if (!currentOtp || currentOtp === '••••') {
+      showToast('Code OTP indisponible. Cliquez sur Régénérer OTP.', 'error');
+      return;
+    }
     navigator.clipboard.writeText(currentOtp);
     showToast(`Code secret OTP #${currentOtp} copié !`, 'success');
   };
 
   const handleSendOtpWhatsApp = () => {
+    if (!currentOtp || currentOtp === '••••') {
+      showToast('Code OTP indisponible. Cliquez sur Régénérer OTP.', 'error');
+      return;
+    }
     const msg = `Bonjour *${currentOrder.clientName}*, votre colis LivraLink (${currentOrder.id}) est prêt pour la livraison. Voici votre *code secret OTP de livraison : ${currentOtp}*.\n\n⚠️ Veuillez communiquer ou taper ce code à 4 chiffres sur le smartphone de votre coursier à son arrivée pour valider la réception.`;
     openWhatsAppModal(currentOrder.clientPhone, currentOrder.clientName, msg);
   };
 
-  const handleRegenerateOtp = () => {
+  const handleRegenerateOtp = async () => {
     if (!currentOrder) return;
-    const newOtp = generateNewOTP(currentOrder.id);
-    showToast(`Nouveau code secret #${newOtp} généré avec succès !`, 'success');
+    const newOtp = await generateNewOTP(currentOrder.id);
+    if (newOtp) {
+      showToast(`Nouveau code secret #${newOtp} généré avec succès !`, 'success');
+    }
   };
 
   return (

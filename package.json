@@ -10,7 +10,10 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test test-vendor-delivery-isolation.test.ts"
+    "test": "tsx --test test-vendor-delivery-isolation.test.ts src/tests/deliveryIsolation.test.ts src/tests/kycAndNotifications.test.ts src/tests/serverApi.test.ts src/tests/pdfAndFlows.test.ts",
+    "test:rules:firestore": "firebase emulators:exec --only firestore --project ai-studio-livralink-security-test \"npx tsx --test firestore.rules.test.ts\"",
+    "test:rules:storage": "firebase emulators:exec --only firestore,storage --project ai-studio-livralink-storage-test \"npx tsx --test storage.rules.test.ts\"",
+    "migrate:dry-run": "tsx scripts/migrate-p0-legacy.ts --dry-run"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -40,6 +43,7 @@
     "workbox-window": "^7.4.1"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
     "@types/express": "^4.17.21",
     "@types/google.maps": "^3.66.6",
     "@types/node": "^22.14.0",

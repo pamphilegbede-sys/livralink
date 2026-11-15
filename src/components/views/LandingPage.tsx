@@ -632,7 +632,7 @@ export const LandingPage: React.FC = () => {
             </div>
             <div id="support">
               <strong className="text-slate-700 block mb-0.5">Support technique</strong>
-              <span>Assistance vendeurs et coursiers disponible au 01 02 03 04.</span>
+              <span>Assistance vendeurs et coursiers disponible via support@livralink.oxy-dev.cc.</span>
             </div>
             <div id="mentions">
               <strong className="text-slate-700 block mb-0.5">Mentions légales</strong>

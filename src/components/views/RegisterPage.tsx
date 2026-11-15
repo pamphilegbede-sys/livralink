@@ -658,7 +658,7 @@ export const RegisterPage: React.FC = () => {
 
       {/* Footer */}
       <footer className="w-full bg-white border-t border-slate-200/80 py-4 px-4 text-center text-xs text-slate-500">
-        <p>© {new Date().getFullYear()} LivraLink CI/BJ — Tous droits réservés.</p>
+        <p>© {new Date().getFullYear()} LivraLink Bénin — Tous droits réservés.</p>
       </footer>
     </div>
   );

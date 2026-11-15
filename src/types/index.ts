@@ -106,8 +106,10 @@ export interface DeliveryOrder {
   otpCode?: string; // Code secret à 4 chiffres généré par le vendeur et transmis au client
   otpGeneratedAt?: string;
   podData?: {
-    type?: 'otp' | 'photo' | 'signature' | 'complete_tri_factor';
+    type?: 'otp' | 'photo' | 'signature' | 'complete_tri_factor' | 'admin_override';
     otpCode?: string;
+    otpVerified?: boolean;
+    verifiedByServer?: boolean;
     photoUrl?: string;
     signatureDataUrl?: string;
     signedByName?: string;

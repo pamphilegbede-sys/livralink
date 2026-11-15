@@ -2,18 +2,23 @@
  * Comprehensive Security Test Suite for Firestore Rules — LivraLink
  *
  * Covers:
- * 1-15: Core 15 security scenarios (unauthenticated read, role-less/vendor accept block,
+ * 1-15: Core security scenarios (unauthenticated read, role-less/vendor accept block,
  *       double-acceptance prevention, privilege escalation blocks, PII isolation,
  *       notification spoofing/type blocks, conversation isolation, message sender forgery,
  *       deletion locks, read-only notification flag updates).
- * 16-20: Additional hardened controls:
+ * 16-24: P0 Hardened controls:
  *       16. Unverified email matching admin whitelist is denied Admin access.
- *       17. Vendor or client cannot accept /deliveries doc; only verified livreur can accept once.
- *       18. User cannot self-approve KYC (/kyc isApproved/valide) or modify user status/isKycVerified.
- *       19. User cannot spam arbitrary recipientId on /notifications without order counterparty.
- *       20. Conversation schema requires >= 2 participants & legitimate workflow completes end-to-end.
+ *       17. User cannot self-approve KYC (/kyc isApproved/valide) or modify user status/isKycVerified.
+ *       18. Vendor cannot accept /deliveries doc as courier.
+ *       19. Unverified-KYC courier cannot read/accept open deliveries or missions.
+ *       20. Plaintext otpCode on /deliveries is blocked; /deliveries/{id}/private/otp is vendor/admin only.
+ *       21. Direct client transition to 'livree' by courier is blocked (must go through trusted backend POD endpoint).
+ *       22. Client-side notification creation by non-admin is strictly blocked.
+ *       23. Notification isRead cannot be reset back to false.
+ *       24. Empty/spoofed courier.id map cannot bypass assignment ownership checks.
  */
 
+import { describe, test, before, after, beforeEach } from 'node:test';
 import {
   assertFails,
   assertSucceeds,
@@ -27,7 +32,7 @@ let testEnv: RulesTestEnvironment;
 const PROJECT_ID = 'ai-studio-livralink-security-test';
 
 describe('LivraLink Complete Security Rules Test Suite', () => {
-  beforeAll(async () => {
+  before(async () => {
     testEnv = await initializeTestEnvironment({
       projectId: PROJECT_ID,
       firestore: {
@@ -38,7 +43,7 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
     });
   });
 
-  afterAll(async () => {
+  after(async () => {
     await testEnv.cleanup();
   });
 
@@ -122,8 +127,8 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
     );
   });
 
-  // 4. Authorized courier can accept an available mission
-  test('4. Authorized courier can accept an available mission', async () => {
+  // 4. Authorized KYC-verified courier can accept an available mission
+  test('4. Authorized KYC-verified courier can accept an available mission', async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       await context.firestore().doc('users/courier_1').set({
         uid: 'courier_1',
@@ -131,6 +136,7 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
         fullName: 'Livreur Test',
         phone: '+22997000003',
         role: 'livreur',
+        isKycVerified: true,
       });
       await context.firestore().doc('priority_missions/mission_1').set({
         id: 'mission_1',
@@ -167,6 +173,7 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
         fullName: 'Livreur 2',
         phone: '+22997000004',
         role: 'livreur',
+        isKycVerified: true,
       });
       await context.firestore().doc('priority_missions/mission_1').set({
         id: 'mission_1',
@@ -201,6 +208,7 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
         fullName: 'Livreur B',
         phone: '+22997000005',
         role: 'livreur',
+        isKycVerified: true,
       });
       await context.firestore().doc('priority_missions/mission_race').set({
         id: 'mission_race',
@@ -285,6 +293,7 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
         fullName: 'Livreur Unassigned',
         phone: '+22997000008',
         role: 'livreur',
+        isKycVerified: true,
       });
       await context.firestore().doc('deliveries/deliv_private').set({
         id: 'deliv_private',
@@ -306,8 +315,8 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
     await assertFails(db.doc('deliveries/deliv_private').get());
   });
 
-  // 10. User cannot send fraudulent notifications
-  test('10. User cannot omit senderId, spoof senderId, create system type, or target unrelated victim', async () => {
+  // 10. Ordinary users cannot create notifications directly in Firestore (trusted backend only)
+  test('10. Ordinary user cannot fabricate any notification directly in /notifications', async () => {
     const userCtx = testEnv.authenticatedContext('user_notif_tester', {
       email: 'user_n@test.com',
       email_verified: true,
@@ -315,42 +324,33 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
     const db = userCtx.firestore();
 
     await assertFails(
-      db.doc('notifications/n_1').set({
-        id: 'n_1',
+      db.doc('notifications/n_self').set({
+        id: 'n_self',
         recipientId: 'user_notif_tester',
-        title: 'Alert',
-        message: 'Hello',
+        senderId: 'user_notif_tester',
+        title: 'Fake Alert',
+        message: 'Self fabricated',
       })
     );
 
     await assertFails(
-      db.doc('notifications/n_2').set({
-        id: 'n_2',
-        recipientId: 'user_notif_tester',
+      db.doc('notifications/n_spoof').set({
+        id: 'n_spoof',
+        recipientId: 'unrelated_victim',
         senderId: 'admin_god',
         title: 'Alert',
-        message: 'Hello',
+        message: 'Spoofed',
       })
     );
 
     await assertFails(
-      db.doc('notifications/n_3').set({
-        id: 'n_3',
+      db.doc('notifications/n_sys').set({
+        id: 'n_sys',
         recipientId: 'user_notif_tester',
         senderId: 'user_notif_tester',
         title: 'System Alert',
         message: 'Hello',
         type: 'system',
-      })
-    );
-
-    await assertFails(
-      db.doc('notifications/n_4').set({
-        id: 'n_4',
-        recipientId: 'unrelated_victim',
-        senderId: 'user_notif_tester',
-        title: 'Spam',
-        message: 'Unsolicited spam notification',
       })
     );
   });
@@ -395,8 +395,8 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
     );
   });
 
-  // 13. Legitimate operations continue working
-  test('13. Legitimate vendor, courier, and delivery/POD operations succeed', async () => {
+  // 13. Legitimate operations continue working (with private OTP isolation and backend POD gating)
+  test('13. Legitimate vendor create, private OTP, and KYC-verified courier pickup/transit succeed', async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       await context.firestore().doc('users/vendor_ok').set({
         uid: 'vendor_ok',
@@ -411,6 +411,7 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
         fullName: 'Courier OK',
         phone: '+22997000011',
         role: 'livreur',
+        isKycVerified: true,
       });
     });
 
@@ -428,6 +429,15 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
         clientPhone: '+22997001122',
         deliveryFee: 2500,
         status: 'en_attente',
+        otpRequired: true,
+      })
+    );
+
+    await assertSucceeds(
+      vendorDb.doc('deliveries/m_ok/private/otp').set({
+        otpCode: '4821',
+        merchantId: 'vendor_ok',
+        generatedAt: Date.now(),
       })
     );
 
@@ -446,6 +456,9 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
       email_verified: true,
     });
     const courierDb = courierCtx.firestore();
+
+    // Courier CANNOT read private OTP document
+    await assertFails(courierDb.doc('deliveries/m_ok/private/otp').get());
 
     await assertSucceeds(
       courierDb.doc('priority_missions/m_ok').update({
@@ -468,10 +481,16 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
     );
 
     await assertSucceeds(
-      courierDb.doc('priority_missions/m_ok').update({
-        status: 'livree',
-        completedAt: Date.now(),
-        updatedAt: new Date().toISOString(),
+      courierDb.doc('deliveries/m_ok').update({
+        status: 'colis_recupere',
+        updatedAt: Date.now(),
+      })
+    );
+
+    await assertSucceeds(
+      courierDb.doc('deliveries/m_ok').update({
+        status: 'en_cours',
+        updatedAt: Date.now(),
       })
     );
   });
@@ -497,13 +516,13 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
     await assertFails(courierDb.doc('priority_missions/m_del').delete());
   });
 
-  // 15. Notification recipient can only update read status, cannot tamper with sender or title
-  test('15. Notification recipient can only update isRead and cannot modify title or senderId', async () => {
+  // 15. Notification recipient can only mark isRead true once (cannot reset to false or tamper)
+  test('15. Notification recipient can mark isRead true once and cannot reset or tamper fields', async () => {
     await testEnv.withSecurityRulesDisabled(async (context: any) => {
       await context.firestore().doc('notifications/notif_test').set({
         id: 'notif_test',
         recipientId: 'user_target',
-        senderId: 'vendor_ok',
+        senderId: 'system_backend',
         title: 'Original Title',
         message: 'Original Message',
         isRead: false,
@@ -526,6 +545,15 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
     await assertSucceeds(
       db.doc('notifications/notif_test').update({
         isRead: true,
+        read: true,
+        readAt: Date.now(),
+      })
+    );
+
+    // Cannot reset isRead back to false
+    await assertFails(
+      db.doc('notifications/notif_test').update({
+        isRead: false,
       })
     );
   });
@@ -610,4 +638,405 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
       })
     );
   });
+
+  // 19. Unverified-KYC courier cannot read or accept open deliveries
+  test('19. Courier without KYC approval cannot read or accept open deliveries', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/courier_nokyc').set({
+        uid: 'courier_nokyc',
+        email: 'nokyc@test.com',
+        fullName: 'Unverified Courier',
+        phone: '+22997000015',
+        role: 'livreur',
+        isKycVerified: false,
+      });
+      await context.firestore().doc('deliveries/deliv_kyc_gate').set({
+        id: 'deliv_kyc_gate',
+        merchantId: 'vendor_y',
+        clientName: 'Client C',
+        clientPhone: '+22997000016',
+        deliveryFee: 2000,
+        status: 'en_attente',
+      });
+    });
+
+    const courierCtx = testEnv.authenticatedContext('courier_nokyc', {
+      email: 'nokyc@test.com',
+      email_verified: true,
+    });
+    const db = courierCtx.firestore();
+
+    await assertFails(db.doc('deliveries/deliv_kyc_gate').get());
+    await assertFails(
+      db.doc('deliveries/deliv_kyc_gate').update({
+        status: 'assignee',
+        courierId: 'courier_nokyc',
+      })
+    );
+  });
+
+  // 20. Plaintext otpCode on /deliveries is rejected and direct courier 'livree' jump is blocked
+  test('20. Plaintext otpCode on /deliveries and direct courier status=livree update are blocked', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/vendor_sec').set({
+        uid: 'vendor_sec',
+        email: 'vsec@test.com',
+        fullName: 'Vendor Sec',
+        phone: '+22997000017',
+        role: 'vendeur',
+      });
+      await context.firestore().doc('users/courier_sec').set({
+        uid: 'courier_sec',
+        email: 'csec@test.com',
+        fullName: 'Courier Sec',
+        phone: '+22997000018',
+        role: 'livreur',
+        isKycVerified: true,
+      });
+      await context.firestore().doc('deliveries/deliv_sec').set({
+        id: 'deliv_sec',
+        merchantId: 'vendor_sec',
+        courierId: 'courier_sec',
+        clientName: 'Client D',
+        clientPhone: '+22997000019',
+        deliveryFee: 2000,
+        status: 'en_cours',
+      });
+    });
+
+    const vendorCtx = testEnv.authenticatedContext('vendor_sec', {
+      email: 'vsec@test.com',
+      email_verified: true,
+    });
+    await assertFails(
+      vendorCtx.firestore().doc('deliveries/deliv_plain_otp').set({
+        id: 'deliv_plain_otp',
+        merchantId: 'vendor_sec',
+        clientName: 'Client D',
+        clientPhone: '+22997000019',
+        deliveryFee: 2000,
+        status: 'en_attente',
+        otpCode: '1234',
+      })
+    );
+
+    const courierCtx = testEnv.authenticatedContext('courier_sec', {
+      email: 'csec@test.com',
+      email_verified: true,
+    });
+    await assertFails(
+      courierCtx.firestore().doc('deliveries/deliv_sec').update({
+        status: 'livree',
+        deliveredAt: Date.now(),
+      })
+    );
+  });
+
+  // 21. Statically provable allow list queries on deliveries and priority_missions
+  test('21. KYC courier can run allow list queries on pending and own assigned deliveries/missions', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/courier_list').set({
+        uid: 'courier_list',
+        email: 'clist@test.com',
+        fullName: 'Courier List',
+        phone: '+22997000021',
+        role: 'livreur',
+        isKycVerified: true,
+      });
+      await context.firestore().doc('deliveries/deliv_open_1').set({
+        id: 'deliv_open_1',
+        merchantId: 'vendor_1',
+        clientName: 'Client Open',
+        clientPhone: '+22997000022',
+        deliveryFee: 1500,
+        status: 'en_attente',
+      });
+      await context.firestore().doc('priority_missions/mission_open_1').set({
+        id: 'mission_open_1',
+        orderId: 'deliv_open_1',
+        merchantId: 'vendor_1',
+        fee: 1500,
+        status: 'en_attente',
+      });
+    });
+
+    const courierCtx = testEnv.authenticatedContext('courier_list', {
+      email: 'clist@test.com',
+      email_verified: true,
+    });
+    const db = courierCtx.firestore();
+
+    await assertSucceeds(db.collection('deliveries').where('status', '==', 'en_attente').get());
+    await assertSucceeds(db.collection('deliveries').where('courierId', '==', 'courier_list').get());
+    await assertSucceeds(db.collection('priority_missions').where('status', '==', 'en_attente').get());
+    await assertFails(db.collection('deliveries').get());
+  });
+
+  // 22. Legacy /users doc with extra fields allows owner partial update while locking role/KYC
+  test('22. Legacy user profile with extra fields allows safe profile edits and blocks privilege escalation', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/legacy_vendor').set({
+        uid: 'legacy_vendor',
+        email: 'legacy@test.com',
+        fullName: 'Vendeur Legacy',
+        phone: '+22997000023',
+        role: 'vendeur',
+        legacyMigrationTag: 'v1_import',
+      });
+    });
+
+    const vendorCtx = testEnv.authenticatedContext('legacy_vendor', {
+      email: 'legacy@test.com',
+      email_verified: true,
+    });
+    const db = vendorCtx.firestore();
+
+    await assertSucceeds(
+      db.doc('users/legacy_vendor').update({
+        storeName: 'Boutique Cotonou Pro',
+        updatedAt: new Date().toISOString(),
+      })
+    );
+    await assertFails(
+      db.doc('users/legacy_vendor').update({
+        role: 'admin',
+      })
+    );
+    await assertFails(
+      db.doc('users/legacy_vendor').update({
+        isKycVerified: true,
+      })
+    );
+  });
+
+  // 23. Owning vendor can submit courierRating once after delivery; second edit or non-owner rejected
+  test('23. Vendor can rate courier once after delivery; re-rating or non-owner rating fails', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/vendor_rate').set({
+        uid: 'vendor_rate',
+        email: 'vrate@test.com',
+        fullName: 'Vendor Rate',
+        phone: '+22997000024',
+        role: 'vendeur',
+      });
+      await context.firestore().doc('users/vendor_other').set({
+        uid: 'vendor_other',
+        email: 'vother@test.com',
+        fullName: 'Vendor Other',
+        phone: '+22997000025',
+        role: 'vendeur',
+      });
+      await context.firestore().doc('deliveries/deliv_done').set({
+        id: 'deliv_done',
+        merchantId: 'vendor_rate',
+        courierId: 'courier_1',
+        clientName: 'Client Done',
+        clientPhone: '+22997000026',
+        deliveryFee: 2000,
+        status: 'livree',
+      });
+    });
+
+    const otherCtx = testEnv.authenticatedContext('vendor_other', {
+      email: 'vother@test.com',
+      email_verified: true,
+    });
+    await assertFails(
+      otherCtx.firestore().doc('deliveries/deliv_done').update({
+        courierRating: { rating: 1, ratedAt: 'now' },
+        updatedAt: Date.now(),
+      })
+    );
+
+    const ownerCtx = testEnv.authenticatedContext('vendor_rate', {
+      email: 'vrate@test.com',
+      email_verified: true,
+    });
+    await assertSucceeds(
+      ownerCtx.firestore().doc('deliveries/deliv_done').update({
+        courierRating: { rating: 5, ratedAt: 'now', ratedBy: 'Boutique Rate' },
+        updatedAt: Date.now(),
+      })
+    );
+    await assertFails(
+      ownerCtx.firestore().doc('deliveries/deliv_done').update({
+        courierRating: { rating: 2, ratedAt: 'later' },
+        updatedAt: Date.now(),
+      })
+    );
+  });
+
+  // 24. KYC dossier owner cannot tamper with id/userId/isApproved on update
+  test('24. KYC owner update preserves id/userId immutability and blocks self-approval', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/courier_kyc_u').set({
+        uid: 'courier_kyc_u',
+        email: 'ckyc@test.com',
+        fullName: 'Courier KYC',
+        phone: '+22997000027',
+        role: 'livreur',
+      });
+      await context.firestore().doc('kyc/courier_kyc_u').set({
+        id: 'courier_kyc_u',
+        userId: 'courier_kyc_u',
+        fullName: 'Courier KYC',
+        phone: '+22997000027',
+        status: 'refuse',
+        isApproved: false,
+        verified: false,
+      });
+    });
+
+    const ctx = testEnv.authenticatedContext('courier_kyc_u', {
+      email: 'ckyc@test.com',
+      email_verified: true,
+    });
+    const db = ctx.firestore();
+
+    await assertFails(
+      db.doc('kyc/courier_kyc_u').update({
+        userId: 'someone_else',
+      })
+    );
+    await assertFails(
+      db.doc('kyc/courier_kyc_u').update({
+        status: 'valide',
+        isApproved: true,
+        verified: true,
+      })
+    );
+    await assertSucceeds(
+      db.doc('kyc/courier_kyc_u').update({
+        status: 'en_attente',
+        vehiclePlate: 'BJ-1234-RB',
+      })
+    );
+  });
+
+  // 25. Client isolation: clients can only read deliveries linked to their clientId
+  test('25. Client can read own clientId delivery but cannot read other clients or create deliveries', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/client_iso_1').set({
+        uid: 'client_iso_1',
+        email: 'c1@test.com',
+        fullName: 'Client 1',
+        phone: '+22997000030',
+        role: 'client',
+      });
+      await context.firestore().doc('deliveries/deliv_c1').set({
+        id: 'deliv_c1',
+        merchantId: 'vendor_1',
+        clientId: 'client_iso_1',
+        clientName: 'Client 1',
+        clientPhone: '+22997000030',
+        deliveryFee: 1500,
+        status: 'en_cours',
+      });
+      await context.firestore().doc('deliveries/deliv_c2').set({
+        id: 'deliv_c2',
+        merchantId: 'vendor_1',
+        clientId: 'client_iso_2',
+        clientName: 'Client 2',
+        clientPhone: '+22997000031',
+        deliveryFee: 1500,
+        status: 'en_cours',
+      });
+    });
+
+    const clientCtx = testEnv.authenticatedContext('client_iso_1', {
+      email: 'c1@test.com',
+      email_verified: true,
+    });
+    const db = clientCtx.firestore();
+
+    await assertSucceeds(db.doc('deliveries/deliv_c1').get());
+    await assertSucceeds(db.collection('deliveries').where('clientId', '==', 'client_iso_1').get());
+    await assertFails(db.doc('deliveries/deliv_c2').get());
+    await assertFails(db.collection('deliveries').where('clientId', '==', 'client_iso_2').get());
+    await assertFails(
+      db.doc('deliveries/deliv_client_spoof').set({
+        id: 'deliv_client_spoof',
+        merchantId: 'client_iso_1',
+        clientName: 'Client 1',
+        clientPhone: '+22997000030',
+        deliveryFee: 1500,
+        status: 'en_attente',
+      })
+    );
+  });
+
+  // 26. Wallet & payout idempotency protection
+  test('26. Users cannot tamper with walletBalanceFCFA on /users or write /payout_idempotency directly', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/courier_wallet_u').set({
+        uid: 'courier_wallet_u',
+        email: 'cw@test.com',
+        fullName: 'Courier Wallet',
+        phone: '+22997000032',
+        role: 'livreur',
+        walletBalanceFCFA: 0,
+      });
+    });
+
+    const ctx = testEnv.authenticatedContext('courier_wallet_u', {
+      email: 'cw@test.com',
+      email_verified: true,
+    });
+    const db = ctx.firestore();
+
+    await assertFails(
+      db.doc('users/courier_wallet_u').update({
+        walletBalanceFCFA: 500000,
+      })
+    );
+    await assertFails(
+      db.doc('payout_idempotency/fake_lock').set({
+        uid: 'courier_wallet_u',
+        amount: 50000,
+        status: 'committed',
+      })
+    );
+  });
+
+  // 27. Admin & Super-Admin permissions on /users, /admins, /announcements, /notifications
+  test('27. Verified super-admin can manage protected admin resources while standard admin cannot overwrite /admins or /announcements', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('admins/sub_admin_1').set({
+        uid: 'sub_admin_1',
+        email: 'subadmin@test.com',
+      });
+    });
+
+    const subAdminCtx = testEnv.authenticatedContext('sub_admin_1', {
+      email: 'subadmin@test.com',
+      email_verified: true,
+    });
+    const superAdminCtx = testEnv.authenticatedContext('super_admin_uid', {
+      email: 'Pamphile.gbede@gmail.com',
+      email_verified: true,
+    });
+
+    await assertSucceeds(subAdminCtx.firestore().collection('users').get());
+    await assertFails(
+      subAdminCtx.firestore().doc('admins/new_admin').set({ email: 'new@test.com' })
+    );
+    await assertFails(
+      subAdminCtx.firestore().doc('announcements/ann_1').set({ title: 'Fake Broadcast' })
+    );
+
+    await assertSucceeds(
+      superAdminCtx.firestore().doc('announcements/ann_1').set({ title: 'Official Notice' })
+    );
+    await assertSucceeds(
+      superAdminCtx.firestore().doc('notifications/notif_admin_1').set({
+        id: 'notif_admin_1',
+        recipientId: 'courier_1',
+        senderId: 'system_backend',
+        title: 'Admin Alert',
+        message: 'Verified admin notification',
+      })
+    );
+  });
 });
+
+

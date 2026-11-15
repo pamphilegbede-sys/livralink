@@ -113,7 +113,7 @@ export const PrivacyPolicyModal: React.FC<PrivacyPolicyModalProps> = ({
               5. Droits des Utilisateurs &amp; Modification de Profil
             </h4>
             <p>
-              À tout moment, vous disposez d'un droit d'accès, de rectification et de suppression de votre compte en accédant aux paramètres de votre profil ou en contactant notre équipe d'assistance dédiée (01 02 03 04).
+              À tout moment, vous disposez d&apos;un droit d&apos;accès, de rectification et de suppression de votre compte en accédant aux paramètres de votre profil ou en contactant notre équipe d&apos;assistance dédiée (support@livralink.oxy-dev.cc).
             </p>
           </section>
         </div>

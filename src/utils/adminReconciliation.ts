@@ -224,7 +224,7 @@ export const mapFirestoreDeliveryToOrder = (data: any, docId: string): DeliveryO
     statusNote: data.statusNote || '',
     createdAt: createdIso,
     estimatedArrival: data.estimatedArrival || 'Dans ~20 min',
-    otpCode: data.otpCode || '0000',
+    otpCode: typeof data.otpCode === 'string' && data.otpCode.trim() ? data.otpCode.trim() : undefined,
     merchantId: data.merchantId,
     merchantEmail: data.merchantEmail,
     merchantStoreName: data.merchantStoreName || data.pickupLocation?.name,

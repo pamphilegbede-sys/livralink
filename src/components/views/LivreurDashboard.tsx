@@ -493,7 +493,7 @@ export const LivreurDashboard: React.FC = () => {
                     <div className="text-slate-400 text-[11px]">1. Point de collecte (Marchand)</div>
                     <div className="font-semibold text-slate-900 dark:text-white">{activeOrder.pickupLocation.name}</div>
                   </div>
-                  {activeOrder.status === 'acceptee' && (
+                  {(activeOrder.status === 'acceptee' || activeOrder.status === 'assignee') && (
                     <button
                       onClick={() => handleValidatePickup(activeOrder.id)}
                       className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs"

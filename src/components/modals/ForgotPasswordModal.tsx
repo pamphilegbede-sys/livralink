@@ -6,7 +6,6 @@ import {
   loginWithEmailPassword,
 } from '../../firebase/authService';
 import { useApp } from '../../context/AppContext';
-import { sendPasswordChangedConfirmationEmail } from '../../services/emailService';
 
 export const ForgotPasswordModal: React.FC<{
   isOpen: boolean;
@@ -94,11 +93,6 @@ export const ForgotPasswordModal: React.FC<{
       setResolvedRole(result.role === 'vendeur' ? 'vendeur' : 'livreur');
       setStep('success');
       showToast('Votre mot de passe a été réinitialisé avec succès !', 'success');
-
-      // Dispatch security confirmation email to user's inbox & outbox
-      sendPasswordChangedConfirmationEmail({ email: email.trim() }).catch(
-        err => console.warn('Erreur envoi notification sécurité mot de passe:', err)
-      );
     } catch (err: any) {
       const friendlyMsg = getFirebaseAuthErrorMessage(err);
       setErrorMsg(friendlyMsg);

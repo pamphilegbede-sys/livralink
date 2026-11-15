@@ -126,7 +126,7 @@ export const OnboardingGuideModal: React.FC<OnboardingGuideModalProps> = ({
         details: [
           { label: "Coursier assigné", value: "Awa Véloce (Moto 125cc)" },
           { label: "Téléphone coursier", value: "+229 97 11 22 33" },
-          { label: "Suivi en direct", value: "https://livralink.bj/track/8492" }
+          { label: "Suivi en direct", value: "https://livralink.oxy-dev.cc/?track=8492" }
         ]
       }
     },
