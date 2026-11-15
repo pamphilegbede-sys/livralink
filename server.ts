@@ -9,6 +9,11 @@ import fs from 'fs';
 import { initializeApp, cert, getApps, App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
+import {
+  createP0SecurityService,
+  getAssignedCourierIdFromOrder,
+  P0FirestoreLike,
+} from './src/server/p0Security';
 
 const envPath = path.resolve(process.cwd(), '.env');
 if (fs.existsSync(envPath)) {
@@ -176,10 +181,19 @@ circuitBreakers.set('google_maps', { state: 'CLOSED', failures: 0 });
 circuitBreakers.set('gemini_api', { state: 'CLOSED', failures: 0 });
 
 // =========================================================================
-// POINT 10: ANTI-DOUBLE PAIEMENT & CLÉS D'IDEMPOTENCE
+// POINT 10: ANTI-DOUBLE PAIEMENT & VERROUS TRANSACTIONNELS FIRESTORE (P0)
 // =========================================================================
-const processedIdempotencyKeys = new Set<string>();
-const inFlightPayoutLocks = new Map<string, number>();
+// Les états critiques (OTP reset, jetons reset, tentatives POD, verrous retraits)
+// sont persistés dans Firestore par transactions atomiques (src/server/p0Security.ts).
+type P0SecurityService = ReturnType<typeof createP0SecurityService>;
+let cachedP0Security: P0SecurityService | null = null;
+let testP0SecurityOverride: P0SecurityService | null = null;
+
+export function setP0SecurityForTests(service: P0SecurityService | null): void {
+  if (process.env.NODE_ENV === 'test') {
+    testP0SecurityOverride = service;
+  }
+}
 
 // =========================================================================
 // POINT 18: JOURNAL D'AUDIT CENTRALISÉ DES ERREURS
@@ -432,28 +446,36 @@ const requireAdminAuthorization = async (req: AuthenticatedRequest, res: Respons
 
 app.use('/api', authenticateFirebaseToken as any);
 
-// Secret salt for HMAC-SHA256 OTP & POD token signing (ephemeral CSPRNG fallback if env missing, never a static literal)
+// Secret salt for HMAC-SHA256 OTP & POD token signing
+const configuredOtpHmacSecret = (process.env.OTP_SECRET_SALT || process.env.POD_OTP_HMAC_SECRET || '').trim();
+const isOtpHmacSecretConfiguredFromEnv = configuredOtpHmacSecret.length >= 16;
 const OTP_SECRET_SALT = (() => {
-  const configured = (process.env.OTP_SECRET_SALT || process.env.POD_OTP_HMAC_SECRET || '').trim();
-  if (configured.length >= 16) {
-    return configured;
+  if (isOtpHmacSecretConfiguredFromEnv) {
+    return configuredOtpHmacSecret;
   }
-  console.warn('[SECURITY WARN] OTP_SECRET_SALT / POD_OTP_HMAC_SECRET non configuré ou trop court — utilisation d\'une clé éphémère aléatoire au démarrage.');
+  if (process.env.NODE_ENV === 'production') {
+    console.error('[SECURITY CRITICAL] OTP_SECRET_SALT / POD_OTP_HMAC_SECRET manquant en production multi-instance ! Configurez ce secret dans Google Cloud Secret Manager / apphosting.yaml.');
+  } else {
+    console.warn('[SECURITY WARN] OTP_SECRET_SALT / POD_OTP_HMAC_SECRET non configuré ou trop court — clé éphémère utilisée en développement/test.');
+  }
   return crypto.randomBytes(32).toString('hex');
 })();
 
-interface SecureOTPEntry {
-  hashedCode: string;
-  expiresAt: number;
-  attemptsLeft: number;
-  lastRequestedAt: number;
-}
-
-// In-memory store: email -> SecureOTPEntry (hashed code only, never plain text)
-const secureOtpStore = new Map<string, SecureOTPEntry>();
-
-// In-memory one-time reset tokens store: tokenHash -> { email, expiresAt } (hashed token only)
-const resetTokensStore = new Map<string, { email: string; expiresAt: number }>();
+const getP0Security = (req?: Request): P0SecurityService | null => {
+  if (process.env.NODE_ENV === 'test' && testP0SecurityOverride) {
+    return testP0SecurityOverride;
+  }
+  if (!firestoreAdmin) return null;
+  if (!cachedP0Security) {
+    cachedP0Security = createP0SecurityService(firestoreAdmin as unknown as P0FirestoreLike, {
+      getSecretSalt: () => OTP_SECRET_SALT,
+      onAnomaly: (type, details) => {
+        recordSecurityAnomaly(req ? getClientIp(req) : 'internal', type, details);
+      },
+    });
+  }
+  return cachedP0Security;
+};
 
 export interface SentEmailRecord {
   id: string;
@@ -585,12 +607,17 @@ const processQueuedEmails = async (): Promise<{ processedCount: number; successC
   return { processedCount: queuedItems.length, successCount };
 };
 
-// Periodic queue processor interval (runs every 45 seconds in background outside test mode)
+// Periodic queue processor & expired security docs cleanup (outside test mode)
 if (process.env.NODE_ENV !== 'test') {
   const queueTimer = setInterval(() => {
     processQueuedEmails().catch(() => {});
   }, 45 * 1000);
   if (typeof queueTimer.unref === 'function') queueTimer.unref();
+
+  const cleanupTimer = setInterval(() => {
+    getP0Security()?.cleanupExpiredSecurityDocs(25).catch(() => {});
+  }, 10 * 60 * 1000);
+  if (typeof cleanupTimer.unref === 'function') cleanupTimer.unref();
 }
 
 const getAppPublicBaseUrl = (req?: Request): string => {
@@ -609,20 +636,6 @@ const getAppPublicBaseUrl = (req?: Request): string => {
     return `${proto}://${host}`;
   }
   return 'https://livralink.oxy-dev.cc';
-};
-
-const hashOTPCode = (email: string, code: string): string => {
-  return crypto
-    .createHmac('sha256', OTP_SECRET_SALT)
-    .update(`${email.trim().toLowerCase()}:${code.trim()}`)
-    .digest('hex');
-};
-
-const hashResetToken = (token: string): string => {
-  return crypto
-    .createHmac('sha256', OTP_SECRET_SALT)
-    .update(token.trim())
-    .digest('hex');
 };
 
 const escapeHtml = (unsafe: any): string => {
@@ -662,16 +675,24 @@ app.post('/api/auth/send-reset-code', async (req: Request, res: Response): Promi
     }
 
     const cleanEmail = email.trim().toLowerCase();
-    const now = Date.now();
 
-    // Check rate limit: minimum 60 seconds between requests for the same email
-    const existing = secureOtpStore.get(cleanEmail);
-    if (existing && now - existing.lastRequestedAt < 60 * 1000) {
-      const waitSeconds = Math.ceil((60 * 1000 - (now - existing.lastRequestedAt)) / 1000);
-      res.status(429).json({
+    const p0 = getP0Security(req);
+    if (!p0) {
+      res.status(503).json({
         success: false,
-        error: `Veuillez patienter encore ${waitSeconds} seconde(s) avant de demander un nouveau code.`,
-        cooldownSeconds: waitSeconds,
+        emailDelivered: false,
+        error: 'Service de sécurité Firestore indisponible. Veuillez réessayer dans un instant.',
+      });
+      return;
+    }
+
+    const transporter = getGmailTransporter();
+    if (!transporter) {
+      console.warn('[GMAIL SMTP] Identifiants SMTP (GMAIL_SMTP_USER / GMAIL_SMTP_PASS ou SMTP_USER / SMTP_PASS) non configurés.');
+      res.status(503).json({
+        success: false,
+        emailDelivered: false,
+        error: 'Serveur SMTP Gmail non configuré. Veuillez vérifier les variables d\'environnement du serveur (GMAIL_SMTP_USER / GMAIL_SMTP_PASS).',
       });
       return;
     }
@@ -687,32 +708,19 @@ app.post('/api/auth/send-reset-code', async (req: Request, res: Response): Promi
       }
     }
 
-    // Generate random 6-digit code (100000 -> 999999) using cryptographic RNG
-    const rawCode = crypto.randomInt(100000, 1000000).toString();
-    const hashedCode = hashOTPCode(cleanEmail, rawCode);
-    const expiresAt = now + 10 * 60 * 1000; // 10 minutes validity
-
-    // Store hashed code only (overwrites and invalidates any previous code)
-    secureOtpStore.set(cleanEmail, {
-      hashedCode,
-      expiresAt,
-      attemptsLeft: 3,
-      lastRequestedAt: now,
-    });
-
-    console.log(`[AUTH-OTP] Code de sécurité généré et haché HMAC-SHA256 pour ${cleanEmail}. Expire à: ${new Date(expiresAt).toISOString()}`);
-
-    // Send email via Gmail SMTP
-    const transporter = getGmailTransporter();
-    if (!transporter) {
-      console.warn('[GMAIL SMTP] Identifiants SMTP (GMAIL_SMTP_USER / GMAIL_SMTP_PASS ou SMTP_USER / SMTP_PASS) non configurés.');
-      res.status(503).json({
+    // Atomic Firestore transaction: 60s resend cooldown + HMAC-SHA256 hash + 10 min TTL + 3 attempts
+    const otpIssue = await p0.issuePasswordResetOtp(cleanEmail);
+    if (!otpIssue.ok) {
+      res.status(otpIssue.status).json({
         success: false,
-        emailDelivered: false,
-        error: 'Serveur SMTP Gmail non configuré. Veuillez vérifier les variables d\'environnement du serveur (GMAIL_SMTP_USER / GMAIL_SMTP_PASS).',
+        error: otpIssue.error,
+        cooldownSeconds: otpIssue.cooldownSeconds,
       });
       return;
     }
+
+    const { rawCode, expiresAt } = otpIssue;
+    console.log(`[AUTH-OTP] Code de sécurité généré et persisté (HMAC-SHA256) pour ${cleanEmail}. Expire à: ${new Date(expiresAt).toISOString()}`);
 
     let emailDelivered = false;
     let smtpErrorMessage = '';
@@ -785,6 +793,7 @@ app.post('/api/auth/send-reset-code', async (req: Request, res: Response): Promi
     }
 
     if (!emailDelivered) {
+      await p0.clearPasswordResetOtp(cleanEmail);
       res.status(503).json({
         success: false,
         emailDelivered: false,
@@ -848,72 +857,23 @@ app.post('/api/auth/verify-reset-code', async (req: Request, res: Response): Pro
       return;
     }
 
-    const stored = secureOtpStore.get(cleanEmail);
+    const p0 = getP0Security(req);
+    if (!p0) {
+      res.status(503).json({ success: false, error: 'Service de sécurité Firestore indisponible.' });
+      return;
+    }
 
-    if (!stored) {
-      res.status(400).json({
+    const verifyResult = await p0.verifyPasswordResetOtp(cleanEmail, cleanCode);
+    if (!verifyResult.ok) {
+      res.status(verifyResult.status).json({
         success: false,
-        error: 'Aucun code actif trouvé pour cet e-mail ou le code a expiré. Veuillez demander un nouveau code.',
+        error: verifyResult.error,
+        attemptsLeft: verifyResult.attemptsLeft,
       });
       return;
     }
 
-    // Check expiration (10 minutes)
-    if (Date.now() > stored.expiresAt) {
-      secureOtpStore.delete(cleanEmail);
-      res.status(400).json({
-        success: false,
-        error: 'Ce code de sécurité a expiré. Veuillez demander un nouveau code.',
-      });
-      return;
-    }
-
-    // Check remaining attempts
-    if (stored.attemptsLeft <= 0) {
-      secureOtpStore.delete(cleanEmail);
-      res.status(429).json({
-        success: false,
-        error: 'Nombre maximal de tentatives dépassé. Par sécurité, ce code a été invalidé. Veuillez en demander un nouveau.',
-      });
-      return;
-    }
-
-    // Hash provided code and compare with stored hash using timingSafeEqual to prevent side-channel timing attacks
-    const inputHash = hashOTPCode(cleanEmail, cleanCode);
-    const inputBuf = Buffer.from(inputHash, 'utf8');
-    const storedBuf = Buffer.from(stored.hashedCode, 'utf8');
-    const isCodeMatch = inputBuf.length === storedBuf.length && crypto.timingSafeEqual(inputBuf, storedBuf);
-
-    if (!isCodeMatch) {
-      stored.attemptsLeft -= 1;
-      if (stored.attemptsLeft <= 0) {
-        secureOtpStore.delete(cleanEmail);
-        res.status(400).json({
-          success: false,
-          error: 'Code incorrect. Nombre maximal de tentatives atteint. Ce code est désormais invalidé.',
-        });
-        return;
-      }
-      res.status(400).json({
-        success: false,
-        error: `Code de sécurité incorrect. Il vous reste ${stored.attemptsLeft} tentative(s).`,
-        attemptsLeft: stored.attemptsLeft,
-      });
-      return;
-    }
-
-    // Code is valid! Invalidate OTP immediately to prevent re-use
-    secureOtpStore.delete(cleanEmail);
-
-    // Issue a short-lived cryptographic one-time reset token (10 mins)
-    const rawResetToken = crypto.randomBytes(32).toString('hex');
-    const tokenHash = hashResetToken(rawResetToken);
-
-    // Store only the token hash on server
-    resetTokensStore.set(tokenHash, {
-      email: cleanEmail,
-      expiresAt: Date.now() + 10 * 60 * 1000,
-    });
+    const rawResetToken = verifyResult.resetToken;
 
     let resolvedRole = 'vendeur';
     if (firestoreAdmin) {
@@ -942,8 +902,8 @@ app.post('/api/auth/verify-reset-code', async (req: Request, res: Response): Pro
 
 /**
  * POST /api/auth/reset-password
- * Consumes the single-use resetToken, validates parameters, and updates the user's password
- * directly in Firebase Authentication via Firebase Admin SDK.
+ * Consumes the single-use resetToken atomically in Firestore, validates parameters,
+ * and updates the user's password directly in Firebase Authentication via Firebase Admin SDK.
  */
 app.post('/api/auth/reset-password', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -970,29 +930,21 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response): Promis
       return;
     }
 
+    const p0 = getP0Security(req);
+    if (!p0) {
+      res.status(503).json({ success: false, error: 'Service de sécurité Firestore indisponible.' });
+      return;
+    }
+
     const cleanEmail = email.trim().toLowerCase();
-    const tokenHash = hashResetToken(resetToken);
-    const tokenData = resetTokensStore.get(tokenHash);
-
-    if (!tokenData || tokenData.email !== cleanEmail) {
-      res.status(403).json({
+    const tokenCheck = await p0.consumePasswordResetToken(cleanEmail, String(resetToken));
+    if (!tokenCheck.ok) {
+      res.status(tokenCheck.status).json({
         success: false,
-        error: 'Jeton de réinitialisation invalide ou déjà utilisé. Veuillez recommencer la procédure.',
+        error: tokenCheck.error,
       });
       return;
     }
-
-    if (Date.now() > tokenData.expiresAt) {
-      resetTokensStore.delete(tokenHash);
-      res.status(403).json({
-        success: false,
-        error: 'La session de réinitialisation a expiré. Veuillez demander un nouveau code.',
-      });
-      return;
-    }
-
-    // Invalidate token immediately (strictly single-use)
-    resetTokensStore.delete(tokenHash);
 
     // Update password in Firebase Authentication via Firebase Admin SDK
     let firebaseAuthUpdated = false;
@@ -2637,9 +2589,10 @@ app.get('/api/security/audit', requireAdminAuthorization as any, (_req: Request,
       },
       authIntegrity: {
         mfaSupport: 'ENABLED',
-        bruteForceLockout: '5_FAILED_ATTEMPTS_15MIN_LOCK',
-        otpStorage: 'HMAC_SHA256_HASHED_ONLY',
-        resetTokens: 'CRYPTOGRAPHIC_SINGLE_USE_32BYTES',
+        bruteForceLockout: '5_FAILED_ATTEMPTS_10MIN_FIRESTORE_LOCK',
+        otpStorage: 'FIRESTORE_ATOMIC_HMAC_SHA256_ONLY',
+        resetTokens: 'FIRESTORE_ATOMIC_SINGLE_USE_32BYTES',
+        hmacSecretConfigured: isOtpHmacSecretConfiguredFromEnv,
         rateLimitPerEmailSeconds: 60,
         maxVerifyAttempts: 3,
         accountEnumerationProtection: 'SILENT_CONSISTENT_RESPONSE',
@@ -2697,53 +2650,10 @@ app.get('/api/security/budget', requireAdminAuthorization as any, (_req: Request
 // =========================================================================
 // TRUSTED BACKEND DELIVERY OTP VERIFICATION, POD COMPLETION & NOTIFICATIONS
 // =========================================================================
-const podOtpVerifyAttempts = new Map<string, { failures: number; resetAt: number }>();
-
-const getAssignedCourierIdFromOrder = (data: Record<string, any> | undefined): string => {
-  if (!data) return '';
-  if (typeof data.courierId === 'string' && data.courierId.trim().length > 0) {
-    return data.courierId.trim();
-  }
-  if (data.courier && typeof data.courier.id === 'string' && data.courier.id.trim().length > 0) {
-    return data.courier.id.trim();
-  }
-  return '';
-};
-
-const signPodOtpToken = (orderDocId: string, courierUid: string, expiresAt: number): string => {
-  const payload = `${orderDocId}:${courierUid}:${expiresAt}`;
-  const sig = crypto.createHmac('sha256', OTP_SECRET_SALT).update(payload).digest('hex');
-  return `${expiresAt}.${sig}`;
-};
-
-const verifyPodOtpToken = (token: string, orderDocId: string, courierUid: string): boolean => {
-  if (typeof token !== 'string' || !token.includes('.')) return false;
-  const [expiresStr, providedSig] = token.split('.');
-  const expiresAt = parseInt(expiresStr, 10);
-  if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) return false;
-  if (!/^[a-f0-9]{64}$/i.test(providedSig || '')) return false;
-  const expectedSig = crypto
-    .createHmac('sha256', OTP_SECRET_SALT)
-    .update(`${orderDocId}:${courierUid}:${expiresAt}`)
-    .digest('hex');
-  const a = Buffer.from(providedSig, 'hex');
-  const b = Buffer.from(expectedSig, 'hex');
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-};
-
-const isTrustedFirebaseStorageUrl = (url: unknown): url is string => {
-  if (typeof url !== 'string') return false;
-  const trimmed = url.trim();
-  if (!trimmed || trimmed.length > 2000) return false;
-  return (
-    trimmed.startsWith('https://firebasestorage.googleapis.com/') ||
-    trimmed.startsWith('https://storage.googleapis.com/')
-  );
-};
-
 app.post('/api/deliveries/:orderId/otp/verify', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (!firestoreAdmin) {
+    const p0 = getP0Security(req);
+    if (!p0) {
       return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
     }
     const cleanDocId = String(req.params.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
@@ -2758,67 +2668,27 @@ app.post('/api/deliveries/:orderId/otp/verify', requireVerifiedUser as any, asyn
     const callerUid = req.user!.uid;
     const isAdmin = await checkCallerIsAdmin(req.user);
 
-    const attemptKey = `${cleanDocId}:${callerUid}`;
-    const now = Date.now();
-    const attemptEntry = podOtpVerifyAttempts.get(attemptKey);
-    if (attemptEntry && now < attemptEntry.resetAt && attemptEntry.failures >= 5) {
-      return res.status(429).json({
-        success: false,
-        error: 'Trop de tentatives de vérification OTP pour cette course. Veuillez patienter 10 minutes.',
-      });
-    }
+    const result = await p0.verifyDeliveryPodOtp({
+      cleanDocId,
+      callerUid,
+      isAdmin,
+      rawCode,
+    });
 
-    const deliveryRef = firestoreAdmin.collection('deliveries').doc(cleanDocId);
-    const [deliverySnap, otpSnap] = await Promise.all([
-      deliveryRef.get(),
-      deliveryRef.collection('private').doc('otp').get(),
-    ]);
-
-    if (!deliverySnap.exists) {
-      return res.status(404).json({ success: false, error: 'Livraison introuvable.' });
-    }
-
-    const deliveryData = deliverySnap.data() || {};
-    const assignedCourierId = getAssignedCourierIdFromOrder(deliveryData);
-
-    if (!isAdmin) {
-      if (!assignedCourierId || assignedCourierId !== callerUid) {
-        recordSecurityAnomaly(getClientIp(req), 'UNAUTHORIZED_OTP_VERIFY', `Tentative OTP sur ${cleanDocId} par non-assigné ${callerUid}`);
-        return res.status(403).json({ success: false, error: 'Seul le livreur assigné à cette course peut vérifier le code OTP.' });
-      }
-      if (!['colis_recupere', 'en_cours'].includes(deliveryData.status)) {
-        return res.status(400).json({ success: false, error: 'Le colis doit être récupéré ou en cours de livraison avant de vérifier le code OTP.' });
-      }
-    }
-
-    const storedOtp = String(otpSnap.exists ? otpSnap.data()?.otpCode || '' : '').trim();
-    if (!/^\d{4}$/.test(storedOtp)) {
-      return res.status(400).json({ success: false, error: 'Aucun code OTP actif enregistré pour cette livraison.' });
-    }
-
-    const a = Buffer.from(rawCode, 'utf8');
-    const b = Buffer.from(storedOtp, 'utf8');
-    const isMatch = a.length === b.length && crypto.timingSafeEqual(a, b);
-
-    if (!isMatch) {
-      const nextFailures = (!attemptEntry || now >= attemptEntry.resetAt) ? 1 : attemptEntry.failures + 1;
-      podOtpVerifyAttempts.set(attemptKey, { failures: nextFailures, resetAt: now + 10 * 60 * 1000 });
-      return res.status(400).json({
+    if (!result.ok) {
+      return res.status(result.status).json({
         success: false,
         verified: false,
-        error: `Code OTP incorrect (#${rawCode}). Demandez au client le code à 4 chiffres transmis par le vendeur.`,
+        attemptsLeft: result.attemptsLeft,
+        error: result.error,
       });
     }
-
-    podOtpVerifyAttempts.delete(attemptKey);
-    const expiresAt = now + 15 * 60 * 1000;
-    const podOtpToken = signPodOtpToken(cleanDocId, callerUid, expiresAt);
 
     return res.json({
       success: true,
       verified: true,
-      podOtpToken,
-      expiresAt,
+      podOtpToken: result.podOtpToken,
+      expiresAt: result.expiresAt,
       message: 'Code OTP vérifié avec succès.',
     });
   } catch (err: any) {
@@ -2829,7 +2699,8 @@ app.post('/api/deliveries/:orderId/otp/verify', requireVerifiedUser as any, asyn
 
 app.post('/api/deliveries/:orderId/complete-pod', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (!firestoreAdmin) {
+    const p0 = getP0Security(req);
+    if (!p0) {
       return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
     }
     const cleanDocId = String(req.params.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
@@ -2841,137 +2712,28 @@ app.post('/api/deliveries/:orderId/complete-pod', requireVerifiedUser as any, as
     const isAdmin = await checkCallerIsAdmin(req.user);
     const { otpCode, podOtpToken, photoUrl, signatureDataUrl, signedByName } = req.body || {};
 
-    const deliveryRef = firestoreAdmin.collection('deliveries').doc(cleanDocId);
-    const missionRef = firestoreAdmin.collection('priority_missions').doc(cleanDocId);
-    const [deliverySnap, missionSnap, otpSnap] = await Promise.all([
-      deliveryRef.get(),
-      missionRef.get(),
-      deliveryRef.collection('private').doc('otp').get(),
-    ]);
-
-    if (!deliverySnap.exists) {
-      return res.status(404).json({ success: false, error: 'Livraison introuvable dans Firestore.' });
-    }
-
-    const deliveryData = deliverySnap.data() || {};
-    if (deliveryData.status === 'livree' || deliveryData.status === 'echec') {
-      return res.status(409).json({ success: false, error: 'Cette livraison est déjà clôturée.' });
-    }
-
-    const assignedCourierId = getAssignedCourierIdFromOrder(deliveryData);
-    if (!isAdmin) {
-      if (!assignedCourierId || assignedCourierId !== callerUid) {
-        recordSecurityAnomaly(getClientIp(req), 'UNAUTHORIZED_POD_COMPLETION', `Tentative POD sur ${cleanDocId} par non-assigné ${callerUid}`);
-        return res.status(403).json({ success: false, error: 'Seul le livreur assigné peut certifier la livraison.' });
-      }
-      if (!['colis_recupere', 'en_cours'].includes(deliveryData.status)) {
-        return res.status(400).json({ success: false, error: 'Statut invalide : le colis doit être récupéré ou en transit avant certification POD.' });
-      }
-      if (!isTrustedFirebaseStorageUrl(photoUrl) || !isTrustedFirebaseStorageUrl(signatureDataUrl)) {
-        return res.status(400).json({ success: false, error: 'Les preuves photo et signature doivent être téléchargées dans Firebase Storage avant validation finale.' });
-      }
-    }
-
-    // Verify OTP (via signed podOtpToken OR direct timing-safe check against private/otp; admins can force-complete)
-    const cleanOtp = String(otpCode || '').trim();
-    let otpVerified = false;
-    if (podOtpToken && verifyPodOtpToken(String(podOtpToken), cleanDocId, callerUid)) {
-      otpVerified = true;
-    } else if (/^\d{4}$/.test(cleanOtp) && otpSnap.exists) {
-      const storedOtp = String(otpSnap.data()?.otpCode || '').trim();
-      if (/^\d{4}$/.test(storedOtp)) {
-        const a = Buffer.from(cleanOtp, 'utf8');
-        const b = Buffer.from(storedOtp, 'utf8');
-        otpVerified = a.length === b.length && crypto.timingSafeEqual(a, b);
-      }
-    }
-
-    if (!otpVerified && !isAdmin) {
-      return res.status(403).json({ success: false, error: 'Validation du code secret OTP requise avant de clôturer la livraison.' });
-    }
-
-    const cleanSigner = String(signedByName || deliveryData.clientName || 'Destinataire').trim().slice(0, 128);
-    const nowTime = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-    const nowEpoch = Date.now();
-    const statusNote = isAdmin && !otpVerified
-      ? `Livrée avec succès (Validation Administrative par ${req.user?.email || callerUid})`
-      : `Livrée avec succès (Preuve Tri-Facteur certifiée • Signature de ${cleanSigner})`;
-
-    const podData = {
-      type: isAdmin && !otpVerified ? 'admin_override' : 'complete_tri_factor',
-      otpVerified,
-      otpCode: otpVerified ? '••••' : 'ADMIN',
-      photoUrl: isTrustedFirebaseStorageUrl(photoUrl) ? photoUrl.trim() : '',
-      signatureDataUrl: isTrustedFirebaseStorageUrl(signatureDataUrl) ? signatureDataUrl.trim() : '',
-      signedByName: cleanSigner,
-      validatedAt: nowTime,
-      validatedTimestamp: nowEpoch,
-      verifiedByServer: true,
-    };
-
-    const batch = firestoreAdmin.batch();
-    batch.update(deliveryRef, {
-      status: 'livree',
-      statusNote,
-      podData,
-      deliveredAt: nowEpoch,
-      updatedAt: nowEpoch,
+    const result = await p0.completeDeliveryPod({
+      cleanDocId,
+      callerUid,
+      callerEmail: req.user?.email,
+      isAdmin,
+      otpCode,
+      podOtpToken,
+      photoUrl,
+      signatureDataUrl,
+      signedByName,
     });
-    if (missionSnap.exists) {
-      batch.update(missionRef, {
-        status: 'livree',
-        completedAt: nowEpoch,
-        updatedAt: new Date(nowEpoch).toISOString(),
-      });
-    }
 
-    // Create trusted server-side notifications for merchant & courier
-    const orderDisplayId = String(deliveryData.id || `#${cleanDocId}`);
-    if (deliveryData.merchantId) {
-      const mNotifId = `notif_pod_m_${cleanDocId}_${nowEpoch}`.replace(/[^a-zA-Z0-9_-]/g, '');
-      batch.set(firestoreAdmin.collection('notifications').doc(mNotifId), {
-        id: mNotifId,
-        senderId: 'system_backend',
-        recipientId: deliveryData.merchantId,
-        title: '✅ Certificat de livraison POD validé',
-        message: `La livraison ${orderDisplayId} a été remise à ${cleanSigner} et certifiée par le serveur.`,
-        type: 'pod_validated',
-        orderId: orderDisplayId,
-        orderDocId: cleanDocId,
-        actionView: 'vendeur_tracking',
-        isRead: false,
-        read: false,
-        createdAt: nowEpoch,
-        timestamp: nowTime,
-      });
+    if (!result.ok) {
+      return res.status(result.status).json({ success: false, error: result.error });
     }
-    if (assignedCourierId && assignedCourierId !== deliveryData.merchantId) {
-      const cNotifId = `notif_pod_c_${cleanDocId}_${nowEpoch}`.replace(/[^a-zA-Z0-9_-]/g, '');
-      batch.set(firestoreAdmin.collection('notifications').doc(cNotifId), {
-        id: cNotifId,
-        senderId: 'system_backend',
-        recipientId: assignedCourierId,
-        title: '🎉 Livraison certifiée',
-        message: `La preuve POD de la course ${orderDisplayId} a été enregistrée avec succès.`,
-        type: 'pod_validated',
-        orderId: orderDisplayId,
-        orderDocId: cleanDocId,
-        actionView: 'livreur_missions',
-        isRead: false,
-        read: false,
-        createdAt: nowEpoch,
-        timestamp: nowTime,
-      });
-    }
-
-    await batch.commit();
 
     return res.json({
       success: true,
-      orderId: orderDisplayId,
-      podData,
-      deliveredAt: nowEpoch,
-      statusNote,
+      orderId: result.orderId,
+      podData: result.podData,
+      deliveredAt: result.deliveredAt,
+      statusNote: result.statusNote,
     });
   } catch (err: any) {
     console.error('[COMPLETE-POD ERROR]:', err?.message || err);
@@ -3088,141 +2850,110 @@ app.post('/api/notifications/dispatch', requireVerifiedUser as any, async (req: 
 });
 
 // =========================================================================
-// POINT 10: VÉRIFICATION & VERROU D'IDEMPOTENCE POUR PAIEMENT / RETRAIT
+// POINT 10: VÉRIFICATION & VERROU D'IDEMPOTENCE TRANSACTIONNEL FIRESTORE (P0)
 // =========================================================================
 app.post('/api/wallet/verify-idempotency', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
-  const { idempotencyKey, userId, amount } = req.body || {};
-  if (!idempotencyKey || typeof idempotencyKey !== 'string') {
-    return res.status(400).json({ allowed: false, error: 'Clé d\'idempotence manquante ou invalide.' });
-  }
-
-  const callerUid = req.user!.uid;
-  if (userId && userId !== callerUid) {
-    recordSecurityAnomaly(getClientIp(req), 'WALLET_ID_SPOOF_ATTEMPT', `Tentative verify-idempotency pour ${userId} par ${callerUid}`);
-    return res.status(403).json({ allowed: false, error: 'Accès refusé : identifiant portefeuille non conforme.' });
-  }
-
-  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 1000) {
-    return res.status(400).json({ allowed: false, error: 'Montant de retrait invalide (minimum 1 000 FCFA).' });
-  }
-
-  const scopedKey = `${callerUid}:${idempotencyKey}`;
-  const docKeyId = crypto.createHash('sha256').update(scopedKey).digest('hex').slice(0, 40);
-
-  if (processedIdempotencyKeys.has(scopedKey)) {
-    return res.status(409).json({
-      allowed: false,
-      alreadyProcessed: true,
-      error: 'Cette opération de retrait a déjà été exécutée. Double débit prévenu avec succès.',
-    });
-  }
-
-  if (firestoreAdmin) {
-    try {
-      const existingKeySnap = await firestoreAdmin.collection('payout_idempotency').doc(docKeyId).get();
-      if (existingKeySnap.exists && existingKeySnap.data()?.status === 'committed') {
-        processedIdempotencyKeys.add(scopedKey);
-        return res.status(409).json({
-          allowed: false,
-          alreadyProcessed: true,
-          error: 'Cette opération de retrait a déjà été exécutée (registre Firestore). Double débit prévenu.',
-        });
-      }
-    } catch (fsErr: any) {
-      console.warn('[WALLET IDEMPOTENCY] Firestore check fallback:', fsErr?.message);
+  try {
+    const { idempotencyKey, userId, amount } = req.body || {};
+    if (!idempotencyKey || typeof idempotencyKey !== 'string' || idempotencyKey.trim().length < 6 || idempotencyKey.trim().length > 128) {
+      return res.status(400).json({ allowed: false, error: 'Clé d\'idempotence manquante ou invalide.' });
     }
-  }
 
-  const userLockKey = `lock_${callerUid}`;
-  const lockTime = inFlightPayoutLocks.get(userLockKey);
-  const now = Date.now();
+    const callerUid = req.user!.uid;
+    if (userId && userId !== callerUid) {
+      recordSecurityAnomaly(getClientIp(req), 'WALLET_ID_SPOOF_ATTEMPT', `Tentative verify-idempotency pour ${userId} par ${callerUid}`);
+      return res.status(403).json({ allowed: false, error: 'Accès refusé : identifiant portefeuille non conforme.' });
+    }
 
-  if (lockTime && now - lockTime < 8000) {
-    return res.status(429).json({
-      allowed: false,
-      inFlight: true,
-      error: 'Un retrait pour ce compte est déjà en cours de traitement. Veuillez patienter.',
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 1000 || amount > 10_000_000) {
+      return res.status(400).json({ allowed: false, error: 'Montant de retrait invalide (minimum 1 000 FCFA).' });
+    }
+
+    const p0 = getP0Security(req);
+    if (!p0) {
+      return res.status(503).json({ allowed: false, error: 'Firestore Admin SDK indisponible pour verrouiller le retrait.' });
+    }
+
+    const result = await p0.verifyWalletPayoutIdempotency({
+      callerUid,
+      idempotencyKey: idempotencyKey.trim(),
+      amount,
     });
+
+    if (!result.ok) {
+      return res.status(result.status).json({
+        allowed: false,
+        alreadyProcessed: result.alreadyProcessed,
+        inFlight: result.inFlight,
+        insufficientBalance: result.insufficientBalance,
+        availableBalance: result.availableBalance,
+        error: result.error,
+      });
+    }
+
+    return res.json({
+      allowed: true,
+      idempotencyKey: result.idempotencyKey,
+      lockedUntil: result.lockedUntil,
+      availableBalance: result.availableBalance,
+    });
+  } catch (err: any) {
+    console.error('[WALLET VERIFY IDEMPOTENCY ERROR]:', err?.message || err);
+    return res.status(500).json({ allowed: false, error: 'Erreur lors de la vérification transactionnelle du retrait.' });
   }
-
-  inFlightPayoutLocks.set(userLockKey, now);
-
-  if (firestoreAdmin) {
-    try {
-      await firestoreAdmin.collection('payout_idempotency').doc(docKeyId).set({
-        id: docKeyId,
-        uid: callerUid,
-        idempotencyKey: String(idempotencyKey).slice(0, 128),
-        amount,
-        status: 'locked',
-        lockedUntil: now + 8000,
-        createdAt: now,
-      }, { merge: true });
-    } catch {}
-  }
-
-  res.json({
-    allowed: true,
-    idempotencyKey,
-    lockedUntil: now + 8000,
-  });
 });
 
 app.post('/api/wallet/commit-payout', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
-  const { idempotencyKey, userId, amount } = req.body || {};
-  if (!idempotencyKey || typeof idempotencyKey !== 'string') {
-    return res.status(400).json({ success: false, error: 'Clé d\'idempotence requise.' });
-  }
-
-  const callerUid = req.user!.uid;
-  if (userId && userId !== callerUid) {
-    recordSecurityAnomaly(getClientIp(req), 'WALLET_ID_SPOOF_ATTEMPT', `Tentative commit-payout pour ${userId} par ${callerUid}`);
-    return res.status(403).json({ success: false, error: 'Accès refusé : identifiant portefeuille non conforme.' });
-  }
-
-  const scopedKey = `${callerUid}:${idempotencyKey}`;
-  const docKeyId = crypto.createHash('sha256').update(scopedKey).digest('hex').slice(0, 40);
-  if (processedIdempotencyKeys.has(scopedKey)) {
-    return res.status(409).json({
-      success: false,
-      alreadyProcessed: true,
-      error: 'Ce retrait a déjà été confirmé précédemment.',
-    });
-  }
-
-  if (firestoreAdmin) {
-    try {
-      const docRef = firestoreAdmin.collection('payout_idempotency').doc(docKeyId);
-      const snap = await docRef.get();
-      if (snap.exists && snap.data()?.status === 'committed') {
-        processedIdempotencyKeys.add(scopedKey);
-        return res.status(409).json({
-          success: false,
-          alreadyProcessed: true,
-          error: 'Ce retrait a déjà été confirmé dans Firestore.',
-        });
-      }
-      await docRef.set({
-        id: docKeyId,
-        uid: callerUid,
-        idempotencyKey: String(idempotencyKey).slice(0, 128),
-        amount: typeof amount === 'number' && Number.isFinite(amount) ? amount : null,
-        status: 'committed',
-        committedAt: Date.now(),
-      }, { merge: true });
-    } catch (fsErr: any) {
-      console.warn('[WALLET COMMIT] Firestore persist fallback:', fsErr?.message);
+  try {
+    const { idempotencyKey, userId, amount, operator, payoutPhone } = req.body || {};
+    if (!idempotencyKey || typeof idempotencyKey !== 'string' || idempotencyKey.trim().length < 6 || idempotencyKey.trim().length > 128) {
+      return res.status(400).json({ success: false, error: 'Clé d\'idempotence requise.' });
     }
+
+    const callerUid = req.user!.uid;
+    if (userId && userId !== callerUid) {
+      recordSecurityAnomaly(getClientIp(req), 'WALLET_ID_SPOOF_ATTEMPT', `Tentative commit-payout pour ${userId} par ${callerUid}`);
+      return res.status(403).json({ success: false, error: 'Accès refusé : identifiant portefeuille non conforme.' });
+    }
+
+    const p0 = getP0Security(req);
+    if (!p0) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible pour valider le retrait.' });
+    }
+
+    const result = await p0.commitWalletPayout({
+      callerUid,
+      idempotencyKey: idempotencyKey.trim(),
+      amount: typeof amount === 'number' && Number.isFinite(amount) ? amount : undefined,
+      operator: typeof operator === 'string' ? operator : undefined,
+      payoutPhone: typeof payoutPhone === 'string' ? payoutPhone : undefined,
+    });
+
+    if (!result.ok) {
+      return res.status(result.status).json({
+        success: false,
+        alreadyProcessed: result.alreadyProcessed,
+        insufficientBalance: result.insufficientBalance,
+        compensated: result.compensated,
+        requiresReconciliation: result.requiresReconciliation,
+        payoutStatus: result.payoutStatus,
+        error: result.error,
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Transaction de retrait enregistrée et verrouillée contre tout double débit.',
+      idempotencyKey: result.idempotencyKey,
+      balanceBefore: result.balanceBefore,
+      balanceAfter: result.balanceAfter,
+      providerReference: result.providerReference,
+      recoveredFromInterruption: result.recoveredFromInterruption,
+    });
+  } catch (err: any) {
+    console.error('[WALLET COMMIT PAYOUT ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la validation transactionnelle du retrait.' });
   }
-
-  processedIdempotencyKeys.add(scopedKey);
-  inFlightPayoutLocks.delete(`lock_${callerUid}`);
-
-  res.json({
-    success: true,
-    message: 'Transaction de retrait enregistrée et verrouillée contre tout double débit.',
-    idempotencyKey,
-  });
 });
 
 // =========================================================================

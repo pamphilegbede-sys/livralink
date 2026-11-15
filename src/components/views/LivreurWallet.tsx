@@ -67,7 +67,11 @@ export const LivreurWallet: React.FC = () => {
     }
 
     setIsRequesting(true);
-    const idempotencyKey = `payout_${authenticatedUid}_${numericAmount}_${Date.now()}`;
+    const randomSuffix =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const idempotencyKey = `payout_${authenticatedUid}_${numericAmount}_${randomSuffix}`;
 
     try {
       const idToken = await currentUser.getIdToken();
@@ -76,7 +80,7 @@ export const LivreurWallet: React.FC = () => {
         Authorization: `Bearer ${idToken}`,
       };
 
-      // Step 1: Verify & Lock Idempotency Key (Point 10)
+      // Step 1: Verify & Lock Idempotency Key (Point 10 - Transaction Firestore atomique)
       const res = await fetch('/api/wallet/verify-idempotency', {
         method: 'POST',
         headers: authHeaders,
@@ -94,7 +98,7 @@ export const LivreurWallet: React.FC = () => {
         return;
       }
 
-      // Step 2: Commit payout safely
+      // Step 2: Commit payout safely inside atomic transaction
       const commitRes = await fetch('/api/wallet/commit-payout', {
         method: 'POST',
         headers: authHeaders,
@@ -102,11 +106,14 @@ export const LivreurWallet: React.FC = () => {
           idempotencyKey,
           userId: authenticatedUid,
           amount: numericAmount,
+          operator: payoutOperator,
+          payoutPhone: courierSettings.payoutPhone || courierSettings.phone,
         }),
       });
       const commitData = await commitRes.json();
       if (!commitRes.ok || !commitData.success) {
-        showToast(commitData.error || 'Échec de validation du retrait côté serveur.', 'error');
+        const toastType = commitData.requiresReconciliation ? 'info' : 'error';
+        showToast(commitData.error || 'Échec de validation du retrait côté serveur.', toastType);
         setIsRequesting(false);
         return;
       }

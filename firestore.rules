@@ -608,5 +608,38 @@ service cloud.firestore {
       allow get: if testId == 'connection';
       allow list, write: if false;
     }
+
+    // -------------------------------------------------------------------------
+    // 10. Internal Backend Security Collections (Admin SDK only, zero client access)
+    // -------------------------------------------------------------------------
+    match /auth_reset_otps/{emailHash} {
+      allow read, write: if false;
+    }
+
+    match /auth_reset_tokens/{tokenHash} {
+      allow read, write: if false;
+    }
+
+    match /pod_otp_attempts/{attemptId} {
+      allow read, write: if false;
+    }
+
+    match /pod_otp_tokens/{tokenHash} {
+      allow read, write: if false;
+    }
+
+    match /payout_idempotency/{docKeyId} {
+      allow read, write: if false;
+    }
+
+    match /payout_user_locks/{userId} {
+      allow read, write: if false;
+    }
+
+    // Financial audit ledger: written exclusively by Admin SDK transactions
+    match /wallet_transactions/{txId} {
+      allow get, list: if hasVerifiedEmail() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create, update, delete: if false;
+    }
   }
 }

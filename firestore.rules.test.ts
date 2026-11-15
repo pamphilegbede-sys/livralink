@@ -1037,6 +1037,53 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
       })
     );
   });
+
+  // 28. Internal P0 backend security collections are strictly inaccessible from client SDKs
+  test('28. Clients (even admins) cannot read/write internal P0 security collections; wallet_transactions is owner read-only', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('auth_reset_otps/hash_a').set({ hashedCode: 'abc', expiresAt: Date.now() + 60000 });
+      await context.firestore().doc('auth_reset_tokens/tok_a').set({ emailHash: 'hash_a', used: false });
+      await context.firestore().doc('pod_otp_attempts/att_a').set({ failures: 2 });
+      await context.firestore().doc('pod_otp_tokens/ptok_a').set({ orderDocId: 'o1', used: false });
+      await context.firestore().doc('payout_user_locks/courier_w1').set({ status: 'locked' });
+      await context.firestore().doc('wallet_transactions/wtx_1').set({ uid: 'courier_w1', amountFCFA: 5000, status: 'committed' });
+      await context.firestore().doc('wallet_transactions/wtx_2').set({ uid: 'courier_w2', amountFCFA: 9000, status: 'committed' });
+    });
+
+    const courier1Ctx = testEnv.authenticatedContext('courier_w1', {
+      email: 'cw1@test.com',
+      email_verified: true,
+    });
+    const superAdminCtx = testEnv.authenticatedContext('super_admin_uid', {
+      email: 'Pamphile.gbede@gmail.com',
+      email_verified: true,
+    });
+
+    const c1Db = courier1Ctx.firestore();
+    const adminDb = superAdminCtx.firestore();
+
+    for (const [col, id] of [
+      ['auth_reset_otps', 'hash_a'],
+      ['auth_reset_tokens', 'tok_a'],
+      ['pod_otp_attempts', 'att_a'],
+      ['pod_otp_tokens', 'ptok_a'],
+      ['payout_idempotency', 'idem_1'],
+      ['payout_user_locks', 'courier_w1'],
+    ]) {
+      await assertFails(c1Db.collection(col).doc(id).get());
+      await assertFails(c1Db.collection(col).doc(id).set({ tampered: true }));
+      await assertFails(adminDb.collection(col).doc(id).get());
+      await assertFails(adminDb.collection(col).doc(id).set({ tampered: true }));
+    }
+
+    // wallet_transactions: owner can read own tx, cannot read others, cannot write/tamper
+    await assertSucceeds(c1Db.doc('wallet_transactions/wtx_1').get());
+    await assertFails(c1Db.doc('wallet_transactions/wtx_2').get());
+    await assertFails(c1Db.doc('wallet_transactions/wtx_1').set({ amountFCFA: 999999 }));
+    await assertFails(c1Db.doc('wallet_transactions/wtx_1').update({ status: 'reversed' }));
+    await assertFails(c1Db.doc('wallet_transactions/wtx_1').delete());
+    await assertSucceeds(adminDb.doc('wallet_transactions/wtx_2').get());
+  });
 });
 
 

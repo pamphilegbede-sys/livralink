@@ -424,7 +424,15 @@ export const PODValidationModal: React.FC = () => {
         signedByName: trimmedSigner,
       });
       if (!result.success) {
-        showToast(result.reason || 'Impossible de certifier la livraison.', 'error');
+        const msg = result.reason || 'Impossible de certifier la livraison.';
+        showToast(msg, 'error');
+        if (/otp|jeton/i.test(msg)) {
+          setIsOtpVerified(false);
+          setPodOtpToken(null);
+          setOtpDigits(['', '', '', '']);
+          setOtpError(msg);
+          setCurrentStep(1);
+        }
       }
     } catch (err: any) {
       showToast(err?.message || 'Erreur lors de la certification POD.', 'error');
