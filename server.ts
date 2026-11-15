@@ -446,20 +446,82 @@ const requireAdminAuthorization = async (req: AuthenticatedRequest, res: Respons
 
 app.use('/api', authenticateFirebaseToken as any);
 
-// Secret salt for HMAC-SHA256 OTP & POD token signing
-const configuredOtpHmacSecret = (process.env.OTP_SECRET_SALT || process.env.POD_OTP_HMAC_SECRET || '').trim();
-const isOtpHmacSecretConfiguredFromEnv = configuredOtpHmacSecret.length >= 16;
-const OTP_SECRET_SALT = (() => {
-  if (isOtpHmacSecretConfiguredFromEnv) {
-    return configuredOtpHmacSecret;
+// Secret salt for HMAC-SHA256 OTP & POD token signing (minimum 32 characters; zero randomBytes fallback)
+export const MIN_OTP_HMAC_SECRET_LENGTH = 32;
+
+export function evaluateHmacSecretConfig(env: NodeJS.ProcessEnv = process.env): {
+  configured: boolean;
+  valid: boolean;
+  tooShort: boolean;
+  source: 'OTP_SECRET_SALT' | 'POD_OTP_HMAC_SECRET' | 'none';
+  secret: string | null;
+  isProduction: boolean;
+} {
+  const isProduction = env.NODE_ENV === 'production';
+  const primary = (env.OTP_SECRET_SALT || '').trim();
+  const alias = (env.POD_OTP_HMAC_SECRET || '').trim();
+  const raw = primary || alias;
+  const source: 'OTP_SECRET_SALT' | 'POD_OTP_HMAC_SECRET' | 'none' = primary
+    ? 'OTP_SECRET_SALT'
+    : alias
+      ? 'POD_OTP_HMAC_SECRET'
+      : 'none';
+
+  if (raw.length >= MIN_OTP_HMAC_SECRET_LENGTH) {
+    return {
+      configured: true,
+      valid: true,
+      tooShort: false,
+      source,
+      secret: raw,
+      isProduction,
+    };
   }
-  if (process.env.NODE_ENV === 'production') {
-    console.error('[SECURITY CRITICAL] OTP_SECRET_SALT / POD_OTP_HMAC_SECRET manquant en production multi-instance ! Configurez ce secret dans Google Cloud Secret Manager / apphosting.yaml.');
+
+  return {
+    configured: raw.length > 0,
+    valid: false,
+    tooShort: raw.length > 0,
+    source,
+    secret: null,
+    isProduction,
+  };
+}
+
+const startupHmacState = evaluateHmacSecretConfig();
+if (!startupHmacState.valid) {
+  if (startupHmacState.isProduction) {
+    console.error(
+      `[SECURITY CRITICAL] OTP_SECRET_SALT / POD_OTP_HMAC_SECRET ${startupHmacState.tooShort ? 'trop court (< 32 caractères)' : 'manquant'} en production ! Les routes OTP, reset-password et POD sont strictement bloquées (HTTP 503). Configurez OTP_SECRET_SALT dans Google Cloud Secret Manager / apphosting.yaml.`
+    );
   } else {
-    console.warn('[SECURITY WARN] OTP_SECRET_SALT / POD_OTP_HMAC_SECRET non configuré ou trop court — clé éphémère utilisée en développement/test.');
+    console.warn(
+      `[SECURITY WARN] OTP_SECRET_SALT / POD_OTP_HMAC_SECRET ${startupHmacState.tooShort ? 'trop court (< 32 caractères)' : 'non configuré'}. Aucun secret aléatoire généré au démarrage ; opérations OTP/POD bloquées sauf secret valide ou mock de test injecté.`
+    );
   }
-  return crypto.randomBytes(32).toString('hex');
-})();
+} else if (
+  process.env.OTP_SECRET_SALT?.trim() &&
+  process.env.POD_OTP_HMAC_SECRET?.trim() &&
+  process.env.OTP_SECRET_SALT.trim() !== process.env.POD_OTP_HMAC_SECRET.trim()
+) {
+  console.warn('[SECURITY WARN] OTP_SECRET_SALT et POD_OTP_HMAC_SECRET diffèrent ; OTP_SECRET_SALT est utilisé de manière unifiée.');
+}
+
+const ensureHmacSecretReadyForSensitiveRoutes = (res: Response): boolean => {
+  if (process.env.NODE_ENV === 'test' && testP0SecurityOverride) {
+    return true;
+  }
+  const state = evaluateHmacSecretConfig();
+  if (!state.valid) {
+    res.status(503).json({
+      success: false,
+      error:
+        'Service de sécurité temporairement indisponible : secret HMAC serveur manquant ou invalide (>= 32 caractères requis).',
+    });
+    return false;
+  }
+  return true;
+};
 
 const getP0Security = (req?: Request): P0SecurityService | null => {
   if (process.env.NODE_ENV === 'test' && testP0SecurityOverride) {
@@ -468,7 +530,7 @@ const getP0Security = (req?: Request): P0SecurityService | null => {
   if (!firestoreAdmin) return null;
   if (!cachedP0Security) {
     cachedP0Security = createP0SecurityService(firestoreAdmin as unknown as P0FirestoreLike, {
-      getSecretSalt: () => OTP_SECRET_SALT,
+      getSecretSalt: () => evaluateHmacSecretConfig().secret,
       onAnomaly: (type, details) => {
         recordSecurityAnomaly(req ? getClientIp(req) : 'internal', type, details);
       },
@@ -655,11 +717,19 @@ const escapeHtml = (unsafe: any): string => {
  */
 app.post('/api/auth/send-reset-code', async (req: Request, res: Response): Promise<void> => {
   try {
+    if (process.env.NODE_ENV === 'production' && !ensureHmacSecretReadyForSensitiveRoutes(res)) {
+      return;
+    }
+
     const { email } = req.body || {};
 
     const EMAIL_REGEX = /^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$/;
     if (!email || typeof email !== 'string' || !EMAIL_REGEX.test(email.trim()) || email.trim().length > 128) {
       res.status(400).json({ success: false, error: 'Veuillez saisir une adresse e-mail valide (max 128 caractères).' });
+      return;
+    }
+
+    if (!ensureHmacSecretReadyForSensitiveRoutes(res)) {
       return;
     }
 
@@ -727,6 +797,7 @@ app.post('/api/auth/send-reset-code', async (req: Request, res: Response): Promi
 
     try {
       const rawFrom =
+        activeSmtpConfig.from ||
         process.env.GMAIL_SMTP_FROM ||
         process.env.SMTP_FROM ||
         'LivraLink Sécurité <Pamphile.gbede@gmail.com>';
@@ -831,6 +902,10 @@ app.post('/api/auth/send-reset-code', async (req: Request, res: Response): Promi
  */
 app.post('/api/auth/verify-reset-code', async (req: Request, res: Response): Promise<void> => {
   try {
+    if (process.env.NODE_ENV === 'production' && !ensureHmacSecretReadyForSensitiveRoutes(res)) {
+      return;
+    }
+
     const ip = getClientIp(req);
     // Defense: IP rate limit (max 15 verification attempts per 10 minutes)
     const ipLimit = checkIpRateLimit(`otp_verify_${ip}`, 15, 10 * 60 * 1000);
@@ -854,6 +929,10 @@ app.post('/api/auth/verify-reset-code', async (req: Request, res: Response): Pro
 
     if (!/^\d{6}$/.test(cleanCode)) {
       res.status(400).json({ success: false, error: 'Le code doit contenir exactement 6 chiffres.' });
+      return;
+    }
+
+    if (!ensureHmacSecretReadyForSensitiveRoutes(res)) {
       return;
     }
 
@@ -907,6 +986,10 @@ app.post('/api/auth/verify-reset-code', async (req: Request, res: Response): Pro
  */
 app.post('/api/auth/reset-password', async (req: Request, res: Response): Promise<void> => {
   try {
+    if (process.env.NODE_ENV === 'production' && !ensureHmacSecretReadyForSensitiveRoutes(res)) {
+      return;
+    }
+
     const ip = getClientIp(req);
     // Defense: IP rate limit (max 10 reset attempts per 10 minutes)
     const ipLimit = checkIpRateLimit(`otp_reset_${ip}`, 10, 10 * 60 * 1000);
@@ -927,6 +1010,10 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response): Promis
 
     if (typeof newPassword !== 'string' || newPassword.length < 8) {
       res.status(400).json({ success: false, error: 'Le nouveau mot de passe doit contenir au moins 8 caractères pour garantir la sécurité.' });
+      return;
+    }
+
+    if (!ensureHmacSecretReadyForSensitiveRoutes(res)) {
       return;
     }
 
@@ -2592,7 +2679,9 @@ app.get('/api/security/audit', requireAdminAuthorization as any, (_req: Request,
         bruteForceLockout: '5_FAILED_ATTEMPTS_10MIN_FIRESTORE_LOCK',
         otpStorage: 'FIRESTORE_ATOMIC_HMAC_SHA256_ONLY',
         resetTokens: 'FIRESTORE_ATOMIC_SINGLE_USE_32BYTES',
-        hmacSecretConfigured: isOtpHmacSecretConfiguredFromEnv,
+        hmacSecretConfigured: evaluateHmacSecretConfig().valid,
+        minHmacSecretLength: MIN_OTP_HMAC_SECRET_LENGTH,
+        payoutProviderMode: 'SIMULATOR_DEFAULT_NO_LIVE_AGGREGATOR',
         rateLimitPerEmailSeconds: 60,
         maxVerifyAttempts: 3,
         accountEnumerationProtection: 'SILENT_CONSISTENT_RESPONSE',
@@ -2652,6 +2741,9 @@ app.get('/api/security/budget', requireAdminAuthorization as any, (_req: Request
 // =========================================================================
 app.post('/api/deliveries/:orderId/otp/verify', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    if (!ensureHmacSecretReadyForSensitiveRoutes(res)) {
+      return;
+    }
     const p0 = getP0Security(req);
     if (!p0) {
       return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
@@ -2699,6 +2791,9 @@ app.post('/api/deliveries/:orderId/otp/verify', requireVerifiedUser as any, asyn
 
 app.post('/api/deliveries/:orderId/complete-pod', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    if (!ensureHmacSecretReadyForSensitiveRoutes(res)) {
+      return;
+    }
     const p0 = getP0Security(req);
     if (!p0) {
       return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
@@ -2933,6 +3028,7 @@ app.post('/api/wallet/commit-payout', requireVerifiedUser as any, async (req: Au
       return res.status(result.status).json({
         success: false,
         alreadyProcessed: result.alreadyProcessed,
+        inFlight: result.inFlight,
         insufficientBalance: result.insufficientBalance,
         compensated: result.compensated,
         requiresReconciliation: result.requiresReconciliation,
@@ -2948,11 +3044,69 @@ app.post('/api/wallet/commit-payout', requireVerifiedUser as any, async (req: Au
       balanceBefore: result.balanceBefore,
       balanceAfter: result.balanceAfter,
       providerReference: result.providerReference,
+      isSimulatedProvider: result.isSimulatedProvider,
       recoveredFromInterruption: result.recoveredFromInterruption,
     });
   } catch (err: any) {
     console.error('[WALLET COMMIT PAYOUT ERROR]:', err?.message || err);
     return res.status(500).json({ success: false, error: 'Erreur lors de la validation transactionnelle du retrait.' });
+  }
+});
+
+app.get('/api/admin/wallet/pending-payouts', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const p0 = getP0Security(req);
+    if (!p0) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const items = await p0.listPendingWalletPayouts(50);
+    return res.json({ success: true, count: items.length, items });
+  } catch (err: any) {
+    console.error('[ADMIN PENDING PAYOUTS ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors du chargement des retraits en attente.' });
+  }
+});
+
+app.post('/api/admin/wallet/reconcile-payout', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const p0 = getP0Security(req);
+    if (!p0) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const { targetUid, idempotencyKey, resolution, providerReference, reason } = req.body || {};
+    if (!targetUid || typeof targetUid !== 'string' || !idempotencyKey || typeof idempotencyKey !== 'string') {
+      return res.status(400).json({ success: false, error: 'targetUid et idempotencyKey requis.' });
+    }
+    if (resolution !== 'confirm_succeeded' && resolution !== 'compensate_failed') {
+      return res.status(400).json({
+        success: false,
+        error: 'resolution doit valoir "confirm_succeeded" ou "compensate_failed".',
+      });
+    }
+
+    const result = await p0.reconcileWalletPayout({
+      adminUid: req.user!.uid,
+      adminEmail: req.user?.email,
+      targetUid: targetUid.trim(),
+      idempotencyKey: idempotencyKey.trim(),
+      resolution,
+      providerReference: typeof providerReference === 'string' ? providerReference : undefined,
+      reason: typeof reason === 'string' ? reason : undefined,
+    });
+
+    if (!result.ok) {
+      return res.status(result.status).json({ success: false, error: result.error });
+    }
+
+    return res.json({
+      success: true,
+      statusAfter: result.statusAfter,
+      restoredBalance: result.restoredBalance,
+      providerReference: result.providerReference,
+    });
+  } catch (err: any) {
+    console.error('[ADMIN RECONCILE PAYOUT ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la réconciliation administrative.' });
   }
 });
 

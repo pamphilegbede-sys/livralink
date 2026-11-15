@@ -14,3 +14,7 @@ env:
     value: "587"
   - variable: SMTP_FROM
     value: LivraLink <Pamphile.gbede@gmail.com>
+  - variable: OTP_SECRET_SALT
+    secret: OTP_SECRET_SALT
+    availability:
+      - RUNTIME

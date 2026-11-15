@@ -62,18 +62,20 @@ export interface PayoutProviderRequest {
 }
 
 export type PayoutProviderResult =
-  | { outcome: 'succeeded'; providerReference: string }
-  | { outcome: 'failed'; error: string; providerReference?: string }
-  | { outcome: 'uncertain'; error: string; providerReference?: string };
+  | { outcome: 'succeeded'; providerReference: string; isSimulatedProvider?: boolean }
+  | { outcome: 'failed'; error: string; providerReference?: string; isSimulatedProvider?: boolean }
+  | { outcome: 'uncertain'; error: string; providerReference?: string; isSimulatedProvider?: boolean };
 
 export type PayoutProviderAdapter = (req: PayoutProviderRequest) => Promise<PayoutProviderResult>;
 
 export interface P0SecurityOptions {
-  getSecretSalt: () => string;
+  getSecretSalt: () => string | null;
   now?: () => number;
   payoutProvider?: PayoutProviderAdapter;
   onAnomaly?: (type: string, details: string) => void;
 }
+
+export const MIN_HMAC_SECRET_LENGTH = 32;
 
 export const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 export const OTP_RESEND_COOLDOWN_MS = 60 * 1000; // 60 seconds
@@ -85,7 +87,7 @@ export const POD_MAX_FAILURES = 5;
 export const POD_TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 export const PAYOUT_LOCK_TTL_MS = 30 * 1000; // 30 seconds
-export const PAYOUT_PROCESSING_LOCK_TTL_MS = 60 * 1000; // 60 seconds
+export const PAYOUT_PROCESSING_LOCK_TTL_MS = 60 * 1000; // 60 seconds exclusive execution lease
 export const PAYOUT_UNCERTAIN_LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 export const COLLECTIONS = {
@@ -201,14 +203,27 @@ export function verifyPodOtpTokenSignature(
   };
 }
 
-const defaultPayoutProvider: PayoutProviderAdapter = async ({ idempotencyKey }) => {
-  const ref = `LLP_${crypto.createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 16).toUpperCase()}`;
-  return { outcome: 'succeeded', providerReference: ref };
+/**
+ * Explicit MVP Simulator for Mobile Money payouts when no live Mobile Money
+ * aggregator adapter is configured. Does NOT execute any real financial transfer.
+ */
+export const defaultPayoutProvider: PayoutProviderAdapter = async ({ idempotencyKey }) => {
+  const ref = `SIM_LLP_${crypto.createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 14).toUpperCase()}`;
+  return { outcome: 'succeeded', providerReference: ref, isSimulatedProvider: true };
 };
 
 export function createP0SecurityService(db: P0FirestoreLike, options: P0SecurityOptions) {
   const nowFn = options.now || (() => Date.now());
   const provider = options.payoutProvider || defaultPayoutProvider;
+
+  function resolveValidSecretSalt(): string | null {
+    const raw = options.getSecretSalt();
+    const trimmed = typeof raw === 'string' ? raw.trim() : '';
+    if (trimmed.length < MIN_HMAC_SECRET_LENGTH) {
+      return null;
+    }
+    return trimmed;
+  }
 
   // =========================================================================
   // A. PASSWORD RESET OTP & SINGLE-USE RESET TOKENS
@@ -217,10 +232,18 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
     | { ok: true; rawCode: string; expiresAt: number }
     | { ok: false; status: number; error: string; cooldownSeconds?: number }
   > {
+    const secretSalt = resolveValidSecretSalt();
+    if (!secretSalt) {
+      return {
+        ok: false as const,
+        status: 503,
+        error: 'Service de sécurité OTP temporairement indisponible (clé HMAC serveur non configurée).',
+      };
+    }
+
     const now = nowFn();
     const emailHash = hashEmailKey(cleanEmail);
     const otpRef = db.collection(COLLECTIONS.AUTH_RESET_OTPS).doc(emailHash);
-    const secretSalt = options.getSecretSalt();
 
     return db.runTransaction(async (tx) => {
       const snap = await tx.get(otpRef);
@@ -268,10 +291,18 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
     | { ok: true; resetToken: string; expiresAt: number }
     | { ok: false; status: number; error: string; attemptsLeft?: number }
   > {
+    const secretSalt = resolveValidSecretSalt();
+    if (!secretSalt) {
+      return {
+        ok: false as const,
+        status: 503,
+        error: 'Service de sécurité OTP temporairement indisponible (clé HMAC serveur non configurée).',
+      };
+    }
+
     const now = nowFn();
     const emailHash = hashEmailKey(cleanEmail);
     const otpRef = db.collection(COLLECTIONS.AUTH_RESET_OTPS).doc(emailHash);
-    const secretSalt = options.getSecretSalt();
 
     return db.runTransaction(async (tx) => {
       const snap = await tx.get(otpRef);
@@ -356,9 +387,17 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
     cleanEmail: string,
     rawResetToken: string
   ): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+    const secretSalt = resolveValidSecretSalt();
+    if (!secretSalt) {
+      return {
+        ok: false as const,
+        status: 503,
+        error: 'Service de réinitialisation temporairement indisponible (clé HMAC serveur non configurée).',
+      };
+    }
+
     const now = nowFn();
     const emailHash = hashEmailKey(cleanEmail);
-    const secretSalt = options.getSecretSalt();
     const tokenHash = hashResetToken(rawResetToken, secretSalt);
     const tokenRef = db.collection(COLLECTIONS.AUTH_RESET_TOKENS).doc(tokenHash);
 
@@ -411,9 +450,17 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
     | { ok: true; podOtpToken: string; expiresAt: number }
     | { ok: false; status: number; error: string; verified?: false; attemptsLeft?: number }
   > {
+    const secretSalt = resolveValidSecretSalt();
+    if (!secretSalt) {
+      return {
+        ok: false as const,
+        status: 503,
+        error: 'Service de vérification POD temporairement indisponible (clé HMAC serveur non configurée).',
+      };
+    }
+
     const { cleanDocId, callerUid, isAdmin, rawCode } = params;
     const now = nowFn();
-    const secretSalt = options.getSecretSalt();
     const attemptDocId = getPodAttemptDocId(cleanDocId, callerUid);
 
     const deliveryRef = db.collection(COLLECTIONS.DELIVERIES).doc(cleanDocId);
@@ -554,6 +601,15 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
       }
     | { ok: false; status: number; error: string }
   > {
+    const secretSalt = resolveValidSecretSalt();
+    if (!secretSalt) {
+      return {
+        ok: false as const,
+        status: 503,
+        error: 'Service de certification POD temporairement indisponible (clé HMAC serveur non configurée).',
+      };
+    }
+
     const {
       cleanDocId,
       callerUid,
@@ -566,7 +622,6 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
       signedByName,
     } = params;
     const now = nowFn();
-    const secretSalt = options.getSecretSalt();
     const attemptDocId = getPodAttemptDocId(cleanDocId, callerUid);
 
     const hasTokenInput = typeof podOtpToken === 'string' && podOtpToken.trim().length > 0;
@@ -958,6 +1013,7 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
         balanceBefore: number;
         balanceAfter: number;
         providerReference: string;
+        isSimulatedProvider?: boolean;
         recoveredFromInterruption?: boolean;
       }
     | {
@@ -965,6 +1021,7 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
         status: number;
         error: string;
         alreadyProcessed?: boolean;
+        inFlight?: boolean;
         insufficientBalance?: boolean;
         compensated?: boolean;
         requiresReconciliation?: boolean;
@@ -984,7 +1041,7 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
     const cleanOperator = typeof operator === 'string' ? operator.trim().slice(0, 32) : '';
     const cleanPhone = typeof payoutPhone === 'string' ? payoutPhone.trim().slice(0, 32) : '';
 
-    // Phase 1: Atomic balance verification & reservation (or idempotent resume if interrupted in processing/uncertain)
+    // Phase 1: Atomic balance verification, reservation & exclusive execution lease (processingExpiresAt)
     const phase1 = await db.runTransaction(async (tx) => {
       const [idemSnap, userLockSnap, userSnap, wtxSnap] = await Promise.all([
         tx.get(idemRef),
@@ -1045,11 +1102,59 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
         };
       }
 
-      // If previous execution was interrupted after reserving balance, resume without double-debiting!
+      // Exclusive execution lease enforcement for 'processing' and 'uncertain' recoveries
       if (idemData.status === 'processing' || idemData.status === 'uncertain') {
+        const activeLeaseExpiry = Number(idemData.processingExpiresAt || 0);
+        if (idemData.status === 'processing' && now < activeLeaseExpiry) {
+          return {
+            proceed: false as const,
+            status: 409,
+            inFlight: true,
+            error: 'Ce retrait est déjà en cours d\'exécution exclusive sur une autre requête ou instance. Veuillez patienter.',
+          };
+        }
+
+        // Lease expired (abandoned operation) or explicit retry on 'uncertain':
+        // Acquire a NEW exclusive lease atomically inside this transaction WITHOUT double-debiting!
+        const leaseId = crypto.randomBytes(16).toString('hex');
+        const leaseExpiresAt = now + PAYOUT_PROCESSING_LOCK_TTL_MS;
+        const nextAttemptCount = Number(idemData.processingAttemptCount || 1) + 1;
+
+        tx.update(idemRef, {
+          status: 'processing',
+          processingLeaseId: leaseId,
+          processingStartedAt: now,
+          processingExpiresAt: leaseExpiresAt,
+          processingAttemptCount: nextAttemptCount,
+          lastLeaseRecoveredAt: now,
+          updatedAt: now,
+        });
+
+        tx.set(userLockRef, {
+          uid: callerUid,
+          activeDocKeyId: docKeyId,
+          idempotencyKey: String(idempotencyKey).slice(0, 128),
+          amount: expectedAmount,
+          status: 'processing',
+          processingLeaseId: leaseId,
+          lockedUntil: leaseExpiresAt,
+          updatedAt: now,
+        });
+
+        if (wtxSnap.exists) {
+          tx.update(wtxRef, {
+            status: 'processing',
+            note: idemData.status === 'uncertain'
+              ? 'Reprise de vérification prestataire (sans double débit)'
+              : 'Récupération après expiration du bail d\'exécution (sans double débit)',
+            updatedAt: now,
+          });
+        }
+
         return {
           proceed: true as const,
           recovered: true,
+          leaseId,
           commitAmount: expectedAmount,
           balanceBefore: Number(idemData.balanceBefore ?? 0),
           balanceAfter: Number(idemData.balanceAfter ?? 0),
@@ -1075,6 +1180,7 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
           return {
             proceed: false as const,
             status: 409,
+            inFlight: true,
             error: 'Un autre retrait est actuellement actif pour ce compte.',
           };
         }
@@ -1100,6 +1206,8 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
       }
 
       const balanceAfter = currentBalance - expectedAmount;
+      const leaseId = crypto.randomBytes(16).toString('hex');
+      const leaseExpiresAt = now + PAYOUT_PROCESSING_LOCK_TTL_MS;
 
       tx.update(userRef, {
         walletBalanceFCFA: balanceAfter,
@@ -1108,6 +1216,10 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
 
       tx.update(idemRef, {
         status: 'processing',
+        processingLeaseId: leaseId,
+        processingStartedAt: now,
+        processingExpiresAt: leaseExpiresAt,
+        processingAttemptCount: 1,
         reservedAmount: expectedAmount,
         balanceBefore: currentBalance,
         balanceAfter,
@@ -1120,7 +1232,8 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
         idempotencyKey: String(idempotencyKey).slice(0, 128),
         amount: expectedAmount,
         status: 'processing',
-        lockedUntil: now + PAYOUT_PROCESSING_LOCK_TTL_MS,
+        processingLeaseId: leaseId,
+        lockedUntil: leaseExpiresAt,
         updatedAt: now,
       });
 
@@ -1145,6 +1258,7 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
       return {
         proceed: true as const,
         recovered: false,
+        leaseId,
         commitAmount: expectedAmount,
         balanceBefore: currentBalance,
         balanceAfter,
@@ -1157,11 +1271,13 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
         status: phase1.status,
         error: phase1.error,
         alreadyProcessed: phase1.alreadyProcessed,
+        inFlight: phase1.inFlight,
         insufficientBalance: phase1.insufficientBalance,
       };
     }
 
-    // Phase 2: Call external payment provider using idempotencyKey
+    // Phase 2: Call external payment provider strictly outside Firestore transaction,
+    // authorized exclusively by phase1.leaseId
     let providerRes: PayoutProviderResult;
     try {
       providerRes = await provider({
@@ -1180,22 +1296,28 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
 
     const doneNow = nowFn();
 
-    // Phase 3: Finalize or compensate atomically based on provider outcome
+    // Phase 3: Finalize or compensate atomically, verifying lease ownership (processingLeaseId)
     if (providerRes.outcome === 'succeeded') {
-      await db.runTransaction(async (tx) => {
+      const finalizeRes = await db.runTransaction(async (tx) => {
         const [idemSnap, userLockSnap, wtxSnap] = await Promise.all([
           tx.get(idemRef),
           tx.get(userLockRef),
           tx.get(wtxRef),
         ]);
 
-        if (idemSnap.exists && idemSnap.data()?.status === 'committed') {
-          return;
+        const idemData = idemSnap.data() || {};
+        if (!idemSnap.exists || idemData.status === 'committed') {
+          return { applied: true as const, staleConflict: false as const };
+        }
+        if (idemData.status === 'failed' || idemData.processingLeaseId !== phase1.leaseId) {
+          return { applied: false as const, staleConflict: true as const };
         }
 
         tx.update(idemRef, {
           status: 'committed',
           providerReference: providerRes.providerReference,
+          isSimulatedProvider: Boolean(providerRes.isSimulatedProvider),
+          processingExpiresAt: 0,
           committedAt: doneNow,
           updatedAt: doneNow,
         });
@@ -1204,6 +1326,7 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
           tx.update(wtxRef, {
             status: 'committed',
             providerReference: providerRes.providerReference,
+            isSimulatedProvider: Boolean(providerRes.isSimulatedProvider),
             updatedAt: doneNow,
           });
         }
@@ -1211,7 +1334,17 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
         if (userLockSnap.exists && userLockSnap.data()?.activeDocKeyId === docKeyId) {
           tx.delete(userLockRef);
         }
+
+        return { applied: true as const, staleConflict: false as const };
       });
+
+      if (finalizeRes.staleConflict) {
+        return {
+          ok: false as const,
+          status: 409,
+          error: 'Le bail d\'exécution a expiré ou l\'opération a déjà été réconciliée par une autre instance.',
+        };
+      }
 
       return {
         ok: true as const,
@@ -1219,12 +1352,13 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
         balanceBefore: phase1.balanceBefore,
         balanceAfter: phase1.balanceAfter,
         providerReference: providerRes.providerReference,
+        isSimulatedProvider: providerRes.isSimulatedProvider,
         recoveredFromInterruption: phase1.recovered || undefined,
       };
     }
 
     if (providerRes.outcome === 'failed') {
-      await db.runTransaction(async (tx) => {
+      const compensateRes = await db.runTransaction(async (tx) => {
         const [idemSnap, userLockSnap, userSnap, wtxSnap] = await Promise.all([
           tx.get(idemRef),
           tx.get(userLockRef),
@@ -1234,7 +1368,10 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
 
         const idemData = idemSnap.data() || {};
         if (idemData.status === 'failed' || idemData.status === 'committed') {
-          return;
+          return { staleConflict: false as const };
+        }
+        if (idemData.processingLeaseId !== phase1.leaseId) {
+          return { staleConflict: true as const };
         }
 
         const currentBal = Number(userSnap.data()?.walletBalanceFCFA ?? 0);
@@ -1247,6 +1384,7 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
 
         tx.update(idemRef, {
           status: 'failed',
+          processingExpiresAt: 0,
           failedAt: doneNow,
           providerError: providerRes.error,
           updatedAt: doneNow,
@@ -1264,7 +1402,17 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
         if (userLockSnap.exists && userLockSnap.data()?.activeDocKeyId === docKeyId) {
           tx.delete(userLockRef);
         }
+
+        return { staleConflict: false as const };
       });
+
+      if (compensateRes.staleConflict) {
+        return {
+          ok: false as const,
+          status: 409,
+          error: 'Le bail d\'exécution a expiré ou a été repris par une autre instance avant finalisation.',
+        };
+      }
 
       return {
         ok: false as const,
@@ -1275,7 +1423,7 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
       };
     }
 
-    // Outcome === 'uncertain': Hold reserved balance and lock to prevent double spend until reconciled/resumed
+    // Outcome === 'uncertain': NEVER auto-succeed; hold reserved balance and mark 'uncertain'
     await db.runTransaction(async (tx) => {
       const [idemSnap, userLockSnap, wtxSnap] = await Promise.all([
         tx.get(idemRef),
@@ -1284,12 +1432,17 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
       ]);
 
       const idemData = idemSnap.data() || {};
-      if (idemData.status === 'committed' || idemData.status === 'failed') {
+      if (
+        idemData.status === 'committed' ||
+        idemData.status === 'failed' ||
+        idemData.processingLeaseId !== phase1.leaseId
+      ) {
         return;
       }
 
       tx.update(idemRef, {
         status: 'uncertain',
+        processingExpiresAt: 0,
         uncertainAt: doneNow,
         providerError: providerRes.error,
         updatedAt: doneNow,
@@ -1323,6 +1476,183 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
       payoutStatus: 'uncertain',
       error: 'Réponse incertaine du prestataire de paiement. Les fonds restent protégés en attente de vérification finale (réessayez avec la même clé d\'idempotence ou contactez l\'administration).',
     };
+  }
+
+  // =========================================================================
+  // C2. SECURE ADMINISTRATIVE PAYOUT RECONCILIATION (ABANDONED / UNCERTAIN)
+  // =========================================================================
+  async function reconcileWalletPayout(params: {
+    adminUid: string;
+    adminEmail?: string;
+    targetUid: string;
+    idempotencyKey: string;
+    resolution: 'confirm_succeeded' | 'compensate_failed';
+    providerReference?: string;
+    reason?: string;
+  }): Promise<
+    | {
+        ok: true;
+        statusAfter: 'committed' | 'failed';
+        restoredBalance?: number;
+        providerReference?: string;
+      }
+    | { ok: false; status: number; error: string }
+  > {
+    const { adminUid, adminEmail, targetUid, idempotencyKey, resolution, providerReference, reason } = params;
+    const now = nowFn();
+    const docKeyId = getPayoutIdempotencyDocId(targetUid, idempotencyKey);
+    const wtxId = `wtx_${docKeyId}`;
+
+    const idemRef = db.collection(COLLECTIONS.PAYOUT_IDEMPOTENCY).doc(docKeyId);
+    const userLockRef = db.collection(COLLECTIONS.PAYOUT_USER_LOCKS).doc(targetUid);
+    const userRef = db.collection(COLLECTIONS.USERS).doc(targetUid);
+    const wtxRef = db.collection(COLLECTIONS.WALLET_TRANSACTIONS).doc(wtxId);
+
+    const cleanReason = String(reason || 'Réconciliation administrative manuelle').trim().slice(0, 256);
+
+    return db.runTransaction(async (tx) => {
+      const [idemSnap, userLockSnap, userSnap, wtxSnap] = await Promise.all([
+        tx.get(idemRef),
+        tx.get(userLockRef),
+        tx.get(userRef),
+        tx.get(wtxRef),
+      ]);
+
+      if (!idemSnap.exists) {
+        return { ok: false as const, status: 404, error: 'Opération de retrait introuvable dans Firestore.' };
+      }
+
+      const idemData = idemSnap.data() || {};
+      if (idemData.uid !== targetUid) {
+        return { ok: false as const, status: 400, error: 'Identifiant utilisateur incompatible avec cette clé.' };
+      }
+
+      if (idemData.status === 'committed' || idemData.status === 'failed') {
+        return {
+          ok: false as const,
+          status: 409,
+          error: `Opération déjà clôturée (${idemData.status}). Réconciliation impossible.`,
+        };
+      }
+
+      if (idemData.status === 'processing' && now < Number(idemData.processingExpiresAt || 0)) {
+        return {
+          ok: false as const,
+          status: 409,
+          error: 'Bail d\'exécution toujours actif : attendez l\'expiration du bail avant réconciliation administrative.',
+        };
+      }
+
+      if (resolution === 'confirm_succeeded') {
+        if (idemData.status !== 'processing' && idemData.status !== 'uncertain') {
+          return {
+            ok: false as const,
+            status: 409,
+            error: 'Seules les opérations réservées (processing expiré ou uncertain) peuvent être confirmées en succès.',
+          };
+        }
+
+        const resolvedRef = String(providerReference || idemData.providerReference || `ADMIN_RECON_${docKeyId.slice(0, 12).toUpperCase()}`).trim().slice(0, 128);
+        tx.update(idemRef, {
+          status: 'committed',
+          providerReference: resolvedRef,
+          processingExpiresAt: 0,
+          reconciledBy: adminUid,
+          reconciledByEmail: adminEmail || '',
+          reconciliationNote: cleanReason,
+          reconciledAt: now,
+          committedAt: now,
+          updatedAt: now,
+        });
+
+        if (wtxSnap.exists) {
+          tx.update(wtxRef, {
+            status: 'committed',
+            providerReference: resolvedRef,
+            note: `Réconciliation admin confirmée : ${cleanReason}`,
+            updatedAt: now,
+          });
+        }
+
+        if (userLockSnap.exists && userLockSnap.data()?.activeDocKeyId === docKeyId) {
+          tx.delete(userLockRef);
+        }
+
+        return {
+          ok: true as const,
+          statusAfter: 'committed' as const,
+          providerReference: resolvedRef,
+        };
+      }
+
+      // resolution === 'compensate_failed'
+      const wasDebited = idemData.status === 'processing' || idemData.status === 'uncertain';
+      const reservedAmount = Number(idemData.reservedAmount ?? idemData.amount ?? 0);
+      let restoredBalance: number | undefined;
+
+      if (wasDebited) {
+        if (!userSnap.exists) {
+          return { ok: false as const, status: 404, error: 'Compte utilisateur introuvable pour compensation.' };
+        }
+        const currentBal = Number(userSnap.data()?.walletBalanceFCFA ?? 0);
+        restoredBalance = currentBal + reservedAmount;
+        tx.update(userRef, {
+          walletBalanceFCFA: restoredBalance,
+          updatedAt: now,
+        });
+      }
+
+      tx.update(idemRef, {
+        status: 'failed',
+        processingExpiresAt: 0,
+        failedAt: now,
+        reconciledBy: adminUid,
+        reconciledByEmail: adminEmail || '',
+        reconciliationNote: cleanReason,
+        reconciledAt: now,
+        providerError: `ADMIN_RECONCILED_FAILED: ${cleanReason}`,
+        updatedAt: now,
+      });
+
+      if (wtxSnap.exists) {
+        tx.update(wtxRef, {
+          status: 'reversed',
+          ...(typeof restoredBalance === 'number' ? { balanceAfter: restoredBalance } : {}),
+          note: `Réconciliation admin annulée (${cleanReason}) — solde restitué`,
+          updatedAt: now,
+        });
+      }
+
+      if (userLockSnap.exists && userLockSnap.data()?.activeDocKeyId === docKeyId) {
+        tx.delete(userLockRef);
+      }
+
+      return {
+        ok: true as const,
+        statusAfter: 'failed' as const,
+        restoredBalance,
+      };
+    });
+  }
+
+  async function listPendingWalletPayouts(limit = 50): Promise<Array<Record<string, any>>> {
+    const now = nowFn();
+    const results: Array<Record<string, any>> = [];
+    for (const status of ['processing', 'uncertain']) {
+      const snap = await db
+        .collection(COLLECTIONS.PAYOUT_IDEMPOTENCY)
+        .where('status', '==', status)
+        .limit(limit)
+        .get();
+      for (const docSnap of snap.docs) {
+        const d = docSnap.data() || {};
+        results.push({
+          ...d,
+          leaseExpired: status === 'processing' ? now >= Number(d.processingExpiresAt || 0) : false,
+        });
+      }
+    }
+    return results;
   }
 
   // =========================================================================
@@ -1399,6 +1729,8 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
     completeDeliveryPod,
     verifyWalletPayoutIdempotency,
     commitWalletPayout,
+    reconcileWalletPayout,
+    listPendingWalletPayouts,
     cleanupExpiredSecurityDocs,
   };
 }

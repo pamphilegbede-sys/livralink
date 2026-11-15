@@ -572,6 +572,168 @@ test('P0-C Multi-Instance Wallet Payout Transactions, Concurrency, Provider Fail
     const finalBal = (await sharedDb.collection('users').doc('courier_w3').get()).data()?.walletBalanceFCFA;
     assert.equal(finalBal, 7000);
   });
+
+  await t.test('4. Parallel commitWalletPayout on same processing key is blocked by exclusive lease (provider runs once)', async () => {
+    await sharedDb.collection('users').doc('courier_w4').set({
+      uid: 'courier_w4',
+      role: 'livreur',
+      walletBalanceFCFA: 15000,
+    });
+
+    let providerExecutions = 0;
+    let releaseProvider!: () => void;
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+
+    const slowProvider: PayoutProviderAdapter = async ({ idempotencyKey }) => {
+      providerExecutions++;
+      await providerGate;
+      return { outcome: 'succeeded', providerReference: `MOMO_ONCE_${idempotencyKey}` };
+    };
+
+    const svcA = createP0SecurityService(sharedDb, {
+      getSecretSalt: () => SHARED_HMAC_SECRET,
+      now: () => currentNow,
+      payoutProvider: slowProvider,
+    });
+    const svcB = createP0SecurityService(sharedDb, {
+      getSecretSalt: () => SHARED_HMAC_SECRET,
+      now: () => currentNow,
+      payoutProvider: slowProvider,
+    });
+
+    const lockRes = await svcA.verifyWalletPayoutIdempotency({
+      callerUid: 'courier_w4',
+      idempotencyKey: 'key_lease_parallel',
+      amount: 5000,
+    });
+    assert.equal(lockRes.ok, true);
+
+    const firstCommitPromise = svcA.commitWalletPayout({
+      callerUid: 'courier_w4',
+      idempotencyKey: 'key_lease_parallel',
+      amount: 5000,
+    });
+
+    // Wait a tick so Phase 1 commits 'processing' with active processingExpiresAt lease
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Concurrent duplicate commit on Instance B while lease is active must be rejected (409)
+    const parallelCommit = await svcB.commitWalletPayout({
+      callerUid: 'courier_w4',
+      idempotencyKey: 'key_lease_parallel',
+      amount: 5000,
+    });
+    assert.equal(parallelCommit.ok, false);
+    if (!parallelCommit.ok) {
+      assert.equal(parallelCommit.status, 409);
+      assert.equal(parallelCommit.inFlight, true);
+    }
+
+    releaseProvider();
+    const firstCommit = await firstCommitPromise;
+    assert.equal(firstCommit.ok, true);
+    assert.equal(providerExecutions, 1);
+    const bal = (await sharedDb.collection('users').doc('courier_w4').get()).data()?.walletBalanceFCFA;
+    assert.equal(bal, 10000);
+  });
+
+  await t.test('5. Abandoned processing lease recovery after expiry & admin reconciliation', async () => {
+    await sharedDb.collection('users').doc('courier_w5').set({
+      uid: 'courier_w5',
+      role: 'livreur',
+      walletBalanceFCFA: 20000,
+    });
+
+    // Simulate worker crash right after Phase 1 reserved 6000 FCFA
+    const idemDocId = (await import('../server/p0Security')).getPayoutIdempotencyDocId('courier_w5', 'key_abandoned_1');
+    await sharedDb.collection('payout_idempotency').doc(idemDocId).set({
+      id: idemDocId,
+      uid: 'courier_w5',
+      idempotencyKey: 'key_abandoned_1',
+      amount: 6000,
+      reservedAmount: 6000,
+      balanceBefore: 20000,
+      balanceAfter: 14000,
+      status: 'processing',
+      processingLeaseId: 'crashed_worker_lease',
+      processingStartedAt: currentNow,
+      processingExpiresAt: currentNow + 60_000,
+      processingAttemptCount: 1,
+    });
+    await sharedDb.collection('users').doc('courier_w5').update({ walletBalanceFCFA: 14000 });
+    await sharedDb.collection('wallet_transactions').doc(`wtx_${idemDocId}`).set({
+      id: `wtx_${idemDocId}`,
+      uid: 'courier_w5',
+      amountFCFA: 6000,
+      status: 'processing',
+    });
+    await sharedDb.collection('payout_user_locks').doc('courier_w5').set({
+      uid: 'courier_w5',
+      activeDocKeyId: idemDocId,
+      status: 'processing',
+    });
+
+    // While lease is active, admin reconciliation must refuse (409)
+    const earlyAdmin = await instanceA.reconcileWalletPayout({
+      adminUid: 'admin_1',
+      targetUid: 'courier_w5',
+      idempotencyKey: 'key_abandoned_1',
+      resolution: 'compensate_failed',
+      reason: 'Early check',
+    });
+    assert.equal(earlyAdmin.ok, false);
+    if (!earlyAdmin.ok) assert.equal(earlyAdmin.status, 409);
+
+    // Advance clock past processingExpiresAt -> abandoned operation can be reconciled cleanly
+    currentNow += 61_000;
+    const pendingList = await instanceB.listPendingWalletPayouts(50);
+    assert.ok(pendingList.some((p) => p.idempotencyKey === 'key_abandoned_1' && p.leaseExpired === true));
+
+    const reconFail = await instanceB.reconcileWalletPayout({
+      adminUid: 'admin_1',
+      adminEmail: 'Pamphile.gbede@gmail.com',
+      targetUid: 'courier_w5',
+      idempotencyKey: 'key_abandoned_1',
+      resolution: 'compensate_failed',
+      reason: 'Timeout confirmé non exécuté chez MoMo',
+    });
+    assert.equal(reconFail.ok, true);
+    if (reconFail.ok) {
+      assert.equal(reconFail.statusAfter, 'failed');
+      assert.equal(reconFail.restoredBalance, 20000);
+    }
+
+    const balRestored = (await sharedDb.collection('users').doc('courier_w5').get()).data()?.walletBalanceFCFA;
+    assert.equal(balRestored, 20000);
+    const lockAfter = await sharedDb.collection('payout_user_locks').doc('courier_w5').get();
+    assert.equal(lockAfter.exists, false);
+  });
+
+  await t.test('6. Missing or short (< 32 chars) HMAC secret blocks OTP/reset/POD with 503', async () => {
+    const noSecretSvc = createP0SecurityService(sharedDb, {
+      getSecretSalt: () => 'too-short-secret',
+      now: () => currentNow,
+    });
+
+    const otpRes = await noSecretSvc.issuePasswordResetOtp('blocked@livralink.bj');
+    assert.equal(otpRes.ok, false);
+    if (!otpRes.ok) assert.equal(otpRes.status, 503);
+
+    const verifyRes = await noSecretSvc.verifyPasswordResetOtp('blocked@livralink.bj', '123456');
+    assert.equal(verifyRes.ok, false);
+    if (!verifyRes.ok) assert.equal(verifyRes.status, 503);
+
+    const podRes = await noSecretSvc.verifyDeliveryPodOtp({
+      cleanDocId: 'LL-101',
+      callerUid: 'courier_1',
+      isAdmin: false,
+      rawCode: '4829',
+    });
+    assert.equal(podRes.ok, false);
+    if (!podRes.ok) assert.equal(podRes.status, 503);
+  });
 });
 
 test('P0 HTTP Route Integration against Express server.ts with injected Firestore store', async () => {
