@@ -595,4 +595,137 @@ describe('Real Firestore & Auth Emulator P0 Security + Multi-Instance Integratio
       await Promise.all([missingSecretServer.stop(), shortSecretServer.stop()]);
     }
   });
+
+  test('5. P1 Multi-Instance Shared Encrypted SMTP Config, Cross-Instance Outbox/Dedup & Fail-Closed 503 Without Secret (Real Emulators)', async () => {
+    const adminToken = await createVerifiedEmulatorUserAndToken({
+      uid: 'p1_super_admin_emu',
+      email: 'Pamphile.gbede@gmail.com',
+      password: 'AdminStrongPassword#2026',
+    });
+
+    const instanceA = await spawnServerInstance({
+      port: 34115,
+      envOverrides: {
+        OTP_SECRET_SALT: SHARED_SECRET_32,
+        EMAIL_ENCRYPTION_SECRET: 'p1-emulator-aes256-smtp-master-secret-2026',
+        GMAIL_SMTP_PASS: undefined,
+      },
+    });
+    const instanceB = await spawnServerInstance({
+      port: 34116,
+      envOverrides: {
+        OTP_SECRET_SALT: SHARED_SECRET_32,
+        EMAIL_ENCRYPTION_SECRET: 'p1-emulator-aes256-smtp-master-secret-2026',
+        GMAIL_SMTP_PASS: undefined,
+      },
+    });
+    const noSecretServer = await spawnServerInstance({
+      port: 34117,
+      envOverrides: {
+        OTP_SECRET_SALT: undefined,
+        POD_OTP_HMAC_SECRET: undefined,
+        EMAIL_ENCRYPTION_SECRET: undefined,
+      },
+    });
+
+    try {
+      // 1. Fail-closed HTTP 503 when saving SMTP password without encryption secret
+      const saveFailRes = await fetch(`${noSecretServer.baseUrl}/api/admin/email/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({
+          host: '127.0.0.1',
+          port: 1,
+          user: 'admin@livralink.bj',
+          pass: 'secret-pass-should-not-be-saved',
+          from: 'LivraLink <admin@livralink.bj>',
+        }),
+      });
+      assert.equal(saveFailRes.status, 503);
+
+      // 2. Save SMTP config on Instance A -> stored encrypted in Firestore -> Instance B immediately sees it without leaking password
+      const saveRes = await fetch(`${instanceA.baseUrl}/api/admin/email/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({
+          host: '127.0.0.1',
+          port: 1,
+          user: 'smtp-emu@livralink.bj',
+          pass: 'emu-app-pass-plaintext-secret',
+          from: 'LivraLink Emu <smtp-emu@livralink.bj>',
+        }),
+      });
+      assert.equal(saveRes.status, 200);
+      const saveBody = await saveRes.json();
+      assert.equal(saveBody.config.hasPassword, true);
+      assert.equal(saveBody.config.persistence, 'firestore');
+      assert.equal(saveBody.config.encryptionReady, true);
+      assert.equal(JSON.stringify(saveBody).includes('emu-app-pass-plaintext-secret'), false);
+
+      const rawSmtpDoc = await dbB.collection('system_config').doc('smtp').get();
+      assert.equal(rawSmtpDoc.exists, true);
+      assert.ok(rawSmtpDoc.data()?.encryptedPass?.ciphertext);
+      assert.equal(JSON.stringify(rawSmtpDoc.data()).includes('emu-app-pass-plaintext-secret'), false);
+
+      const getBRes = await fetch(`${instanceB.baseUrl}/api/admin/email/config`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      assert.equal(getBRes.status, 200);
+      const getBBody = await getBRes.json();
+      assert.equal(getBBody.config.user, 'smtp-emu@livralink.bj');
+      assert.equal(getBBody.config.hasPassword, true);
+      assert.equal(getBBody.config.isConfigured, true);
+      assert.equal(JSON.stringify(getBBody).includes('emu-app-pass-plaintext-secret'), false);
+
+      // 3. Queue persistence & cross-instance dedup (SMTP port 1 fails quickly -> persisted in email_queue & email_logs)
+      const notifyA = await fetch(`${instanceA.baseUrl}/api/email/notification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({
+          eventType: 'security_alert',
+          recipientEmail: 'target-emu@livralink.bj',
+          recipientName: 'Target User',
+          dedupKey: 'emu-p1-dedup-key-001',
+          details: { alertTitle: 'Test P1 Queue', alertDesc: 'Persistance inter-instances' },
+        }),
+      });
+      assert.equal(notifyA.status, 200);
+      const notifyABody = await notifyA.json();
+      assert.equal(notifyABody.queued, true);
+      assert.equal(notifyABody.emailDelivered, false);
+
+      // Duplicate notification sent to Instance B must be blocked via Firestore email_dedup
+      const notifyB = await fetch(`${instanceB.baseUrl}/api/email/notification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({
+          eventType: 'security_alert',
+          recipientEmail: 'target-emu@livralink.bj',
+          recipientName: 'Target User',
+          dedupKey: 'emu-p1-dedup-key-001',
+          details: { alertTitle: 'Test P1 Queue', alertDesc: 'Persistance inter-instances' },
+        }),
+      });
+      assert.equal(notifyB.status, 200);
+      const notifyBBody = await notifyB.json();
+      assert.equal(notifyBBody.duplicateBlocked, true);
+
+      // Instance B outbox sees the persisted email_logs entry from Firestore
+      const outboxBRes = await fetch(`${instanceB.baseUrl}/api/email/outbox`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      assert.equal(outboxBRes.status, 200);
+      const outboxBBody = await outboxBRes.json();
+      assert.equal(outboxBBody.source, 'firestore');
+      assert.equal(outboxBBody.emails.some((e: any) => e.id === notifyABody.emailId && e.status === 'queued'), true);
+
+      // Persisted queue job exists in Firestore email_queue
+      const queueSnap = await dbB.collection('email_queue').doc(notifyABody.emailId).get();
+      assert.equal(queueSnap.exists, true);
+      assert.equal(queueSnap.data()?.status, 'queued');
+      assert.equal(queueSnap.data()?.retryCount, 1);
+    } finally {
+      await Promise.all([instanceA.stop(), instanceB.stop(), noSecretServer.stop()]);
+    }
+  });
 });

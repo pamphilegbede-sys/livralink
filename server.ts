@@ -1,7 +1,5 @@
 import express, { Request, Response } from 'express';
 import compression from 'compression';
-import { createServer as createViteServer } from 'vite';
-import nodemailer from 'nodemailer';
 import path from 'path';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
@@ -14,6 +12,18 @@ import {
   getAssignedCourierIdFromOrder,
   P0FirestoreLike,
 } from './src/server/p0Security';
+import {
+  createNodemailerTransportFromConfig,
+  createP1EmailAndConfigService,
+  evaluateEmailEncryptionSecret,
+  extractClientIp,
+  normalizeSmtpFromAddress,
+  P1EmailAndConfigService,
+  P1FirestoreLike,
+  resolveTrustProxySetting,
+  sanitizeSmtpConfigForApi,
+  SentEmailRecord,
+} from './src/server/p1EmailAndConfig';
 
 const envPath = path.resolve(process.cwd(), '.env');
 if (fs.existsSync(envPath)) {
@@ -25,6 +35,8 @@ if (fs.existsSync(envPath)) {
 console.log('[SERVER INIT] Gmail SMTP User configuré:', (process.env.GMAIL_SMTP_USER || process.env.SMTP_USER) ? 'OUI' : 'NON');
 
 export const app = express();
+// Configure Express trust proxy for Firebase App Hosting / Cloud Run / GFE reverse proxy hops
+app.set('trust proxy', resolveTrustProxySetting());
 // In AI Studio and Cloud Run environments, DEFAULT_APP_PORT is 3000, while PORT=8080 is reserved for Nginx.
 // Always bind the Express/Vite app to port 3000 unless specified via CLI flag --port.
 let cliPort: number | null = null;
@@ -69,9 +81,30 @@ interface RateLimitRecord {
   resetAt: number;
 }
 const ipRateLimits = new Map<string, RateLimitRecord>();
+const MAX_IP_RATE_LIMIT_ENTRIES = 5000;
+
+const pruneIpRateLimits = (nowMs = Date.now()) => {
+  for (const [key, entry] of ipRateLimits.entries()) {
+    if (nowMs > entry.resetAt) {
+      ipRateLimits.delete(key);
+    }
+  }
+  if (ipRateLimits.size > MAX_IP_RATE_LIMIT_ENTRIES) {
+    const excess = ipRateLimits.size - MAX_IP_RATE_LIMIT_ENTRIES;
+    const keys = ipRateLimits.keys();
+    for (let i = 0; i < excess; i++) {
+      const next = keys.next();
+      if (next.done) break;
+      ipRateLimits.delete(next.value);
+    }
+  }
+};
 
 const checkIpRateLimit = (ip: string, maxRequests: number, windowMs: number): { allowed: boolean; remaining: number } => {
   const now = Date.now();
+  if (ipRateLimits.size >= MAX_IP_RATE_LIMIT_ENTRIES) {
+    pruneIpRateLimits(now);
+  }
   const record = ipRateLimits.get(ip);
   if (!record || now > record.resetAt) {
     ipRateLimits.set(ip, { count: 1, resetAt: now + windowMs });
@@ -84,13 +117,7 @@ const checkIpRateLimit = (ip: string, maxRequests: number, windowMs: number): { 
   return { allowed: true, remaining: maxRequests - record.count };
 };
 
-const getClientIp = (req: Request): string => {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim();
-  }
-  return req.socket.remoteAddress || '127.0.0.1';
-};
+const getClientIp = (req: Request): string => extractClientIp(req);
 
 // Global API rate limiting middleware: max 120 calls per 60s per visitor IP
 app.use('/api', (req, res, next) => {
@@ -539,145 +566,40 @@ const getP0Security = (req?: Request): P0SecurityService | null => {
   return cachedP0Security;
 };
 
-export interface SentEmailRecord {
-  id: string;
-  dedupKey?: string;
-  type: 'welcome' | 'password_reset_request' | 'password_changed_confirmation' | 'priority_mission' | 'custom' | 'kyc_submitted' | 'kyc_approved' | 'kyc_rejected';
-  eventType?: string;
-  to: string;
-  recipientName: string;
-  recipientRole?: string;
-  subject: string;
-  previewText: string;
-  htmlContent: string;
-  status?: 'sent' | 'queued' | 'failed';
-  retryCount?: number;
-  lastError?: string;
-  sentAt: string;
-  deliveredViaSmtp: boolean;
+export type { SentEmailRecord };
+
+let cachedP1EmailService: P1EmailAndConfigService | null = null;
+let testP1EmailServiceOverride: P1EmailAndConfigService | null = null;
+
+export function setP1EmailServiceForTests(service: P1EmailAndConfigService | null): void {
+  if (process.env.NODE_ENV === 'test') {
+    testP1EmailServiceOverride = service;
+  }
 }
 
-const sentEmailsHistory: SentEmailRecord[] = [];
-const processedEmailDedupKeys = new Map<string, number>();
-
-const recordSentEmail = async (record: Omit<SentEmailRecord, 'id' | 'sentAt'> & { id?: string; sentAt?: string }): Promise<SentEmailRecord> => {
-  const item: SentEmailRecord = {
-    ...record,
-    id: record.id || `mail_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-    sentAt: record.sentAt || new Date().toISOString(),
-    status: record.status || (record.deliveredViaSmtp ? 'sent' : 'queued'),
-    retryCount: record.retryCount ?? (record.deliveredViaSmtp ? 0 : 1),
-  };
-
-  if (item.dedupKey) {
-    processedEmailDedupKeys.set(item.dedupKey, Date.now());
+const getP1EmailService = (): P1EmailAndConfigService => {
+  if (process.env.NODE_ENV === 'test' && testP1EmailServiceOverride) {
+    return testP1EmailServiceOverride;
   }
-
-  const existingIdx = sentEmailsHistory.findIndex(e => e.id === item.id);
-  if (existingIdx !== -1) {
-    sentEmailsHistory[existingIdx] = item;
-  } else {
-    sentEmailsHistory.unshift(item);
-    if (sentEmailsHistory.length > 100) {
-      sentEmailsHistory.pop();
-    }
+  if (!cachedP1EmailService) {
+    cachedP1EmailService = createP1EmailAndConfigService(
+      firestoreAdmin ? (firestoreAdmin as unknown as P1FirestoreLike) : null
+    );
   }
-
-  if (firestoreAdmin) {
-    try {
-      await firestoreAdmin.collection('email_logs').doc(item.id).set(item, { merge: true });
-    } catch (fsErr: any) {
-      console.warn('[FIRESTORE EMAIL LOG WARN]:', fsErr?.message);
-    }
-  }
-
-  return item;
+  return cachedP1EmailService;
 };
 
-// Dynamic runtime configuration for Gmail SMTP (updatable via Admin Console)
-const activeSmtpConfig = {
-  host: process.env.GMAIL_SMTP_HOST || process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.GMAIL_SMTP_PORT || process.env.SMTP_PORT || '587', 10),
-  user: process.env.GMAIL_SMTP_USER || process.env.SMTP_USER || 'Pamphile.gbede@gmail.com',
-  pass: process.env.GMAIL_SMTP_PASS || process.env.SMTP_PASS || '',
-  from: process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink Sécurité <Pamphile.gbede@gmail.com>',
-};
-
-/**
- * Configure Gmail SMTP Transporter
- * Gmail Relay: smtp.gmail.com:587 (STARTTLS)
- */
-const getGmailTransporter = () => {
-  const host = activeSmtpConfig.host || 'smtp.gmail.com';
-  const port = Number(activeSmtpConfig.port) || 587;
-  const user = activeSmtpConfig.user;
-  const pass = activeSmtpConfig.pass;
-
-  if (user && pass) {
-    return nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465, // false for 587 (STARTTLS)
-      auth: {
-        user,
-        pass,
-      },
-    });
-  }
-  return null;
-};
-
-/**
- * Background retry worker: Processes any emails marked as 'queued' (retry count <= 3)
- */
-const processQueuedEmails = async (): Promise<{ processedCount: number; successCount: number }> => {
-  const transporter = getGmailTransporter();
-  if (!transporter) return { processedCount: 0, successCount: 0 };
-
-  const queuedItems = sentEmailsHistory.filter(e => e.status === 'queued' && (e.retryCount || 0) < 3);
-  let successCount = 0;
-
-  for (const item of queuedItems) {
-    try {
-      const rawFrom = activeSmtpConfig.from || 'LivraLink <Pamphile.gbede@gmail.com>';
-      await transporter.sendMail({
-        from: rawFrom.replace(/\\"/g, '').trim(),
-        to: item.to,
-        subject: item.subject,
-        text: `${item.previewText}\n\nOuvrez l'application LivraLink pour plus de détails.`,
-        html: item.htmlContent,
-      });
-
-      item.deliveredViaSmtp = true;
-      item.status = 'sent';
-      item.lastError = undefined;
-
-      await recordSentEmail(item);
-      successCount++;
-      console.log(`[QUEUE RETRY SUCCESS] E-mail (${item.id}) transmis avec succès à ${item.to}`);
-    } catch (retryErr: any) {
-      item.retryCount = (item.retryCount || 0) + 1;
-      item.lastError = retryErr?.message || 'Échec de tentative SMTP.';
-      if (item.retryCount >= 3) {
-        item.status = 'failed';
-      }
-      await recordSentEmail(item);
-      console.warn(`[QUEUE RETRY FAIL] E-mail (${item.id}) - Tentative ${item.retryCount}/3: ${item.lastError}`);
-    }
-  }
-
-  return { processedCount: queuedItems.length, successCount };
-};
-
-// Periodic queue processor & expired security docs cleanup (outside test mode)
+// Periodic queue processor, bounded cache pruning & expired docs cleanup (outside test mode)
 if (process.env.NODE_ENV !== 'test') {
   const queueTimer = setInterval(() => {
-    processQueuedEmails().catch(() => {});
+    getP1EmailService().processEmailQueue({ forceImmediate: false }).catch(() => {});
   }, 45 * 1000);
   if (typeof queueTimer.unref === 'function') queueTimer.unref();
 
   const cleanupTimer = setInterval(() => {
+    pruneIpRateLimits();
     getP0Security()?.cleanupExpiredSecurityDocs(25).catch(() => {});
+    getP1EmailService().cleanupExpiredP1Docs(25).catch(() => {});
   }, 10 * 60 * 1000);
   if (typeof cleanupTimer.unref === 'function') cleanupTimer.unref();
 }
@@ -692,10 +614,12 @@ const getAppPublicBaseUrl = (req?: Request): string => {
   if (trimmed && /^https?:\/\/.+/i.test(trimmed) && !trimmed.includes('MY_APP_URL')) {
     return trimmed.replace(/\/+$/, '');
   }
-  const host = req?.get?.('host');
-  if (host && !host.includes('127.0.0.1') && !host.includes('localhost')) {
-    const proto = (req?.headers?.['x-forwarded-proto'] as string)?.split(',')[0]?.trim() || req?.protocol || 'https';
-    return `${proto}://${host}`;
+  const resolvedHost = req?.hostname && !req.hostname.includes('127.0.0.1') && !req.hostname.includes('localhost')
+    ? req.hostname
+    : req?.get?.('host');
+  if (resolvedHost && !resolvedHost.includes('127.0.0.1') && !resolvedHost.includes('localhost')) {
+    const proto = req?.protocol || 'https';
+    return `${proto}://${resolvedHost}`;
   }
   return 'https://livralink.oxy-dev.cc';
 };
@@ -756,13 +680,15 @@ app.post('/api/auth/send-reset-code', async (req: Request, res: Response): Promi
       return;
     }
 
-    const transporter = getGmailTransporter();
+    const p1 = getP1EmailService();
+    const smtpConfig = await p1.getEffectiveSmtpConfig();
+    const transporter = createNodemailerTransportFromConfig(smtpConfig);
     if (!transporter) {
-      console.warn('[GMAIL SMTP] Identifiants SMTP (GMAIL_SMTP_USER / GMAIL_SMTP_PASS ou SMTP_USER / SMTP_PASS) non configurés.');
+      console.warn('[GMAIL SMTP] Identifiants SMTP (GMAIL_SMTP_USER / GMAIL_SMTP_PASS ou config Firestore) non configurés.');
       res.status(503).json({
         success: false,
         emailDelivered: false,
-        error: 'Serveur SMTP Gmail non configuré. Veuillez vérifier les variables d\'environnement du serveur (GMAIL_SMTP_USER / GMAIL_SMTP_PASS).',
+        error: 'Serveur SMTP Gmail non configuré. Veuillez vérifier les paramètres SMTP du serveur (GMAIL_SMTP_USER / GMAIL_SMTP_PASS).',
       });
       return;
     }
@@ -796,12 +722,7 @@ app.post('/api/auth/send-reset-code', async (req: Request, res: Response): Promi
     let smtpErrorMessage = '';
 
     try {
-      const rawFrom =
-        activeSmtpConfig.from ||
-        process.env.GMAIL_SMTP_FROM ||
-        process.env.SMTP_FROM ||
-        'LivraLink Sécurité <Pamphile.gbede@gmail.com>';
-      const fromAddress = rawFrom.replace(/\\"/g, '').trim();
+      const fromAddress = normalizeSmtpFromAddress(smtpConfig.from, 'LivraLink Sécurité <Pamphile.gbede@gmail.com>');
 
       await transporter.sendMail({
         from: fromAddress,
@@ -873,7 +794,7 @@ app.post('/api/auth/send-reset-code', async (req: Request, res: Response): Promi
       return;
     }
 
-    await recordSentEmail({
+    await p1.recordEmailLog({
       type: 'password_reset_request',
       to: cleanEmail,
       recipientName: cleanEmail.split('@')[0],
@@ -1054,9 +975,6 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response): Promis
       }
     }
 
-    // Send confirmation email
-    const transporter = getGmailTransporter();
-    let confirmationDelivered = false;
     const confirmHtml = `
       <div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); color: #0f172a;">
         <div style="background-color: #0f172a; padding: 24px; text-align: center;">
@@ -1086,37 +1004,23 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response): Promis
       </div>
     `;
 
-    if (transporter) {
-      try {
-        const rawFrom = process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink Sécurité <Pamphile.gbede@gmail.com>';
-        await transporter.sendMail({
-          from: rawFrom.replace(/\\"/g, '').trim(),
-          to: cleanEmail,
-          subject: '🔐 LivraLink : Confirmation de modification de votre mot de passe',
-          text: `Bonjour,\n\nLe mot de passe de votre compte LivraLink a été modifié avec succès.\n\nSi vous n'êtes pas l'auteur de ce changement, contactez le support.`,
-          html: confirmHtml,
-        });
-        confirmationDelivered = true;
-        console.log(`[GMAIL SMTP] E-mail de confirmation mot de passe envoyé à ${cleanEmail}`);
-      } catch (mailErr: any) {
-        console.error('[GMAIL SMTP ERROR] Échec de l\'envoi confirmation:', mailErr.message);
-      }
-    }
-
-    await recordSentEmail({
+    // Send confirmation email (uses shared Firestore SMTP config & durable retry queue on failure)
+    const p1 = getP1EmailService();
+    const dispatchRes = await p1.dispatchOrQueueEmail({
       type: 'password_changed_confirmation',
       to: cleanEmail,
       recipientName: cleanEmail.split('@')[0],
       subject: '🔐 LivraLink : Confirmation de modification de votre mot de passe',
       previewText: 'Votre mot de passe a été mis à jour avec succès.',
+      textContent: `Bonjour,\n\nLe mot de passe de votre compte LivraLink a été modifié avec succès.\n\nSi vous n'êtes pas l'auteur de ce changement, contactez le support.`,
       htmlContent: confirmHtml,
-      deliveredViaSmtp: confirmationDelivered,
+      allowQueue: true,
     });
 
     res.json({
       success: true,
       firebaseAuthUpdated,
-      emailDelivered: confirmationDelivered,
+      emailDelivered: dispatchRes.emailDelivered,
       message: 'Votre mot de passe a été mis à jour avec succès. Un e-mail de confirmation vous a été envoyé.',
     });
   } catch (error: any) {
@@ -1322,41 +1226,24 @@ const handleWelcomeEmailRequest = async (req: AuthenticatedRequest, res: Respons
       </div>
     `;
 
-    const transporter = getGmailTransporter();
-    let emailDelivered = false;
-
-    if (transporter) {
-      try {
-        const rawFrom = process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink <Pamphile.gbede@gmail.com>';
-        await transporter.sendMail({
-          from: rawFrom.replace(/\\"/g, '').trim(),
-          to: cleanEmail,
-          subject,
-          text: `Bienvenue sur LivraLink, ${cleanName} !\n\nVotre compte ${roleLabel} a été créé avec succès.\nIdentifiant: ${cleanEmail}`,
-          html: htmlContent,
-        });
-        emailDelivered = true;
-        console.log(`[GMAIL SMTP] E-mail de bienvenue envoyé avec succès à ${cleanEmail}`);
-      } catch (mailErr: any) {
-        console.error('[GMAIL SMTP ERROR] Échec de l\'envoi de bienvenue:', mailErr.message);
-      }
-    }
-
-    const emailRecord = await recordSentEmail({
+    const p1 = getP1EmailService();
+    const dispatchRes = await p1.dispatchOrQueueEmail({
       type: 'welcome',
       to: cleanEmail,
       recipientName: cleanName,
       recipientRole: role || 'vendeur',
       subject,
       previewText,
+      textContent: `Bienvenue sur LivraLink, ${cleanName} !\n\nVotre compte ${roleLabel} a été créé avec succès.\nIdentifiant: ${cleanEmail}`,
       htmlContent,
-      deliveredViaSmtp: emailDelivered,
+      allowQueue: true,
     });
 
     res.json({
       success: true,
-      emailDelivered,
-      emailId: emailRecord.id,
+      emailDelivered: dispatchRes.emailDelivered,
+      queued: dispatchRes.queued,
+      emailId: dispatchRes.emailRecord.id,
       message: `E-mail de bienvenue envoyé avec succès à ${cleanEmail}`,
     });
   } catch (error: any) {
@@ -1417,39 +1304,23 @@ app.post('/api/email/password-changed', requireAuthenticatedUser as any, async (
       </div>
     `;
 
-    const transporter = getGmailTransporter();
-    let emailDelivered = false;
-
-    if (transporter) {
-      try {
-        const rawFrom = process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink Sécurité <Pamphile.gbede@gmail.com>';
-        await transporter.sendMail({
-          from: rawFrom.replace(/\\"/g, '').trim(),
-          to: cleanEmail,
-          subject,
-          text: `Bonjour ${cleanName},\n\nVotre mot de passe LivraLink a été modifié le ${new Date().toLocaleDateString('fr-FR')}.\n\nSi vous n'êtes pas à l'origine de cette action, prévenez immédiatement le support.`,
-          html: htmlContent,
-        });
-        emailDelivered = true;
-      } catch (err: any) {
-        console.error('[GMAIL SMTP ERROR] Confirmation mot de passe:', err.message);
-      }
-    }
-
-    const emailRecord = await recordSentEmail({
+    const p1 = getP1EmailService();
+    const dispatchRes = await p1.dispatchOrQueueEmail({
       type: 'password_changed_confirmation',
       to: cleanEmail,
       recipientName: cleanName,
       subject,
       previewText,
+      textContent: `Bonjour ${cleanName},\n\nVotre mot de passe LivraLink a été modifié le ${new Date().toLocaleDateString('fr-FR')}.\n\nSi vous n'êtes pas à l'origine de cette action, prévenez immédiatement le support.`,
       htmlContent,
-      deliveredViaSmtp: emailDelivered,
+      allowQueue: true,
     });
 
     res.json({
       success: true,
-      emailDelivered,
-      emailId: emailRecord.id,
+      emailDelivered: dispatchRes.emailDelivered,
+      queued: dispatchRes.queued,
+      emailId: dispatchRes.emailRecord.id,
       message: `Notification de changement de mot de passe envoyée à ${cleanEmail}`,
     });
   } catch (error: any) {
@@ -1529,41 +1400,24 @@ app.post('/api/email/kyc-approved', requireAdminAuthorization as any, async (req
       </div>
     `;
 
-    const transporter = getGmailTransporter();
-    let emailDelivered = false;
-
-    if (transporter) {
-      try {
-        const rawFrom = process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink <Pamphile.gbede@gmail.com>';
-        await transporter.sendMail({
-          from: rawFrom.replace(/\\"/g, '').trim(),
-          to: cleanEmail,
-          subject,
-          text: `${subject}\n\nBonjour ${cleanName},\nStatus KYC: ${isApproved ? 'VALIDÉ / ACTIVÉ' : 'REJETÉ / ACTION REQUISE'}`,
-          html: htmlContent,
-        });
-        emailDelivered = true;
-        console.log(`[GMAIL SMTP] Email KYC envoyé à ${cleanEmail}`);
-      } catch (mailErr: any) {
-        console.error('[GMAIL SMTP ERROR] Échec email KYC:', mailErr.message);
-      }
-    }
-
-    const emailRecord = await recordSentEmail({
+    const p1 = getP1EmailService();
+    const dispatchRes = await p1.dispatchOrQueueEmail({
       type: isApproved ? 'kyc_approved' : 'kyc_rejected',
       to: cleanEmail,
       recipientName: cleanName,
       recipientRole: role || 'livreur',
       subject,
       previewText,
+      textContent: `${subject}\n\nBonjour ${cleanName},\nStatus KYC: ${isApproved ? 'VALIDÉ / ACTIVÉ' : 'REJETÉ / ACTION REQUISE'}`,
       htmlContent,
-      deliveredViaSmtp: emailDelivered,
+      allowQueue: true,
     });
 
     res.json({
       success: true,
-      emailDelivered,
-      emailId: emailRecord.id,
+      emailDelivered: dispatchRes.emailDelivered,
+      queued: dispatchRes.queued,
+      emailId: dispatchRes.emailRecord.id,
       message: `Email KYC traité avec succès pour ${cleanEmail}`,
     });
   } catch (error: any) {
@@ -1620,37 +1474,25 @@ app.post('/api/email/kyc-submitted', requireAuthenticatedUser as any, async (req
       </div>
     `;
 
-    const transporter = getGmailTransporter();
-    let emailDelivered = false;
-
-    if (transporter) {
-      try {
-        const rawFrom = process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink <Pamphile.gbede@gmail.com>';
-        await transporter.sendMail({
-          from: rawFrom.replace(/\\"/g, '').trim(),
-          to: cleanEmail,
-          subject,
-          text: `Dossier KYC reçu.\n\nBonjour ${cleanName},\nVotre dossier KYC (${idType} #${idNumber}) a bien été transmis.`,
-          html: htmlContent,
-        });
-        emailDelivered = true;
-      } catch (mailErr: any) {
-        console.error('[GMAIL SMTP ERROR] Échec email KYC submission:', mailErr.message);
-      }
-    }
-
-    const emailRecord = await recordSentEmail({
+    const p1 = getP1EmailService();
+    const dispatchRes = await p1.dispatchOrQueueEmail({
       type: 'kyc_submitted',
       to: cleanEmail,
       recipientName: cleanName,
       recipientRole: role || 'livreur',
       subject,
       previewText,
+      textContent: `Dossier KYC reçu.\n\nBonjour ${cleanName},\nVotre dossier KYC (${idType} #${idNumber}) a bien été transmis.`,
       htmlContent,
-      deliveredViaSmtp: emailDelivered,
+      allowQueue: true,
     });
 
-    res.json({ success: true, emailDelivered, emailId: emailRecord.id });
+    res.json({
+      success: true,
+      emailDelivered: dispatchRes.emailDelivered,
+      queued: dispatchRes.queued,
+      emailId: dispatchRes.emailRecord.id,
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: 'Erreur lors de l\'enregistrement KYC.' });
   }
@@ -1724,39 +1566,23 @@ app.post('/api/email/priority-mission', requireVerifiedUser as any, async (req: 
       </div>
     `;
 
-    const transporter = getGmailTransporter();
-    let emailDelivered = false;
-
-    if (transporter) {
-      try {
-        const rawFrom = process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink Dispatch <Pamphile.gbede@gmail.com>';
-        await transporter.sendMail({
-          from: rawFrom.replace(/\\"/g, '').trim(),
-          to: cleanEmail,
-          subject,
-          text: `Mission prioritaire ${orderId} disponible pour ${cleanName}. Gain: ${feeFCFA} FCFA.`,
-          html: htmlContent,
-        });
-        emailDelivered = true;
-      } catch (err: any) {
-        console.error('[GMAIL SMTP ERROR] Mission email:', err.message);
-      }
-    }
-
-    const emailRecord = await recordSentEmail({
+    const p1 = getP1EmailService();
+    const dispatchRes = await p1.dispatchOrQueueEmail({
       type: 'priority_mission',
       to: cleanEmail,
       recipientName: cleanName,
       subject,
       previewText,
+      textContent: `Mission prioritaire ${orderId} disponible pour ${cleanName}. Gain: ${feeFCFA} FCFA.`,
       htmlContent,
-      deliveredViaSmtp: emailDelivered,
+      allowQueue: true,
     });
 
     res.json({
       success: true,
-      emailDelivered,
-      emailId: emailRecord.id,
+      emailDelivered: dispatchRes.emailDelivered,
+      queued: dispatchRes.queued,
+      emailId: dispatchRes.emailRecord.id,
       message: `Notification de mission envoyée à ${cleanEmail}`,
     });
   } catch (error: any) {
@@ -1832,10 +1658,16 @@ app.post('/api/email/notification', requireVerifiedUser as any, async (req: Auth
     const cleanName = (recipientName || cleanEmail.split('@')[0]).trim().slice(0, 100);
     const safeName = escapeHtml(cleanName);
 
-    // Durable anti-doublons key check
+    // Durable cross-instance anti-duplicate key check in Firestore
+    const p1 = getP1EmailService();
     const dedupKey = req.body?.dedupKey || (d.orderId ? `${d.orderId}:${eventType}` : `${cleanEmail}:${eventType}:${new Date().toISOString().slice(0, 10)}`);
 
-    if (processedEmailDedupKeys.has(dedupKey)) {
+    const dedupClaim = await p1.claimEmailDedupKey({
+      dedupKey,
+      eventType: typeof eventType === 'string' ? eventType : 'custom',
+      recipientEmail: cleanEmail,
+    });
+    if (!dedupClaim.allowed) {
       console.log(`[DEDUP BLOCKED] Notification déjà envoyée pour la clé: ${dedupKey}`);
       res.json({
         success: true,
@@ -2061,27 +1893,7 @@ app.post('/api/email/notification', requireVerifiedUser as any, async (req: Auth
       </div>
     `;
 
-    const transporter = getGmailTransporter();
-    let emailDelivered = false;
-
-    if (transporter) {
-      try {
-        const rawFrom = process.env.GMAIL_SMTP_FROM || process.env.SMTP_FROM || 'LivraLink <Pamphile.gbede@gmail.com>';
-        await transporter.sendMail({
-          from: rawFrom.replace(/\\"/g, '').trim(),
-          to: cleanEmail,
-          subject,
-          text: `${previewText}\n\nOuvrez l'application LivraLink pour plus de détails.`,
-          html: fullHtml,
-        });
-        emailDelivered = true;
-        console.log(`[AUTOMATED NOTIFICATION] E-mail (${eventType}) transmis avec succès via Gmail SMTP à ${cleanEmail}`);
-      } catch (mailErr: any) {
-        console.error(`[AUTOMATED NOTIFICATION ERROR] Échec envoi (${eventType}):`, mailErr.message);
-      }
-    }
-
-    const emailRecord = await recordSentEmail({
+    const dispatchRes = await p1.dispatchOrQueueEmail({
       type: emailCategory,
       eventType,
       dedupKey,
@@ -2089,16 +1901,16 @@ app.post('/api/email/notification', requireVerifiedUser as any, async (req: Auth
       recipientName: cleanName,
       subject,
       previewText,
+      textContent: `${previewText}\n\nOuvrez l'application LivraLink pour plus de détails.`,
       htmlContent: fullHtml,
-      deliveredViaSmtp: emailDelivered,
-      status: emailDelivered ? 'sent' : 'queued',
-      retryCount: emailDelivered ? 0 : 1,
+      allowQueue: true,
     });
 
     res.json({
       success: true,
-      emailDelivered,
-      emailId: emailRecord.id,
+      emailDelivered: dispatchRes.emailDelivered,
+      queued: dispatchRes.queued,
+      emailId: dispatchRes.emailRecord.id,
       eventType,
       dedupKey,
       message: `Notification e-mail (${eventType}) traitée pour ${cleanEmail}`,
@@ -2114,38 +1926,21 @@ app.post('/api/email/notification', requireVerifiedUser as any, async (req: Auth
  * Returns the history of sent emails from Firestore or memory.
  */
 app.get('/api/email/outbox', requireAdminAuthorization as any, async (_req: Request, res: Response) => {
-  if (firestoreAdmin) {
-    try {
-      const snap = await firestoreAdmin.collection('email_logs').orderBy('sentAt', 'desc').limit(100).get();
-      if (!snap.empty) {
-        const firestoreLogs = snap.docs.map(doc => doc.data() as SentEmailRecord);
-        res.json({
-          success: true,
-          total: firestoreLogs.length,
-          emails: firestoreLogs,
-          source: 'firestore',
-        });
-        return;
-      }
-    } catch (fsErr: any) {
-      console.warn('[FIRESTORE OUTBOX WARN]:', fsErr?.message);
-    }
-  }
-
+  const { emails, source } = await getP1EmailService().listEmailOutbox(100);
   res.json({
     success: true,
-    total: sentEmailsHistory.length,
-    emails: sentEmailsHistory.slice(0, 50),
-    source: 'memory',
+    total: emails.length,
+    emails,
+    source,
   });
 });
 
 /**
  * POST /api/admin/email/process-queue
- * Manually triggers retry processor for queued email messages
+ * Manually triggers retry processor for persisted Firestore email queue jobs
  */
 app.post('/api/admin/email/process-queue', requireAdminAuthorization as any, async (_req: Request, res: Response) => {
-  const result = await processQueuedEmails();
+  const result = await getP1EmailService().processEmailQueue({ forceImmediate: true });
   res.json({
     success: true,
     message: `File d'attente traitée : ${result.successCount}/${result.processedCount} message(s) réexpédié(s) avec succès.`,
@@ -2155,65 +1950,62 @@ app.post('/api/admin/email/process-queue', requireAdminAuthorization as any, asy
 
 /**
  * POST /api/email/clear-outbox
- * Resets the in-memory outbox history. Protected by Super-Admin authorization.
+ * Clears email log history from Firestore and local memory. Protected by Super-Admin authorization.
  */
-app.post('/api/email/clear-outbox', requireAdminAuthorization as any, (_req: Request, res: Response) => {
-  sentEmailsHistory.length = 0;
-  res.json({ success: true, message: 'Boîte d\'envoi réinitialisée par l\'administrateur.' });
+app.post('/api/email/clear-outbox', requireAdminAuthorization as any, async (_req: Request, res: Response) => {
+  const result = await getP1EmailService().clearEmailOutbox(200);
+  res.json({
+    success: true,
+    clearedCount: result.clearedCount,
+    message: 'Boîte d\'envoi réinitialisée par l\'administrateur.',
+  });
 });
 
 /**
  * GET /api/admin/email/config
- * Retrieves the active SMTP parameters (sanitizing password details)
+ * Retrieves the shared SMTP parameters (strictly sanitizing password / encrypted secret details)
  */
-app.get('/api/admin/email/config', requireAdminAuthorization as any, (_req: Request, res: Response) => {
+app.get('/api/admin/email/config', requireAdminAuthorization as any, async (_req: Request, res: Response) => {
+  const p1 = getP1EmailService();
+  const effective = await p1.getEffectiveSmtpConfig();
+  const secretState = evaluateEmailEncryptionSecret();
   res.json({
     success: true,
-    config: {
-      host: activeSmtpConfig.host,
-      port: activeSmtpConfig.port,
-      user: activeSmtpConfig.user,
-      from: activeSmtpConfig.from,
-      hasPassword: Boolean(activeSmtpConfig.pass),
-      secure: activeSmtpConfig.port === 465,
-      isConfigured: Boolean(activeSmtpConfig.user && activeSmtpConfig.pass),
-    },
+    config: sanitizeSmtpConfigForApi(effective, {
+      persistence: firestoreAdmin ? 'firestore' : 'env_only',
+      encryptionReady: secretState.valid,
+    }),
   });
 });
 
 /**
  * POST /api/admin/email/config
- * Updates active SMTP parameters dynamically at runtime
+ * Persists shared SMTP parameters across all instances with AES-256-GCM encryption for password
  */
-app.post('/api/admin/email/config', requireAdminAuthorization as any, (req: Request, res: Response) => {
+app.post('/api/admin/email/config', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
   const { host, port, user, pass, from } = req.body || {};
+  const saveResult = await getP1EmailService().saveSmtpConfig({
+    host,
+    port,
+    user,
+    pass,
+    from,
+    updatedBy: req.user?.email || req.user?.uid || 'admin',
+  });
 
-  if (host && typeof host === 'string') activeSmtpConfig.host = host.trim();
-  if (port) activeSmtpConfig.port = parseInt(String(port), 10) || 587;
-  if (user && typeof user === 'string') activeSmtpConfig.user = user.trim();
-  if (pass && typeof pass === 'string' && pass.trim() !== '') activeSmtpConfig.pass = pass.trim();
-  if (from && typeof from === 'string') activeSmtpConfig.from = from.trim();
+  if (!saveResult.ok) {
+    return res.status(saveResult.status).json({
+      success: false,
+      error: saveResult.error,
+    });
+  }
 
-  // Sync with process.env
-  process.env.GMAIL_SMTP_HOST = activeSmtpConfig.host;
-  process.env.GMAIL_SMTP_PORT = String(activeSmtpConfig.port);
-  process.env.GMAIL_SMTP_USER = activeSmtpConfig.user;
-  if (pass && pass.trim() !== '') process.env.GMAIL_SMTP_PASS = activeSmtpConfig.pass;
-  process.env.GMAIL_SMTP_FROM = activeSmtpConfig.from;
-
-  console.log(`[SMTP CONFIG UPDATED] Hôte: ${activeSmtpConfig.host}:${activeSmtpConfig.port} | User: ${activeSmtpConfig.user} | From: ${activeSmtpConfig.from}`);
+  console.log(`[SMTP CONFIG UPDATED] Hôte: ${saveResult.config.host}:${saveResult.config.port} | User: ${saveResult.config.user} | Persistence: ${saveResult.config.persistence}`);
 
   res.json({
     success: true,
-    message: 'Paramètres Gmail SMTP mis à jour avec succès.',
-    config: {
-      host: activeSmtpConfig.host,
-      port: activeSmtpConfig.port,
-      user: activeSmtpConfig.user,
-      from: activeSmtpConfig.from,
-      hasPassword: Boolean(activeSmtpConfig.pass),
-      isConfigured: Boolean(activeSmtpConfig.user && activeSmtpConfig.pass),
-    },
+    message: 'Paramètres Gmail SMTP enregistrés et partagés entre instances avec succès.',
+    config: saveResult.config,
   });
 });
 
@@ -2340,7 +2132,7 @@ app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: A
     const nowEpoch = Date.now();
     const nowIso = new Date(nowEpoch).toISOString();
     const nowTimeStr = new Date(nowEpoch).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-    const transporter = (validChannel === 'email' || validChannel === 'both') ? getGmailTransporter() : null;
+    const p1 = getP1EmailService();
 
     // Dispatch individual notifications to Firestore /notifications collection with recipientId
     for (const target of targetUsers) {
@@ -2372,7 +2164,7 @@ app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: A
         }
       }
 
-      // Dispatch individual emails via Gmail SMTP if requested and email is present
+      // Dispatch individual emails via shared SMTP / persistent retry queue if requested and email is present
       if ((validChannel === 'email' || validChannel === 'both') && target.email) {
         try {
           const emailSubject = `📢 LivraLink : ${cleanTitle}`;
@@ -2392,29 +2184,17 @@ app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: A
             </div>
           `;
 
-          let deliveredViaSmtp = false;
-          if (transporter) {
-            const rawFrom = activeSmtpConfig.from || process.env.GMAIL_SMTP_FROM || 'LivraLink <Pamphile.gbede@gmail.com>';
-            await transporter.sendMail({
-              from: rawFrom.replace(/\\"/g, '').trim(),
-              to: target.email,
-              subject: emailSubject,
-              text: `${cleanTitle}\n\n${cleanMessage}\n\n— Direction LivraLink Bénin`,
-              html: emailHtml,
-            });
-            deliveredViaSmtp = true;
-          }
-
-          await recordSentEmail({
+          const dispatchRes = await p1.dispatchOrQueueEmail({
             type: 'custom',
             to: target.email,
             recipientName: target.fullName || target.email.split('@')[0],
             subject: emailSubject,
             previewText: cleanMessage.slice(0, 150),
+            textContent: `${cleanTitle}\n\n${cleanMessage}\n\n— Direction LivraLink Bénin`,
             htmlContent: emailHtml,
-            deliveredViaSmtp,
+            allowQueue: true,
           });
-          if (deliveredViaSmtp) {
+          if (dispatchRes.emailDelivered) {
             successEmailCount++;
           }
         } catch (mErr: any) {
@@ -2501,20 +2281,23 @@ app.get('/api/admin/announcements', requireAdminAuthorization as any, async (_re
 app.post('/api/admin/email/test-smtp', requireAdminAuthorization as any, async (req: Request, res: Response): Promise<void> => {
   const startTime = Date.now();
   const { sendTestEmail, targetEmail } = req.body || {};
-  const transporter = getGmailTransporter();
+  const p1 = getP1EmailService();
+  const smtpConfig = await p1.getEffectiveSmtpConfig();
+  const secretState = evaluateEmailEncryptionSecret();
+  const sanitizedCfg = sanitizeSmtpConfigForApi(smtpConfig, {
+    persistence: firestoreAdmin ? 'firestore' : 'env_only',
+    encryptionReady: secretState.valid,
+  });
+  const transporter = createNodemailerTransportFromConfig(smtpConfig);
 
   if (!transporter) {
     res.status(503).json({
       success: false,
       verified: false,
-      error: 'Identifiants Gmail SMTP non configurés. Veuillez renseigner l\'e-mail Gmail et le mot de passe d\'application dans les paramètres.',
-      config: {
-        host: activeSmtpConfig.host,
-        port: activeSmtpConfig.port,
-        user: activeSmtpConfig.user,
-        from: activeSmtpConfig.from,
-        hasPassword: Boolean(activeSmtpConfig.pass),
-      },
+      error:
+        smtpConfig.decryptionError ||
+        'Identifiants Gmail SMTP non configurés. Veuillez renseigner l\'e-mail Gmail et le mot de passe d\'application dans les paramètres.',
+      config: sanitizedCfg,
     });
     return;
   }
@@ -2528,16 +2311,15 @@ app.post('/api/admin/email/test-smtp', requireAdminAuthorization as any, async (
 
     const recipient = (targetEmail && typeof targetEmail === 'string' && targetEmail.includes('@'))
       ? targetEmail.trim()
-      : activeSmtpConfig.user || 'Pamphile.gbede@gmail.com';
+      : smtpConfig.user || 'Pamphile.gbede@gmail.com';
 
     if (sendTestEmail !== false) {
       try {
-        const rawFrom = activeSmtpConfig.from || 'LivraLink Test SMTP <Pamphile.gbede@gmail.com>';
         await transporter.sendMail({
-          from: rawFrom.replace(/\\"/g, '').trim(),
+          from: normalizeSmtpFromAddress(smtpConfig.from, 'LivraLink Test SMTP <Pamphile.gbede@gmail.com>'),
           to: recipient,
           subject: '🧪 LivraLink : Test de connexion Gmail SMTP réussi !',
-          text: `Bonjour,\n\nCe message confirme que la connexion SMTP avec ${activeSmtpConfig.host} (port ${activeSmtpConfig.port}) fonctionne parfaitement.\n\nLatence : ${latencyMs}ms\nDate : ${new Date().toLocaleString('fr-FR')}`,
+          text: `Bonjour,\n\nCe message confirme que la connexion SMTP avec ${smtpConfig.host} (port ${smtpConfig.port}) fonctionne parfaitement.\n\nLatence : ${latencyMs}ms\nDate : ${new Date().toLocaleString('fr-FR')}`,
           html: `
             <div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif; max-width: 560px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
               <div style="background-color: #0f172a; padding: 24px; text-align: center; color: white;">
@@ -2547,12 +2329,12 @@ app.post('/api/admin/email/test-smtp', requireAdminAuthorization as any, async (
               <div style="padding: 28px 24px; color: #0f172a;">
                 <h2 style="font-size: 18px; font-weight: 800; margin: 0 0 12px 0; color: #0f172a;">Connexion Gmail SMTP Établie avec Succès 🚀</h2>
                 <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 20px 0;">
-                  Le backend Express de LivraLink a établi une liaison sécurisée avec le relais <strong>${activeSmtpConfig.host}:${activeSmtpConfig.port}</strong>.
+                  Le backend Express de LivraLink a établi une liaison sécurisée avec le relais <strong>${escapeHtml(smtpConfig.host)}:${smtpConfig.port}</strong>.
                 </p>
                 <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 16px; font-size: 13px; color: #334155;">
-                  <p style="margin: 4px 0;"><strong>Hôte SMTP :</strong> ${activeSmtpConfig.host}</p>
-                  <p style="margin: 4px 0;"><strong>Port :</strong> ${activeSmtpConfig.port} (${activeSmtpConfig.port === 465 ? 'SSL' : 'STARTTLS'})</p>
-                  <p style="margin: 4px 0;"><strong>Expéditeur :</strong> ${activeSmtpConfig.from}</p>
+                  <p style="margin: 4px 0;"><strong>Hôte SMTP :</strong> ${escapeHtml(smtpConfig.host)}</p>
+                  <p style="margin: 4px 0;"><strong>Port :</strong> ${smtpConfig.port} (${smtpConfig.port === 465 ? 'SSL' : 'STARTTLS'})</p>
+                  <p style="margin: 4px 0;"><strong>Expéditeur :</strong> ${escapeHtml(smtpConfig.from)}</p>
                   <p style="margin: 4px 0; color: #16a34a;"><strong>Latence handshake :</strong> ${latencyMs} ms</p>
                 </div>
               </div>
@@ -2563,7 +2345,7 @@ app.post('/api/admin/email/test-smtp', requireAdminAuthorization as any, async (
           `,
         });
         messageSent = true;
-        await recordSentEmail({
+        await p1.recordEmailLog({
           type: 'custom',
           to: recipient,
           recipientName: 'Administrateur',
@@ -2585,14 +2367,8 @@ app.post('/api/admin/email/test-smtp', requireAdminAuthorization as any, async (
       messageSent,
       recipient,
       testEmailError: testEmailError || undefined,
-      config: {
-        host: activeSmtpConfig.host,
-        port: activeSmtpConfig.port,
-        user: activeSmtpConfig.user,
-        from: activeSmtpConfig.from,
-        hasPassword: Boolean(activeSmtpConfig.pass),
-      },
-      message: `Connexion Gmail SMTP (${activeSmtpConfig.host}:${activeSmtpConfig.port}) vérifiée avec succès en ${latencyMs}ms.`,
+      config: sanitizedCfg,
+      message: `Connexion Gmail SMTP (${smtpConfig.host}:${smtpConfig.port}) vérifiée avec succès en ${latencyMs}ms.`,
     });
   } catch (verifyErr: any) {
     const errorMsg = verifyErr?.message || 'Échec de connexion au serveur Gmail SMTP.';
@@ -2601,13 +2377,7 @@ app.post('/api/admin/email/test-smtp', requireAdminAuthorization as any, async (
       success: false,
       verified: false,
       error: `Échec du test de connexion SMTP : ${errorMsg}`,
-      config: {
-        host: activeSmtpConfig.host,
-        port: activeSmtpConfig.port,
-        user: activeSmtpConfig.user,
-        from: activeSmtpConfig.from,
-        hasPassword: Boolean(activeSmtpConfig.pass),
-      },
+      config: sanitizedCfg,
     });
   }
 });
@@ -2671,7 +2441,8 @@ app.get('/api/security/audit', requireAdminAuthorization as any, (_req: Request,
       },
       rateLimiting: {
         active: true,
-        ipTracking: 'IN_MEMORY_SLIDING_WINDOW',
+        trustProxy: 'APP_HOSTING_INTERNAL_PROXY',
+        ipTracking: 'BOUNDED_SLIDING_WINDOW',
         authEndpointsSecured: ['/api/auth/send-reset-code', '/api/auth/verify-reset-code', '/api/auth/reset-password'],
       },
       authIntegrity: {
@@ -2681,6 +2452,9 @@ app.get('/api/security/audit', requireAdminAuthorization as any, (_req: Request,
         resetTokens: 'FIRESTORE_ATOMIC_SINGLE_USE_32BYTES',
         hmacSecretConfigured: evaluateHmacSecretConfig().valid,
         minHmacSecretLength: MIN_OTP_HMAC_SECRET_LENGTH,
+        emailEncryptionReady: evaluateEmailEncryptionSecret().valid,
+        smtpConfigPersistence: firestoreAdmin ? 'FIRESTORE_AES256_GCM_SHARED' : 'ENV_ONLY',
+        emailQueuePersistence: firestoreAdmin ? 'FIRESTORE_LEASE_LOCKED' : 'IN_MEMORY_FALLBACK',
         payoutProviderMode: 'SIMULATOR_DEFAULT_NO_LIVE_AGGREGATOR',
         rateLimitPerEmailSeconds: 60,
         maxVerifyAttempts: 3,
@@ -3943,6 +3717,7 @@ async function startServer() {
     });
   } else {
     console.log('[SERVER] Mode Développement actif - Démarrage du middleware Vite.');
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
         middlewareMode: true,

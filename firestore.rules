@@ -636,6 +636,23 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Internal P1 configuration, email queue, outbox logs & dedup (Admin SDK only, zero client access)
+    match /system_config/{configId} {
+      allow read, write: if false;
+    }
+
+    match /email_logs/{emailId} {
+      allow read, write: if false;
+    }
+
+    match /email_queue/{jobId} {
+      allow read, write: if false;
+    }
+
+    match /email_dedup/{dedupId} {
+      allow read, write: if false;
+    }
+
     // Financial audit ledger: written exclusively by Admin SDK transactions
     match /wallet_transactions/{txId} {
       allow get, list: if hasVerifiedEmail() && (resource.data.uid == request.auth.uid || isAdmin());

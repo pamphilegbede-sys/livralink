@@ -18,3 +18,8 @@ env:
     secret: OTP_SECRET_SALT
     availability:
       - RUNTIME
+# Secrets RUNTIME optionnels recommandés dans Google Cloud Secret Manager (délivrer via
+# `firebase apphosting:secrets:set <NOM>` et accorder l'accès au backend App Hosting avant d'activer) :
+# - EMAIL_ENCRYPTION_SECRET (>= 32 caractères ; sinon OTP_SECRET_SALT dérive la clé AES-256-GCM SMTP via HKDF)
+# - GMAIL_SMTP_USER / GMAIL_SMTP_PASS (repli serveur si la configuration SMTP partagée Firestore n'est pas définie)
+

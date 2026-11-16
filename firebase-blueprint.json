@@ -9,7 +9,7 @@
         "email": { "type": "string", "format": "email", "maxLength": 128, "description": "Adresse email du compte" },
         "fullName": { "type": "string", "maxLength": 128, "description": "Nom complet ou nom du responsable" },
         "phone": { "type": "string", "maxLength": 32, "description": "Numéro de téléphone / WhatsApp" },
-        "role": { "type": "string", "enum": ["vendeur", "livreur", "admin"], "description": "Rôle métier" },
+        "role": { "type": "string", "enum": ["client", "vendeur", "livreur", "admin"], "description": "Rôle métier" },
         "avatarUrl": { "type": "string", "maxLength": 1000, "description": "Photo de profil ou logo" },
         "storeName": { "type": "string", "maxLength": 128, "description": "Nom commercial du vendeur" },
         "storeCommune": { "type": "string", "maxLength": 128, "description": "Commune du magasin" },
@@ -144,6 +144,82 @@
         "status": { "type": "string", "enum": ["complete", "partial", "failed"], "description": "Statut de distribution" }
       },
       "required": ["id", "title", "message", "audience", "channel", "sentBy"]
+    },
+    "PriorityMission": {
+      "title": "PriorityMission",
+      "description": "Mission prioritaire disponible pour les livreurs accrédités KYC.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "orderId": { "type": "string", "maxLength": 64 },
+        "merchantId": { "type": "string", "maxLength": 128 },
+        "courierId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["en_attente", "assignee", "acceptee", "colis_recupere", "en_cours", "livree", "echec"] },
+        "fee": { "type": "number" },
+        "cod": { "type": "number" }
+      },
+      "required": ["id", "orderId", "merchantId", "status", "fee"]
+    },
+    "WalletTransaction": {
+      "title": "WalletTransaction",
+      "description": "Grand livre immuable des transactions financières écrit exclusivement par le serveur.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "amountFCFA": { "type": "number" },
+        "status": { "type": "string" }
+      },
+      "required": ["uid", "amountFCFA", "status"]
+    },
+    "SystemSmtpConfig": {
+      "title": "SystemSmtpConfig",
+      "description": "Configuration SMTP partagée inter-instances (mot de passe chiffré AES-256-GCM uniquement, accès serveur exclusif).",
+      "type": "object",
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "number" },
+        "user": { "type": "string" },
+        "from": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["host", "port", "user", "from"]
+    },
+    "EmailQueueJob": {
+      "title": "EmailQueueJob",
+      "description": "Tâche persistante d'expédition d'e-mail avec verrou d'exécution distribué (accès serveur exclusif).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "to": { "type": "string", "format": "email" },
+        "subject": { "type": "string" },
+        "status": { "type": "string", "enum": ["queued", "processing", "sent", "failed"] },
+        "retryCount": { "type": "number" }
+      },
+      "required": ["id", "to", "subject", "status", "retryCount"]
+    },
+    "EmailLogRecord": {
+      "title": "EmailLogRecord",
+      "description": "Journal des e-mails expédiés ou mis en file d'attente (accès serveur exclusif).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "to": { "type": "string", "format": "email" },
+        "subject": { "type": "string" },
+        "status": { "type": "string", "enum": ["sent", "queued", "failed"] },
+        "sentAt": { "type": "string" }
+      },
+      "required": ["id", "to", "subject", "sentAt"]
+    },
+    "EmailDedupKey": {
+      "title": "EmailDedupKey",
+      "description": "Clé de déduplication distribuée anti-doublon d'e-mails (accès serveur exclusif).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "dedupKey": { "type": "string" },
+        "expiresAt": { "type": "number" }
+      },
+      "required": ["id", "dedupKey", "expiresAt"]
     }
   },
   "firestore": {
@@ -154,6 +230,10 @@
     "/deliveries/{deliveryId}": {
       "schema": "DeliveryOrder",
       "description": "Commandes et expéditions gérées."
+    },
+    "/priority_missions/{missionId}": {
+      "schema": "PriorityMission",
+      "description": "Missions prioritaires publiées pour les coursiers vérifiés KYC."
     },
     "/admins/{adminId}": {
       "schema": "AdminUser",
@@ -178,6 +258,26 @@
     "/announcements/{announcementId}": {
       "schema": "BroadcastAnnouncement",
       "description": "Historique des annonces officielles diffusées."
+    },
+    "/wallet_transactions/{txId}": {
+      "schema": "WalletTransaction",
+      "description": "Journal financier immuable écrit par le backend Admin SDK."
+    },
+    "/system_config/{configId}": {
+      "schema": "SystemSmtpConfig",
+      "description": "Configuration système chiffrée partagée entre instances (accès serveur exclusif)."
+    },
+    "/email_logs/{emailId}": {
+      "schema": "EmailLogRecord",
+      "description": "Historique centralisé des e-mails (accès serveur exclusif)."
+    },
+    "/email_queue/{jobId}": {
+      "schema": "EmailQueueJob",
+      "description": "File d'attente persistante et verrouillée des e-mails (accès serveur exclusif)."
+    },
+    "/email_dedup/{dedupId}": {
+      "schema": "EmailDedupKey",
+      "description": "Verrous de déduplication e-mail inter-instances (accès serveur exclusif)."
     }
   }
 }

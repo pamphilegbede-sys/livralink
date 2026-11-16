@@ -1069,6 +1069,10 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
       ['pod_otp_tokens', 'ptok_a'],
       ['payout_idempotency', 'idem_1'],
       ['payout_user_locks', 'courier_w1'],
+      ['system_config', 'smtp'],
+      ['email_logs', 'mail_1'],
+      ['email_queue', 'job_1'],
+      ['email_dedup', 'dedup_1'],
     ]) {
       await assertFails(c1Db.collection(col).doc(id).get());
       await assertFails(c1Db.collection(col).doc(id).set({ tampered: true }));
