@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { sendEmailVerification } from 'firebase/auth';
+import { auth } from '../../firebase/config';
 import { useApp } from '../../context/AppContext';
 import { KYCUserRequest } from '../../types';
 
@@ -26,26 +28,32 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
   const {
     userProfile,
     firebaseUser,
-    courierSettings,
     selectedCourier,
     kycRequests,
     submitKYCRequest,
     showToast,
   } = useApp();
 
-  const activeCourierName =
-    userProfile?.fullName || courierSettings.fullName || selectedCourier?.name || '';
-  const activeCourierPhone =
-    userProfile?.phone || courierSettings.phone || selectedCourier?.phone || '';
-  const activeCourierId = userProfile?.uid || firebaseUser?.uid || selectedCourier?.id || '';
+  const activeCourierId = userProfile?.uid || firebaseUser?.uid || '';
 
-  // Find existing KYC submission for this courier
-  const existingKyc = kycRequests.find(
-    (k) =>
-      k.courierId === activeCourierId ||
-      (activeCourierName && k.fullName.toLowerCase() === activeCourierName.toLowerCase()) ||
-      (activeCourierPhone && k.phone === activeCourierPhone)
+  // Strict UID matching only (never match by name or phone)
+  const existingKyc = activeCourierId
+    ? kycRequests.find((k) => k.courierId === activeCourierId)
+    : undefined;
+
+  const isSelectedCourierSelf = Boolean(activeCourierId && selectedCourier?.id === activeCourierId);
+  const currentStatus: 'non_soumis' | 'en_attente' | 'valide' | 'refuse' =
+    existingKyc?.status ||
+    userProfile?.kycStatus ||
+    (isSelectedCourierSelf && selectedCourier?.isKycVerified ? 'valide' : 'non_soumis');
+
+  const isSubmissionLocked = currentStatus === 'en_attente' || currentStatus === 'valide';
+
+  const [emailVerified, setEmailVerified] = useState<boolean>(
+    Boolean(auth.currentUser?.emailVerified ?? firebaseUser?.emailVerified)
   );
+  const [isCheckingEmail, setIsCheckingEmail] = useState(false);
+  const [isResendingEmail, setIsResendingEmail] = useState(false);
 
   // POINT 1: Initialisation VIDE si nouveau formulaire (aucun préremplissage automatique)
   // Conservé uniquement si un dossier/brouillon KYC existe déjà.
@@ -79,20 +87,90 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    setEmailVerified(Boolean(auth.currentUser?.emailVerified ?? firebaseUser?.emailVerified));
+    setLastName(existingKyc?.lastName || '');
+    setFirstName(existingKyc?.firstName || '');
+    setPhone(existingKyc?.phone || '');
+    setOperatingZone(existingKyc?.operatingZone || '');
+    setNpi(existingKyc?.npi || '');
+    setIdType(existingKyc?.idType || 'CIP');
+    setIdNumber(existingKyc?.idNumber || '');
+    setIfuNumber(existingKyc?.ifuNumber || '');
+    const vType = existingKyc?.vehicleType || '';
+    const known = BENIN_VEHICLE_OPTIONS.includes(vType);
+    setVehicleSelect(vType ? (known ? vType : 'Autre engin (préciser)') : BENIN_VEHICLE_OPTIONS[0]);
+    setCustomVehicle(vType && !known ? vType : '');
+    setVehiclePlate(existingKyc?.vehiclePlate || '');
+    setPhotoPreview(existingKyc?.documentPhotoUrl || null);
+  }, [isOpen, existingKyc, firebaseUser?.emailVerified]);
+
   if (!isOpen) return null;
 
-  const currentStatus = existingKyc?.status || (selectedCourier?.isKycVerified ? 'valide' : 'non_soumis');
-
-  const handleSimulatePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPhotoPreview(reader.result as string);
-        showToast('Photo de la pièce d\'identité importée avec succès !', 'success');
-      };
-      reader.readAsDataURL(file);
+  const handleResendVerificationEmail = async () => {
+    if (!auth.currentUser) {
+      showToast('Session Firebase requise pour renvoyer le lien de vérification.', 'error');
+      return;
     }
+    setIsResendingEmail(true);
+    try {
+      await sendEmailVerification(auth.currentUser);
+      showToast('E-mail de vérification envoyé. Consultez votre boîte de réception (et spams).', 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Impossible d\'envoyer l\'e-mail de vérification pour le moment.', 'error');
+    } finally {
+      setIsResendingEmail(false);
+    }
+  };
+
+  const handleRefreshVerificationStatus = async () => {
+    if (!auth.currentUser) {
+      showToast('Session Firebase introuvable.', 'error');
+      return;
+    }
+    setIsCheckingEmail(true);
+    try {
+      await auth.currentUser.reload();
+      await auth.currentUser.getIdToken(true);
+      const verified = Boolean(auth.currentUser.emailVerified);
+      setEmailVerified(verified);
+      if (verified) {
+        showToast('Adresse e-mail vérifiée ! Vous pouvez maintenant soumettre votre dossier KYC.', 'success');
+      } else {
+        showToast('E-mail pas encore confirmé. Cliquez sur le lien reçu dans votre boîte mail.', 'info');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Erreur lors de la vérification du statut e-mail.', 'error');
+    } finally {
+      setIsCheckingEmail(false);
+    }
+  };
+
+  const handleDocumentPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const isAllowedType = file.type.startsWith('image/') || file.type === 'application/pdf';
+    if (!isAllowedType) {
+      showToast('Format non supporté. Importez une image (JPG, PNG, WebP) ou un document PDF.', 'error');
+      e.target.value = '';
+      return;
+    }
+
+    const maxBytes = 10 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      showToast('Le fichier dépasse la taille maximale autorisée de 10 Mo.', 'error');
+      e.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setPhotoPreview(reader.result as string);
+      showToast('Document d\'identité importé avec succès !', 'success');
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -100,6 +178,21 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
     if (!activeCourierId) {
       showToast('Authentification requise pour soumettre votre dossier KYC.', 'error');
+      return;
+    }
+
+    if (!emailVerified) {
+      showToast('Veuillez vérifier votre adresse e-mail avant de soumettre votre dossier KYC.', 'error');
+      return;
+    }
+
+    if (currentStatus === 'en_attente') {
+      showToast('Votre dossier est déjà en cours d\'examen par l\'administrateur.', 'info');
+      return;
+    }
+
+    if (currentStatus === 'valide') {
+      showToast('Votre dossier KYC est déjà validé.', 'info');
       return;
     }
 
@@ -233,7 +326,39 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
         </div>
 
         {/* Status Callout Banner */}
-        <div className="p-4 sm:p-5 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800 shrink-0">
+        <div className="p-4 sm:p-5 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800 shrink-0 space-y-3">
+          {!emailVerified && (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200 text-xs">
+              <div className="flex items-start gap-2.5">
+                <span className="material-symbols-outlined text-amber-600 text-xl shrink-0">mark_email_unread</span>
+                <div>
+                  <p className="font-bold">Vérification d'adresse e-mail requise</p>
+                  <p className="text-[11px] text-amber-900 dark:text-amber-300 mt-0.5">
+                    Confirmez votre adresse e-mail avant d'envoyer vos pièces justificatives.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleResendVerificationEmail}
+                  disabled={isResendingEmail}
+                  className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] disabled:opacity-50 cursor-pointer"
+                >
+                  {isResendingEmail ? 'Envoi...' : 'Renvoyer le lien'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRefreshVerificationStatus}
+                  disabled={isCheckingEmail}
+                  className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-amber-300 text-amber-900 dark:text-amber-200 font-bold text-[11px] disabled:opacity-50 cursor-pointer"
+                >
+                  {isCheckingEmail ? 'Vérif...' : "J'ai vérifié"}
+                </button>
+              </div>
+            </div>
+          )}
+
           {currentStatus === 'valide' ? (
             <div className="flex items-center gap-3 p-3 rounded-2xl bg-emerald-100/80 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 text-xs">
               <span className="material-symbols-outlined text-emerald-600 text-2xl shrink-0">check_circle</span>
@@ -250,7 +375,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
               <div className="flex-1">
                 <p className="font-bold">Dossier KYC en cours d'examen par l'administrateur</p>
                 <p className="text-[11px] text-amber-900 dark:text-amber-300 mt-0.5">
-                  Seul un administrateur habilité peut étudier et valider votre dossier d'accréditation.
+                  Votre dossier est verrouillé pendant la vérification. Vous serez notifié dès la décision de l'administrateur.
                 </p>
               </div>
             </div>
@@ -474,36 +599,49 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
             <div className="flex flex-col sm:flex-row items-center gap-4">
               {photoPreview ? (
-                <div className="relative w-full sm:w-48 h-32 rounded-xl overflow-hidden border-2 border-emerald-500 shadow-xs shrink-0 bg-slate-100">
-                  <img
-                    src={photoPreview}
-                    alt="Aperçu pièce d'identité"
-                    className="w-full h-full object-cover"
-                  />
-                  <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/70 text-white text-[9px] font-bold">
-                    ✓ Chargée
-                  </span>
-                </div>
+                photoPreview.startsWith('data:application/pdf') ? (
+                  <div className="relative w-full sm:w-48 h-32 rounded-xl overflow-hidden border-2 border-emerald-500 shadow-xs shrink-0 bg-emerald-50 dark:bg-emerald-950/40 flex flex-col items-center justify-center p-3 text-center">
+                    <span className="material-symbols-outlined text-3xl text-emerald-600">picture_as_pdf</span>
+                    <span className="text-[11px] font-bold text-emerald-900 dark:text-emerald-200 mt-1">
+                      Document PDF chargé
+                    </span>
+                    <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/70 text-white text-[9px] font-bold">
+                      ✓ Chargé
+                    </span>
+                  </div>
+                ) : (
+                  <div className="relative w-full sm:w-48 h-32 rounded-xl overflow-hidden border-2 border-emerald-500 shadow-xs shrink-0 bg-slate-100">
+                    <img
+                      src={photoPreview}
+                      alt="Aperçu pièce d'identité"
+                      className="w-full h-full object-cover"
+                    />
+                    <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/70 text-white text-[9px] font-bold">
+                      ✓ Chargée
+                    </span>
+                  </div>
+                )
               ) : (
                 <div className="w-full sm:w-48 h-32 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center text-slate-400 shrink-0">
                   <span className="material-symbols-outlined text-2xl">add_photo_alternate</span>
-                  <span className="text-[10px] mt-1">Photo requise</span>
+                  <span className="text-[10px] mt-1">Photo ou PDF requis</span>
                 </div>
               )}
 
               <div className="space-y-2 flex-1 w-full">
                 <p className="text-slate-500 dark:text-slate-400 text-[11px] leading-relaxed">
-                  Prenez une photo nette et lisible de votre pièce d'identité (CIP, CNI ou passeport). Les 4 coins du document doivent être visibles.
+                  Importez une photo nette et lisible de votre pièce d'identité (CIP, CNI ou passeport) ou un PDF (max 10 Mo). Les 4 coins du document doivent être visibles.
                 </p>
 
                 <div className="flex items-center gap-2 flex-wrap">
-                  <label className="px-3 py-1.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 hover:bg-slate-100 rounded-xl text-slate-700 dark:text-slate-200 font-bold text-xs cursor-pointer shadow-2xs transition-colors inline-flex items-center gap-1.5">
+                  <label className={`px-3 py-1.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 hover:bg-slate-100 rounded-xl text-slate-700 dark:text-slate-200 font-bold text-xs shadow-2xs transition-colors inline-flex items-center gap-1.5 ${isSubmissionLocked ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}>
                     <span className="material-symbols-outlined text-sm">upload_file</span>
-                    <span>Prendre / Télécharger la photo</span>
+                    <span>Prendre / Télécharger le document</span>
                     <input
                       type="file"
-                      accept="image/*"
-                      onChange={handleSimulatePhotoUpload}
+                      accept="image/*,application/pdf"
+                      disabled={isSubmissionLocked}
+                      onChange={handleDocumentPhotoUpload}
                       className="hidden"
                     />
                   </label>
@@ -518,6 +656,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
               <input
                 type="checkbox"
                 checked={hasInsurance}
+                disabled={isSubmissionLocked}
                 onChange={(e) => setHasInsurance(e.target.checked)}
                 className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500"
               />
@@ -530,6 +669,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
               <input
                 type="checkbox"
                 checked={hasAgreedTerms}
+                disabled={isSubmissionLocked}
                 onChange={(e) => setHasAgreedTerms(e.target.checked)}
                 className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500"
               />
@@ -546,16 +686,24 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
               onClick={onClose}
               className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-bold transition-all"
             >
-              Annuler
+              {isSubmissionLocked ? 'Fermer' : 'Annuler'}
             </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-md shadow-emerald-600/20 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-sm">send</span>
-              <span>{currentStatus === 'en_attente' ? 'Mettre à jour mon dossier' : 'Soumettre mon dossier KYC'}</span>
-            </button>
+            {!isSubmissionLocked && (
+              <button
+                type="submit"
+                disabled={isSubmitting || !emailVerified}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-bold shadow-md shadow-emerald-600/20 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-sm">send</span>
+                <span>
+                  {isSubmitting
+                    ? 'Envoi en cours...'
+                    : currentStatus === 'refuse'
+                    ? 'Re-soumettre mon dossier KYC'
+                    : 'Soumettre mon dossier KYC'}
+                </span>
+              </button>
+            )}
           </div>
         </form>
       </div>

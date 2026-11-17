@@ -1648,6 +1648,7 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
         const d = docSnap.data() || {};
         results.push({
           ...d,
+          userId: d.userId || d.uid || '',
           leaseExpired: status === 'processing' ? now >= Number(d.processingExpiresAt || 0) : false,
         });
       }

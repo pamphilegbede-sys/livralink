@@ -7,34 +7,41 @@ import { BackButton } from '../common/BackButton';
 import { auth } from '../../firebase/config';
 
 export const LivreurWallet: React.FC = () => {
-  const { courierSettings, showToast, couriers, selectedCourier, userProfile, deliveries } = useApp();
+  const {
+    courierSettings,
+    showToast,
+    couriers,
+    selectedCourier,
+    userProfile,
+    deliveries,
+    firebaseUser,
+    isAdminAuthenticated,
+    isUserMasterAdmin,
+  } = useApp();
   const [payoutAmount, setPayoutAmount] = useState('5000');
   const [payoutOperator, setPayoutOperator] = useState<'wave' | 'orange' | 'mtn' | 'moov'>('wave');
   const [isRequesting, setIsRequesting] = useState(false);
 
-  // Trouver le livreur connecté pour isoler strictement son solde
-  const matchingCourier = couriers.find(
-    (c) =>
-      (userProfile?.uid && c.id === userProfile.uid) ||
-      (userProfile?.email && c.email?.toLowerCase() === userProfile.email.toLowerCase()) ||
-      (c.name.toLowerCase() === (userProfile?.fullName || courierSettings.fullName).toLowerCase())
-  ) || (userProfile?.fullName ? undefined : selectedCourier);
+  const activeUid = userProfile?.uid || firebaseUser?.uid || '';
+  const isSupervisory = isAdminAuthenticated && isUserMasterAdmin;
+
+  // Trouver le livreur connecté pour isoler strictement son solde par UID
+  const matchingCourier =
+    (activeUid ? couriers.find((c) => c.id === activeUid) : undefined) ||
+    (isSupervisory ? selectedCourier : undefined);
 
   // Pour un nouveau livreur fraîchement inscrit : solde initial = 0 FCFA (aucune fuite de données d'un autre utilisateur)
   const availableBalance = matchingCourier?.walletBalanceFCFA ?? 0;
 
-  // Calcul dynamique des livraisons de ce livreur
+  // Calcul dynamique des livraisons de ce livreur (par UID uniquement)
   const myDeliveries = deliveries.filter((d) => {
-    if (userProfile?.role === 'livreur') {
-      return (
-        (d.courier && d.courier.id === userProfile.uid) ||
-        (d.courier && userProfile.email && d.courier.email?.toLowerCase() === userProfile.email.toLowerCase()) ||
-        (d.courier && userProfile.fullName && d.courier.name?.toLowerCase() === userProfile.fullName.toLowerCase())
-      );
+    if (activeUid) {
+      return d.courier?.id === activeUid || d.courierId === activeUid;
     }
-    return matchingCourier
-      ? (d.courier?.id === matchingCourier.id || d.courier?.name === matchingCourier.name)
-      : false;
+    if (isSupervisory && matchingCourier?.id) {
+      return d.courier?.id === matchingCourier.id || d.courierId === matchingCourier.id;
+    }
+    return false;
   });
 
   const myCompletedDeliveries = myDeliveries.filter((d) => d.status === 'livree');
@@ -67,10 +74,17 @@ export const LivreurWallet: React.FC = () => {
     }
 
     setIsRequesting(true);
-    const randomSuffix =
-      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID()
-        : `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    let randomSuffix: string;
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      randomSuffix = crypto.randomUUID();
+    } else {
+      const bytes = new Uint8Array(8);
+      if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+        crypto.getRandomValues(bytes);
+      }
+      const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+      randomSuffix = `${Date.now()}_${hex}`;
+    }
     const idempotencyKey = `payout_${authenticatedUid}_${numericAmount}_${randomSuffix}`;
 
     try {

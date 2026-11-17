@@ -232,7 +232,7 @@ export const ForgotPasswordModal: React.FC<{
                     <span>Code &amp; Lien envoyés à :</span>
                   </span>
                   <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full">
-                    Valide 15 min
+                    Valide 10 min
                   </span>
                 </div>
                 <div className="font-semibold text-slate-800 break-all text-[11px] bg-white/80 px-2.5 py-1 rounded-lg border border-blue-100">

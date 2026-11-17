@@ -95,7 +95,7 @@ export const AdminCommunicationsSection: React.FC = () => {
     setShowConfirmModal(false);
 
     try {
-      const success = await sendAdminBroadcast({
+      const res = await sendAdminBroadcast({
         title,
         message,
         audience,
@@ -104,7 +104,7 @@ export const AdminCommunicationsSection: React.FC = () => {
         targetEmail: targetEmail || undefined,
       });
 
-      if (success) {
+      if (res?.success) {
         setTitle('');
         setMessage('');
         setTargetUid('');

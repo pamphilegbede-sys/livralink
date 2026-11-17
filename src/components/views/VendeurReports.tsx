@@ -5,6 +5,7 @@ import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
 import { filterVendorDeliveries, buildVendorDeliveryCsv } from '../../utils/deliveryIsolation';
 import { buildVendorPdfReportBytes } from '../../utils/pdfReportGenerator';
+import { filterItemsByTimeframe } from '../../utils/csvExport';
 
 export const VendeurReports: React.FC = () => {
   const {
@@ -32,17 +33,20 @@ export const VendeurReports: React.FC = () => {
     directorTargetName,
   });
 
-  const totalOrders = merchantDeliveries.length;
-  const deliveredOrders = merchantDeliveries.filter((d) => d.status === 'livree').length;
+  // Filtrage effectif par période sélectionnée (timezone Africa/Porto-Novo)
+  const periodDeliveries = filterItemsByTimeframe(merchantDeliveries, timeRange);
+
+  const totalOrders = periodDeliveries.length;
+  const deliveredOrders = periodDeliveries.filter((d) => d.status === 'livree').length;
   const deliverySuccessRate = totalOrders > 0 ? Math.round((deliveredOrders / totalOrders) * 100) : 0;
-  const totalCODCollected = merchantDeliveries
+  const totalCODCollected = periodDeliveries
     .filter((d) => d.status === 'livree')
     .reduce((sum, d) => sum + (d.itemValueCOD || 0), 0);
-  const totalDeliveryFees = merchantDeliveries
+  const totalDeliveryFees = periodDeliveries
     .reduce((sum, d) => sum + (d.deliveryFee || 0), 0);
 
   // Calcul dynamique des canaux d'acquisition
-  const channelCounts = merchantDeliveries.reduce((acc, d) => {
+  const channelCounts = periodDeliveries.reduce((acc, d) => {
     const channel = d.channel || 'WhatsApp';
     acc[channel] = (acc[channel] || 0) + (d.itemValueCOD || d.deliveryFee || 2000);
     return acc;
@@ -51,7 +55,7 @@ export const VendeurReports: React.FC = () => {
   const totalChannelVolume = Object.values(channelCounts).reduce((a, b) => a + b, 0);
 
   // Calcul dynamique des communes de destination
-  const communeCounts = merchantDeliveries.reduce((acc, d) => {
+  const communeCounts = periodDeliveries.reduce((acc, d) => {
     const commune = d.dropoffLocation?.commune || 'Cotonou';
     acc[commune] = (acc[commune] || 0) + 1;
     return acc;
@@ -77,7 +81,7 @@ export const VendeurReports: React.FC = () => {
         deliverySuccessRate,
         totalCODCollected,
         totalDeliveryFees,
-        deliveries: merchantDeliveries,
+        deliveries: periodDeliveries,
       });
       const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
@@ -88,7 +92,7 @@ export const VendeurReports: React.FC = () => {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      showToast(`Rapport PDF téléchargé (${merchantDeliveries.length} course${merchantDeliveries.length > 1 ? 's' : ''}) !`, 'success');
+      showToast(`Rapport PDF téléchargé (${periodDeliveries.length} course${periodDeliveries.length > 1 ? 's' : ''}) !`, 'success');
     } catch (err: any) {
       showToast(err?.message || 'Erreur lors de la génération du rapport PDF.', 'error');
     }
@@ -97,13 +101,13 @@ export const VendeurReports: React.FC = () => {
   const handleExportExcel = () => {
     const activeUid = userProfile?.uid || firebaseUser?.uid;
     const { csvContent, exportedCount, filename } = buildVendorDeliveryCsv(
-      merchantDeliveries,
+      periodDeliveries,
       activeUid,
       merchantSettings.storeName,
       isAdminAuthenticated || isDirectorModeActive
     );
     if (exportedCount === 0) {
-      showToast('Aucune expédition à exporter pour le moment.', 'info');
+      showToast('Aucune expédition à exporter sur cette période.', 'info');
       return;
     }
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -170,6 +174,13 @@ export const VendeurReports: React.FC = () => {
                   className={`flex-1 sm:flex-initial text-center px-3 py-2 sm:py-1.5 rounded-lg transition-colors ${timeRange === 'month' ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-2xs font-bold' : 'hover:text-slate-900 dark:hover:text-white'}`}
                 >
                   Ce mois
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTimeRange('year')}
+                  className={`flex-1 sm:flex-initial text-center px-3 py-2 sm:py-1.5 rounded-lg transition-colors ${timeRange === 'year' ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-2xs font-bold' : 'hover:text-slate-900 dark:hover:text-white'}`}
+                >
+                  Année
                 </button>
               </div>
 

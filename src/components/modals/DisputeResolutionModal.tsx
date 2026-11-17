@@ -40,11 +40,13 @@ export const DisputeResolutionModal: React.FC<{
         <div className="bg-red-50 p-3.5 rounded-2xl border border-red-200 text-xs space-y-1.5 text-slate-800">
           <div className="flex justify-between">
             <span className="text-slate-500">Expéditeur :</span>
-            <span className="font-bold">{order?.pickupLocation.name || 'Kréa Fashion'}</span>
+            <span className="font-bold">{order?.pickupLocation?.name || 'Boutique non renseignée'}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-slate-500">Coursier sur place :</span>
-            <span className="font-bold">{order?.courier?.name || 'Paul M.'} ({order?.courier?.phone})</span>
+            <span className="font-bold">
+              {order?.courier?.name ? `${order.courier.name}${order.courier.phone ? ` (${order.courier.phone})` : ''}` : 'Non assigné'}
+            </span>
           </div>
           <div className="flex justify-between text-red-700 font-semibold">
             <span>Motif du blocage :</span>

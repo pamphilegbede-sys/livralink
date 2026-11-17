@@ -1,11 +1,23 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { DeliveryOrder } from '../../types';
+import { downloadCsvFile } from '../../utils/csvExport';
 
 export const LivreurDeliveryHistory: React.FC<{
   className?: string;
 }> = ({ className = "" }) => {
-  const { deliveries, courierSettings, userProfile, selectedCourier, setSelectedDelivery, setIsPODModalOpen, showToast } = useApp();
+  const {
+    deliveries,
+    courierSettings,
+    userProfile,
+    selectedCourier,
+    setSelectedDelivery,
+    setIsPODModalOpen,
+    showToast,
+    firebaseUser,
+    isAdminAuthenticated,
+    isUserMasterAdmin,
+  } = useApp();
 
   // Filters state
   const [period, setPeriod] = useState<'toutes' | 'aujourdhui' | '7jours' | '30jours' | 'custom'>('toutes');
@@ -18,31 +30,30 @@ export const LivreurDeliveryHistory: React.FC<{
   // Modal for POD details inspect
   const [inspectPodOrder, setInspectPodOrder] = useState<DeliveryOrder | null>(null);
 
+  const activeUid = userProfile?.uid || firebaseUser?.uid || '';
+  const isSupervisory = isAdminAuthenticated && isUserMasterAdmin;
+
   // Filter completed deliveries specifically belonging to the active courier
   const activeCourierName =
     (userProfile?.role === 'livreur' && userProfile?.fullName) ||
     courierSettings.fullName ||
-    selectedCourier?.name ||
-    'Awa Véloce Livraisons';
+    (isSupervisory ? selectedCourier?.name : '') ||
+    'Coursier';
 
   const rawCompleted = useMemo(() => {
     return deliveries.filter((d) => {
       // Must be completed ('livree')
       if (d.status !== 'livree') return false;
 
-      if (userProfile?.role === 'livreur') {
-        return (
-          d.courier?.id === userProfile.uid ||
-          (d.courier?.email && userProfile.email && d.courier.email.toLowerCase() === userProfile.email.toLowerCase()) ||
-          (d.courier?.name && d.courier.name.toLowerCase() === userProfile.fullName.toLowerCase())
-        );
+      if (activeUid) {
+        return d.courier?.id === activeUid || d.courierId === activeUid;
       }
-      return (
-        (selectedCourier?.id && d.courier?.id === selectedCourier.id) ||
-        (selectedCourier?.name && d.courier?.name === selectedCourier.name)
-      );
+      if (isSupervisory && selectedCourier?.id) {
+        return d.courier?.id === selectedCourier.id || d.courierId === selectedCourier.id;
+      }
+      return false;
     });
-  }, [deliveries, userProfile, courierSettings, selectedCourier]);
+  }, [deliveries, activeUid, isSupervisory, selectedCourier]);
 
   // Apply active filters (date, amount, search, sort)
   const filteredDeliveries = useMemo(() => {
@@ -123,27 +134,24 @@ export const LivreurDeliveryHistory: React.FC<{
       return;
     }
 
-    const headers = ["ID Commande", "Date / Heure", "Client", "Commune Depart", "Commune Arrivee", "Objet", "Montant Gagne (FCFA)", "COD Recouvre (FCFA)", "Preuve POD"];
-    const rows = filteredDeliveries.map(d => [
+    const headers = ['ID Commande', 'Date / Heure', 'Client', 'Commune Depart', 'Commune Arrivee', 'Objet', 'Montant Gagne (FCFA)', 'COD Recouvre (FCFA)', 'Preuve POD'];
+    const rows = filteredDeliveries.map((d) => [
       d.id,
       d.podData?.validatedAt || d.createdAt,
-      `"${d.clientName.replace(/"/g, '""')}"`,
-      `"${d.pickupLocation.commune.replace(/"/g, '""')}"`,
-      `"${d.dropoffLocation.commune.replace(/"/g, '""')}"`,
-      `"${d.itemDescription.replace(/"/g, '""')}"`,
+      d.clientName,
+      d.pickupLocation.commune,
+      d.dropoffLocation.commune,
+      d.itemDescription,
       d.deliveryFee || 0,
       d.itemValueCOD || 0,
-      d.podData ? 'Validée (POD)' : 'Livrée'
+      d.podData ? 'Validée (POD)' : 'Livrée',
     ]);
 
-    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `historique_livraisons_${activeCourierName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsvFile(
+      `historique_livraisons_${activeCourierName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`,
+      headers,
+      rows
+    );
 
     showToast('📈 Export CSV de l\'historique téléchargé avec succès !', 'success');
   };

@@ -29,7 +29,14 @@ export const LivreurSettings: React.FC = () => {
     openKYCModal,
     kycRequests,
     selectedCourier,
+    couriers,
+    firebaseUser,
+    isAdminAuthenticated,
+    isUserMasterAdmin,
   } = useApp();
+
+  const activeUid = userProfile?.uid || firebaseUser?.uid || '';
+  const isSupervisory = isAdminAuthenticated && isUserMasterAdmin;
 
   // Active Tab: 0 = Profil, 1 = Transport & Zones, 2 = Portefeuille, 3 = Notifications & Thème
   const [activeTab, setActiveTab] = useState<0 | 1 | 2 | 3>(0);
@@ -90,7 +97,7 @@ export const LivreurSettings: React.FC = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!validateFields()) {
       showToast('Veuillez corriger les erreurs de saisie.', 'error');
       return;
@@ -114,15 +121,23 @@ export const LivreurSettings: React.FC = () => {
         localStorage.setItem(`livralink_courier_settings_${userProfile.uid}`, JSON.stringify(updated));
       } catch {}
     }
-    if (auth.currentUser && auth.currentUser.emailVerified && userProfile?.uid === auth.currentUser.uid) {
-      updateDoc(doc(db, 'users', auth.currentUser.uid), {
-        fullName: fullName.trim(),
-        phone: phone.trim(),
-        vehicleType,
-        updatedAt: new Date().toISOString(),
-      }).catch((err: any) => {
-        console.warn('Notice synchro profil livreur Firestore:', err?.message || err);
-      });
+
+    if (auth.currentUser && userProfile?.uid === auth.currentUser.uid) {
+      if (!auth.currentUser.emailVerified) {
+        showToast('Paramètres enregistrés localement. Vérifiez votre adresse e-mail pour synchroniser votre profil cloud.', 'info');
+        return;
+      }
+      try {
+        await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+          fullName: fullName.trim(),
+          phone: phone.trim(),
+          vehicleType,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (err: any) {
+        showToast(err?.message ? `Enregistré localement, erreur synchro cloud : ${err.message}` : 'Enregistré localement, erreur lors de la synchronisation Firestore.', 'error');
+        return;
+      }
     }
     showToast('Paramètres Livreur enregistrés avec succès !', 'success');
   };
@@ -170,7 +185,7 @@ export const LivreurSettings: React.FC = () => {
 
     // Test 4: Save & Storage
     try {
-      handleSave();
+      await handleSave();
       results.push({
         id: 'VAL-04',
         name: 'Enregistrement & Rétention des préférences',
@@ -191,12 +206,18 @@ export const LivreurSettings: React.FC = () => {
     showToast('Tests de validation coursier complétés avec succès !', 'success');
   };
 
-  // KYC Evaluation
+  // KYC Evaluation (strictly scoped by UID)
+  const kycTargetId = activeUid || (isSupervisory ? selectedCourier?.id || '' : '');
   const isKycApproved =
-    selectedCourier?.isKycVerified ||
+    (isSupervisory && selectedCourier?.isKycVerified) ||
     userProfile?.isKycVerified ||
     courierSettings.isKycVerified ||
-    kycRequests.some((k) => k.status === 'valide');
+    (kycTargetId
+      ? kycRequests.some((k) => k.courierId === kycTargetId && k.status === 'valide')
+      : false);
+  const matchedCourier =
+    (activeUid ? couriers.find((c) => c.id === activeUid) : undefined) ||
+    (isSupervisory ? selectedCourier : undefined);
 
   return (
     <div className="flex h-full min-h-[100dvh] md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-['Plus_Jakarta_Sans'] transition-colors duration-200">
@@ -240,7 +261,7 @@ export const LivreurSettings: React.FC = () => {
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
-                onClick={handleSave}
+                onClick={() => void handleSave()}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/20 active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
               >
                 <span className="material-symbols-outlined text-base">check</span>
@@ -554,7 +575,7 @@ export const LivreurSettings: React.FC = () => {
                 <div>
                   <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Total Revenus Cumulés (Rapport)</span>
                   <div className="text-2xl font-black text-blue-700 dark:text-blue-400 font-mono">
-                    {(selectedCourier?.walletBalanceFCFA || 0).toLocaleString('fr-FR')} FCFA
+                    {(matchedCourier?.walletBalanceFCFA ?? 0).toLocaleString('fr-FR')} FCFA
                   </div>
                 </div>
                 <div className="flex items-center gap-2">

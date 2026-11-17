@@ -99,7 +99,7 @@ export const VendeurSettings: React.FC = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!validateFields()) {
       showToast('Veuillez corriger les erreurs dans le formulaire.', 'error');
       return;
@@ -132,18 +132,32 @@ export const VendeurSettings: React.FC = () => {
         localStorage.setItem(`livralink_merchant_settings_${userProfile.uid}`, JSON.stringify(updated));
       } catch {}
     }
-    if (auth.currentUser && auth.currentUser.emailVerified && userProfile?.uid === auth.currentUser.uid) {
-      updateDoc(doc(db, 'users', auth.currentUser.uid), {
-        fullName: managerName.trim(),
-        phone: phone.trim(),
-        storeName: storeName.trim(),
-        storeCommune,
-        storeAddress: defaultPickupAddress.trim(),
-        ...(coords ? { storeCoordinates: [coords.lat, coords.lng] } : {}),
-        updatedAt: new Date().toISOString(),
-      }).catch((err: any) => {
-        console.warn('Notice synchro profil vendeur Firestore:', err?.message || err);
-      });
+
+    if (auth.currentUser && userProfile?.uid === auth.currentUser.uid) {
+      if (!auth.currentUser.emailVerified) {
+        showToast(
+          'Préférences enregistrées localement. Vérifiez votre adresse e-mail pour synchroniser votre profil boutique sur Firebase.',
+          'info'
+        );
+        return;
+      }
+      try {
+        await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+          fullName: managerName.trim(),
+          phone: phone.trim(),
+          storeName: storeName.trim(),
+          storeCommune,
+          storeAddress: defaultPickupAddress.trim(),
+          ...(coords ? { storeCoordinates: [coords.lat, coords.lng] } : {}),
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (err: any) {
+        showToast(
+          `Enregistré localement, mais la synchronisation cloud a échoué : ${err?.message || 'erreur Firestore'}.`,
+          'error'
+        );
+        return;
+      }
     }
     showToast('Paramètres Vendeur enregistrés avec succès !', 'success');
   };
@@ -193,7 +207,7 @@ export const VendeurSettings: React.FC = () => {
 
     // Test 4: Save & Storage Persistence
     try {
-      handleSave();
+      await handleSave();
       results.push({
         id: 'VAL-04',
         name: 'Sauvegarde & Rétention des données',

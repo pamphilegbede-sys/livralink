@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp, AdminTab } from '../../context/AppContext';
 import { buildMerchantReportSummaries, formatShortDateFr } from '../../utils/adminReconciliation';
+import { filterItemsByTimeframe } from '../../utils/csvExport';
 
 interface AdminOverviewDashboardProps {
   onNavigateTab?: (tab: AdminTab) => void;
@@ -15,8 +16,6 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
     auditLogs,
     pricingRules,
     setAdminActiveTab,
-    createDelivery,
-    showToast,
     refreshAdminData,
     isSyncingAdminData,
     adminSyncWarnings,
@@ -33,17 +32,22 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
   const [timeframe, setTimeframe] = useState<'today' | '7days' | 'month' | 'all'>('today');
   const [activityFeedFilter, setActivityFeedFilter] = useState<'all' | 'delivery' | 'finance' | 'security' | 'user'>('all');
 
-  // Indicators
+  const filteredDeliveries = useMemo(
+    () => filterItemsByTimeframe(deliveries, timeframe),
+    [deliveries, timeframe]
+  );
+
+  // Indicators (scoped by selected timeframe)
   const activeDeliveries = useMemo(() => {
-    return deliveries.filter(
+    return filteredDeliveries.filter(
       (d) => d.status === 'en_attente' || d.status === 'assignee' || d.status === 'acceptee' || d.status === 'colis_recupere' || d.status === 'en_cours'
     );
-  }, [deliveries]);
+  }, [filteredDeliveries]);
 
-  const pendingDeliveries = useMemo(() => deliveries.filter((d) => d.status === 'en_attente' || d.status === 'assignee'), [deliveries]);
-  const inTransitDeliveries = useMemo(() => deliveries.filter((d) => d.status === 'acceptee' || d.status === 'colis_recupere' || d.status === 'en_cours'), [deliveries]);
-  const deliveredOrders = useMemo(() => deliveries.filter((d) => d.status === 'livree'), [deliveries]);
-  const disputeOrders = useMemo(() => deliveries.filter((d) => d.status === 'echec'), [deliveries]);
+  const pendingDeliveries = useMemo(() => filteredDeliveries.filter((d) => d.status === 'en_attente' || d.status === 'assignee'), [filteredDeliveries]);
+  const inTransitDeliveries = useMemo(() => filteredDeliveries.filter((d) => d.status === 'acceptee' || d.status === 'colis_recupere' || d.status === 'en_cours'), [filteredDeliveries]);
+  const deliveredOrders = useMemo(() => filteredDeliveries.filter((d) => d.status === 'livree'), [filteredDeliveries]);
+  const disputeOrders = useMemo(() => filteredDeliveries.filter((d) => d.status === 'echec'), [filteredDeliveries]);
 
   const podSuccessRate = useMemo(() => {
     const totalFinished = deliveredOrders.length + disputeOrders.length;
@@ -52,12 +56,12 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
   }, [deliveredOrders, disputeOrders]);
 
   const totalVolumeCOD = useMemo(() => {
-    return deliveries.reduce((acc, curr) => acc + (curr.itemValueCOD || 0), 0);
-  }, [deliveries]);
+    return filteredDeliveries.reduce((acc, curr) => acc + (curr.itemValueCOD || 0), 0);
+  }, [filteredDeliveries]);
 
   const totalDeliveryFees = useMemo(() => {
-    return deliveries.reduce((acc, curr) => acc + (curr.deliveryFee || 0), 0);
-  }, [deliveries]);
+    return filteredDeliveries.reduce((acc, curr) => acc + (curr.deliveryFee || 0), 0);
+  }, [filteredDeliveries]);
 
   const totalPlatformCommissions = useMemo(() => {
     const rate = (pricingRules?.commissionRatePercent ?? 0) / 100;
@@ -74,7 +78,7 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
 
   const topCommunes = useMemo(() => {
     const counts: Record<string, { count: number; volume: number }> = {};
-    deliveries.forEach((d) => {
+    filteredDeliveries.forEach((d) => {
       const commune = d.dropoffLocation.commune || 'Cotonou - Centre';
       if (!counts[commune]) counts[commune] = { count: 0, volume: 0 };
       counts[commune].count += 1;
@@ -85,7 +89,7 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
       .map(([commune, data]) => ({ commune, count: data.count, volume: data.volume }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
-  }, [deliveries]);
+  }, [filteredDeliveries]);
 
   const merchantReports = useMemo(() => {
     return buildMerchantReportSummaries(merchants, deliveries);
@@ -158,35 +162,6 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
       .slice(0, 8);
   }, [merchants, deliveries, auditLogs, activityFeedFilter]);
 
-  const handleQuickSimulateCourse = () => {
-    const newCourse = createDelivery({
-      clientName: 'Astride Hounhouigan',
-      clientPhone: '+229 97 45 67 89',
-      channel: 'WhatsApp',
-      pickupLocation: {
-        name: 'Boutique Cotonou Chic',
-        address: 'Rue de la Haie Vive, Cotonou',
-        commune: 'Cotonou - Haie Vive',
-        coordinates: [6.3571, 2.4175],
-      },
-      dropoffLocation: {
-        name: 'Astride Hounhouigan',
-        address: 'Carrefour Kpota, Calavi',
-        commune: 'Abomey-Calavi - Centre',
-        coordinates: [6.4485, 2.3556],
-      },
-      itemDescription: 'Colis Cosmétique & Accessoires',
-      itemWeightKg: 1.2,
-      itemFormat: 'S',
-      isFragile: false,
-      itemValueCOD: 22000,
-      deliveryFee: 2500,
-      status: 'en_attente',
-      statusNote: 'Nouvelle course simulée depuis la supervision',
-    });
-    showToast(`Course ${newCourse.id} créée avec succès !`, 'success');
-  };
-
   return (
     <div className="space-y-6">
       {/* 1. Executive Top Header */}
@@ -226,6 +201,15 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
             </button>
             <button
               type="button"
+              onClick={() => setTimeframe('month')}
+              className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+                timeframe === 'month' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              30 jours
+            </button>
+            <button
+              type="button"
               onClick={() => setTimeframe('all')}
               className={`px-2.5 py-1 rounded-md font-medium transition-all ${
                 timeframe === 'all' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
@@ -244,15 +228,6 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
           >
             <span className={`material-symbols-outlined text-base ${isSyncingAdminData ? 'animate-spin' : ''}`}>sync</span>
             <span>{isSyncingAdminData ? 'Synchro...' : 'Synchroniser'}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleQuickSimulateCourse}
-            className="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs shadow-2xs flex items-center gap-1.5 cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-base">add</span>
-            <span>Simuler course (Test Admin)</span>
           </button>
         </div>
       </section>
@@ -431,7 +406,7 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
                   <div
                     className="bg-blue-600 h-1.5 rounded-full"
                     style={{
-                      width: `${Math.min(100, Math.round((comm.count / Math.max(1, deliveries.length)) * 100))}%`,
+                      width: `${Math.min(100, Math.round((comm.count / Math.max(1, filteredDeliveries.length)) * 100))}%`,
                     }}
                   ></div>
                 </div>

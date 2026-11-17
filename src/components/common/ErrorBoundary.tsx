@@ -23,7 +23,12 @@ export class ErrorBoundary extends Component<Props, State> {
   };
 
   public static getDerivedStateFromError(error: Error): Partial<State> {
-    const errorId = `ERR-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+    const bytes = new Uint8Array(4);
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      crypto.getRandomValues(bytes);
+    }
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+    const errorId = `ERR-${hex}`;
     return { hasError: true, error, errorId };
   }
 

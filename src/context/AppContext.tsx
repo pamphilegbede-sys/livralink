@@ -19,7 +19,32 @@ import {
   AppNotification,
   ChatMessage
 } from '../types';
-import { sendPlatformNotification, sendKycConfirmationEmail, sendKycSubmissionEmail } from '../services/emailService';
+import { sendPlatformNotification, sendKycSubmissionEmail, notifyClientDeliveryOtp } from '../services/emailService';
+
+const secureRandomInt = (min: number, maxExclusive: number): number => {
+  const span = Math.max(1, maxExclusive - min);
+  if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
+    const maxUint32 = 0xffffffff;
+    const limit = maxUint32 - (maxUint32 % span);
+    const buf = new Uint32Array(1);
+    while (true) {
+      window.crypto.getRandomValues(buf);
+      if (buf[0] < limit) {
+        return min + (buf[0] % span);
+      }
+    }
+  }
+  return min;
+};
+
+const secureRandomHex = (bytesLength = 4): string => {
+  if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
+    const bytes = new Uint8Array(bytesLength);
+    window.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  return Date.now().toString(16).slice(-bytesLength * 2);
+};
 import {
   INITIAL_DELIVERIES,
   INITIAL_COURIERS,
@@ -155,11 +180,11 @@ interface AppContextType {
   
   // Interactive Actions
   fetchDeliveries: (vendorUidOverride?: string) => Promise<DeliveryOrder[]>;
-  createDelivery: (newOrder: Partial<DeliveryOrder>) => DeliveryOrder;
+  createDelivery: (newOrder: Partial<DeliveryOrder>, options?: { clientEmail?: string }) => DeliveryOrder;
   acceptDelivery: (orderId: string, customCourier?: Courier) => void | Promise<void>;
   refuseDelivery: (orderId: string, reason?: string) => void;
   updateDeliveryStatus: (orderId: string, newStatus: DeliveryStatus, note?: string, callerRoleOverride?: UserRole) => { success: boolean; reason?: string };
-  assignCourierToDelivery: (orderId: string, courierId: string) => void;
+  assignCourierToDelivery: (orderId: string, courierId: string) => void | Promise<void>;
   validatePOD: (
     orderId: string,
     methodOrData: 'otp' | 'photo' | 'signature' | 'complete_tri_factor' | {
@@ -519,7 +544,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [kycRequests, setKycRequests] = useState<KYCUserRequest[]>(INITIAL_KYC_REQUESTS);
   const [auditLogs, setAuditLogs] = useState<SystemAuditLog[]>(INITIAL_AUDIT_LOGS);
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [pricingRules, setPricingRules] = useState<PricingRule>(PRICING_RULES);
+  const [pricingRules, setPricingRulesState] = useState<PricingRule>(() => {
+    try {
+      const saved = localStorage.getItem('livralink_pricing_rules');
+      if (saved) return { ...PRICING_RULES, ...JSON.parse(saved) };
+    } catch {}
+    return PRICING_RULES;
+  });
+
+  const persistPlatformConfigToServer = React.useCallback(async (patch: {
+    pricingRules?: PricingRule;
+    featureFlags?: PlatformFeatureFlags;
+  }) => {
+    const activeUser = auth.currentUser;
+    if (!activeUser || !activeUser.emailVerified) return;
+    try {
+      const token = await activeUser.getIdToken();
+      await fetch('/api/platform/config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(patch),
+      });
+    } catch (err) {
+      console.warn('Notice persistance config plateforme:', err);
+    }
+  }, []);
+
+  const setPricingRules: React.Dispatch<React.SetStateAction<PricingRule>> = React.useCallback(
+    (updater) => {
+      setPricingRulesState((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        try {
+          localStorage.setItem('livralink_pricing_rules', JSON.stringify(next));
+        } catch {}
+        if (auth.currentUser?.emailVerified) {
+          void persistPlatformConfigToServer({ pricingRules: next });
+        }
+        return next;
+      });
+    },
+    [persistPlatformConfigToServer]
+  );
   
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
 
@@ -609,7 +677,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addNotification = (notif: Omit<AppNotification, 'id' | 'timestamp' | 'isRead'>) => {
     const newNotif: AppNotification = {
       ...notif,
-      id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `notif_${Date.now()}_${secureRandomHex(3)}`,
       timestamp: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
       isRead: false,
     };
@@ -773,7 +841,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       : (courierSettings.fullName || userProfile?.fullName || 'Livreur Partenaire');
 
     const newMsg: ChatMessage = {
-      id: `chat_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `chat_${Date.now()}_${secureRandomHex(3)}`,
       orderId: params.orderId,
       senderId,
       senderName,
@@ -1055,9 +1123,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {}
   }, [featureFlags]);
 
+  useEffect(() => {
+    const activeUser = auth.currentUser;
+    if (!activeUser) return;
+    let cancelled = false;
+    activeUser.getIdToken()
+      .then((token) =>
+        fetch('/api/platform/config', {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+      )
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.success) return;
+        if (data.pricingRules) {
+          setPricingRulesState((prev) => ({ ...prev, ...data.pricingRules }));
+        }
+        if (data.featureFlags) {
+          setFeatureFlags((prev) => ({ ...prev, ...data.featureFlags }));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [firebaseUser?.uid]);
+
   const updateFeatureFlag = <K extends keyof PlatformFeatureFlags>(key: K, value: PlatformFeatureFlags[K]) => {
     setFeatureFlags((prev) => {
       const updated = { ...prev, [key]: value };
+      if (isAdminAuthenticated) {
+        void persistPlatformConfigToServer({ featureFlags: updated });
+      }
       return updated;
     });
     addAuditLog('system', `Modification Fonctionnalité [${String(key)}]`, `Nouvelle valeur appliquée par le directeur admin : ${JSON.stringify(value)}`);
@@ -1066,6 +1163,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const resetFeatureFlagsToDefault = () => {
     setFeatureFlags(DEFAULT_PLATFORM_FEATURE_FLAGS);
+    if (isAdminAuthenticated) {
+      void persistPlatformConfigToServer({ featureFlags: DEFAULT_PLATFORM_FEATURE_FLAGS });
+    }
     addAuditLog('system', `Réinitialisation des Fonctionnalités`, `Toutes les options réinitialisées par le directeur admin`);
     showToast(`Fonctionnalités réinitialisées aux valeurs standard.`, 'success');
   };
@@ -2319,22 +2419,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [deliveries]);
 
   const simulateNewPriorityMission = async () => {
-    const simNum = Math.floor(1000 + Math.random() * 9000);
+    const simNum = secureRandomInt(1000, 10000);
     const simOrderId = `#LL-${simNum}`;
     const cleanDocId = simOrderId.replace(/[^a-zA-Z0-9_-]/g, '');
     const communes = ['Haie Vive', 'Ganhi', 'Cadjehoun', 'Akpakpa', 'Fidjrossè', 'Godomey', 'Calavi'];
-    const pickup = communes[Math.floor(Math.random() * 3)];
-    const dropoff = communes[3 + Math.floor(Math.random() * 4)];
-    const fee = 1800 + Math.floor(Math.random() * 6) * 200; // 1800 - 2800 FCFA
-    const cod = Math.random() > 0.4 ? 12000 + Math.floor(Math.random() * 15) * 1000 : 0;
+    const pickup = communes[secureRandomInt(0, 3)];
+    const dropoff = communes[3 + secureRandomInt(0, 4)];
+    const fee = 1800 + secureRandomInt(0, 6) * 200; // 1800 - 2800 FCFA
+    const cod = secureRandomInt(0, 10) > 3 ? 12000 + secureRandomInt(0, 15) * 1000 : 0;
     const storeNames = ['Mode & Élégance Cotonou', 'TechZone Bénin', 'Parfumerie Divine', 'Pharmacie Haie Vive'];
-    const store = storeNames[Math.floor(Math.random() * storeNames.length)];
+    const store = storeNames[secureRandomInt(0, storeNames.length)];
     const currentMerchantUid = firebaseUser?.uid || userProfile?.uid || 'simulated_admin';
 
     // Create in local deliveries state
     createDelivery({
       clientName: 'Client Express ' + simNum,
-      clientPhone: '+229 97 ' + Math.floor(100000 + Math.random() * 900000),
+      clientPhone: '+229 97 ' + secureRandomInt(100000, 1000000),
       itemDescription: 'Commande Prioritaire VIP',
       deliveryFee: fee,
       itemValueCOD: cod,
@@ -2423,8 +2523,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Session déconnectée avec succès.', 'info');
   };
 
-  const createDelivery = (newOrderData: Partial<DeliveryOrder>): DeliveryOrder => {
-    const randPart = Math.floor(1000 + Math.random() * 9000);
+  const createDelivery = (
+    newOrderData: Partial<DeliveryOrder>,
+    options?: { clientEmail?: string }
+  ): DeliveryOrder => {
+    const randPart = secureRandomInt(1000, 10000);
     const timePart = Date.now().toString(36).toUpperCase().slice(-4);
     const newId = `#LL-${timePart}${randPart}`;
     const calculatedFee = typeof newOrderData.deliveryFee === 'number'
@@ -2487,7 +2590,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         : `Course publiée • Disponible pour tous les livreurs de la zone`),
       createdAt: new Date().toISOString(),
       estimatedArrival: 'Dans ~20 min',
-      otpCode: newOrderData.otpCode || Math.floor(1000 + Math.random() * 9000).toString(),
+      otpCode: newOrderData.otpCode || secureRandomInt(1000, 10000).toString(),
       otpGeneratedAt: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
       merchantId: authenticatedMerchantUid,
       merchantEmail: userProfile?.email || merchantSettings.email,
@@ -2581,6 +2684,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 merchantId: authenticatedMerchantUid,
                 generatedAt: Date.now(),
               });
+              const cleanClientEmail = options?.clientEmail?.trim();
+              if (cleanClientEmail) {
+                const emailRes = await notifyClientDeliveryOtp({
+                  orderId: newId,
+                  clientEmail: cleanClientEmail,
+                  clientName: newOrder.clientName,
+                });
+                if (emailRes.success) {
+                  showToast(emailRes.message || `Code OTP transmis par e-mail à ${cleanClientEmail}.`, 'success');
+                } else {
+                  showToast(emailRes.error || `Course créée, mais échec d'envoi de l'OTP à ${cleanClientEmail}.`, 'info');
+                }
+              }
             }
             if (courierObj?.id && isAdminAuthenticated && initialStatus !== 'en_attente') {
               await setDoc(
@@ -2628,6 +2744,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               if (auth.currentUser?.emailVerified) {
                 handleFirestoreError(err, OperationType.CREATE, `deliveries/${cleanDocId}`);
               }
+            } else {
+              showToast('Erreur réseau/Firestore lors de l\'enregistrement de la course.', 'error');
             }
           });
       } catch (err: any) {
@@ -2708,17 +2826,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
+    const activeCourierUid = userProfile?.uid || authenticatedCourierUid;
     const isKycApproved =
-      customCourier?.isKycVerified ||
-      selectedCourier?.isKycVerified ||
-      userProfile?.isKycVerified ||
-      courierSettings.isKycVerified ||
+      Boolean(customCourier?.isKycVerified && customCourier.id === activeCourierUid) ||
+      Boolean(selectedCourier?.isKycVerified && selectedCourier.id === activeCourierUid) ||
+      Boolean(userProfile?.isKycVerified) ||
+      Boolean(courierSettings.isKycVerified) ||
       kycRequests.some(
-        (k) =>
-          (k.courierId === (userProfile?.uid || selectedCourier?.id) ||
-            k.fullName.toLowerCase() ===
-              (userProfile?.fullName || courierSettings.fullName || selectedCourier?.name || '').toLowerCase()) &&
-          k.status === 'valide'
+        (k) => k.courierId === activeCourierUid && k.status === 'valide'
       );
 
     if (!isKycApproved) {
@@ -3126,7 +3241,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true };
   };
 
-  const assignCourierToDelivery = (orderId: string, courierId: string) => {
+  const assignCourierToDelivery = async (orderId: string, courierId: string) => {
     const activeUid = userProfile?.uid || firebaseUser?.uid;
     const isSupervisory = isAdminAuthenticated || isDirectorModeActive;
     const targetOrder = deliveriesRef.current.find(d => d.id === orderId);
@@ -3136,8 +3251,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
-    const courier = couriers.find(c => c.id === courierId) || couriers[0];
-    if (!courier) return;
+    const courier = couriers.find(c => c.id === courierId);
+    if (!courier) {
+      showToast('Livreur introuvable dans la flotte vérifiée.', 'error');
+      return;
+    }
+
+    if (auth.currentUser) {
+      const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
+      try {
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch(`/api/admin/deliveries/${encodeURIComponent(cleanDocId)}/assign`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ courierId: courier.id }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+          showToast(data.error || 'Impossible d\'assigner ce livreur côté serveur.', 'error');
+          return;
+        }
+      } catch (err: any) {
+        showToast(err?.message || 'Erreur réseau lors de l\'assignation du livreur.', 'error');
+        return;
+      }
+    }
+
     setDeliveries(prev =>
       prev.map(ord => {
         if (ord.id === orderId) {
@@ -3164,25 +3306,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return '';
     }
 
-    const newOtp = Math.floor(1000 + Math.random() * 9000).toString();
+    let newOtp = secureRandomInt(1000, 10000).toString();
     const timestamp = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
     const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
 
     if (auth.currentUser && cleanDocId) {
+      let persistedViaServer = false;
       try {
-        await setDoc(
-          doc(db, 'deliveries', cleanDocId, 'private', 'otp'),
-          {
-            otpCode: newOtp,
-            merchantId: targetOrder.merchantId || activeUid,
-            updatedAt: Date.now(),
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch(`/api/deliveries/${encodeURIComponent(cleanDocId)}/otp`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
           },
-          { merge: true }
-        );
-      } catch (err: any) {
-        console.error('Erreur sauvegarde OTP privé Firestore:', err?.message || err);
-        showToast('Impossible de enregistrer le nouveau code OTP sur Firestore.', 'error');
-        return '';
+          body: JSON.stringify({}),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success && /^\d{4}$/.test(String(data.otpCode || ''))) {
+          newOtp = String(data.otpCode);
+          persistedViaServer = true;
+        }
+      } catch {}
+
+      if (!persistedViaServer) {
+        try {
+          await setDoc(
+            doc(db, 'deliveries', cleanDocId, 'private', 'otp'),
+            {
+              otpCode: newOtp,
+              merchantId: targetOrder.merchantId || activeUid,
+              updatedAt: Date.now(),
+            },
+            { merge: true }
+          );
+        } catch (err: any) {
+          console.error('Erreur sauvegarde OTP privé Firestore:', err?.message || err);
+          showToast('Impossible d\'enregistrer le nouveau code OTP sur Firestore.', 'error');
+          return '';
+        }
       }
     }
 
@@ -3406,18 +3568,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const toggleCourierAvailability = () => {
     // Contrôle KYC obligatoire avant de pouvoir passer en service (En ligne)
+    const activeUid = userProfile?.uid || auth.currentUser?.uid || selectedCourier?.id;
     if (!courierSettings.isAvailable) {
       const isKycApproved =
-        selectedCourier?.isKycVerified ||
-        userProfile?.isKycVerified ||
-        courierSettings.isKycVerified ||
-        kycRequests.some(
-          (k) =>
-            (k.courierId === (userProfile?.uid || selectedCourier?.id) ||
-              k.fullName.toLowerCase() ===
-                (userProfile?.fullName || courierSettings.fullName || selectedCourier?.name || '').toLowerCase()) &&
-            k.status === 'valide'
-        );
+        Boolean(selectedCourier?.isKycVerified && selectedCourier.id === activeUid) ||
+        Boolean(userProfile?.isKycVerified) ||
+        Boolean(courierSettings.isKycVerified) ||
+        kycRequests.some((k) => k.courierId === activeUid && k.status === 'valide');
 
       if (!isKycApproved) {
         showToast(
@@ -3437,12 +3594,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const submitKYCRequest = async (data: Partial<KYCUserRequest>): Promise<KYCUserRequest> => {
-    const id = `kyc-${Date.now().toString().slice(-6)}`;
     const courierDocId = data.courierId || auth.currentUser?.uid || userProfile?.uid || '';
     const cleanCourierId = courierDocId.replace(/[^a-zA-Z0-9_-]/g, '');
 
     if (!cleanCourierId || !auth.currentUser) {
       throw new Error('Authentification Firebase requise pour transmettre un dossier KYC.');
+    }
+    if (!auth.currentUser.emailVerified) {
+      throw new Error('Veuillez vérifier votre adresse e-mail avant de soumettre votre dossier KYC.');
     }
 
     let docUrl = data.documentPhotoUrl || '';
@@ -3454,15 +3613,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       docUrl = await uploadKYCDocument(cleanCourierId, 'cni', docUrl);
     }
 
+    const kycRef = doc(db, 'kyc', cleanCourierId);
+    const existingKycSnap = await getDoc(kycRef);
+    if (existingKycSnap.exists()) {
+      const existingStatus = existingKycSnap.data()?.status;
+      if (existingStatus === 'en_attente') {
+        throw new Error('Votre dossier KYC est déjà en cours de vérification par l\'administration.');
+      }
+      if (existingStatus === 'valide') {
+        throw new Error('Votre dossier KYC est déjà validé.');
+      }
+    }
+
     const newReq: KYCUserRequest = {
-      id,
+      id: cleanCourierId,
       courierId: cleanCourierId,
+      lastName: data.lastName,
+      firstName: data.firstName,
       fullName: data.fullName || userProfile?.fullName || courierSettings.fullName || 'Coursier LivraLink',
       phone: data.phone || userProfile?.phone || courierSettings.phone || '',
+      email: userProfile?.email || courierSettings.email || auth.currentUser.email || '',
       role: 'coursier',
       vehicleType: data.vehicleType || courierSettings.vehicleType || 'Moto',
       vehiclePlate: data.vehiclePlate || courierSettings.vehiclePlate || '',
       idType: data.idType || 'CIP',
+      npi: data.npi,
       idNumber: data.idNumber || '',
       ifuNumber: data.ifuNumber,
       operatingZone: data.operatingZone || 'Cotonou Littoral',
@@ -3476,44 +3651,71 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       },
     };
 
-    const kycPayload: Record<string, any> = {
-      id: cleanCourierId,
-      userId: cleanCourierId,
-      courierId: cleanCourierId,
+    const nowEpoch = Date.now();
+    const updateAllowedFields: Record<string, any> = {
       fullName: newReq.fullName,
       phone: newReq.phone,
-      email: userProfile?.email || courierSettings.email || auth.currentUser.email || '',
-      role: 'coursier',
+      email: newReq.email || '',
       vehicleType: newReq.vehicleType,
-      vehiclePlate: newReq.vehiclePlate,
-      idType: newReq.idType,
+      vehiclePlate: newReq.vehiclePlate || '',
+      idType: newReq.idType || 'CIP',
       idNumber: newReq.idNumber,
       operatingZone: newReq.operatingZone,
+      documentPhotoUrl: docUrl,
+      documents: newReq.documents,
       status: 'en_attente',
       isApproved: false,
       verified: false,
-      submittedAt: Date.now(),
-      createdAt: Date.now(),
-      documentPhotoUrl: docUrl,
+      submittedAt: nowEpoch,
+      updatedAt: nowEpoch,
     };
-    if (newReq.ifuNumber) kycPayload.ifuNumber = newReq.ifuNumber;
-    if (data.npi) kycPayload.npi = data.npi;
+    if (newReq.ifuNumber) updateAllowedFields.ifuNumber = newReq.ifuNumber;
+    if (data.npi) updateAllowedFields.npi = data.npi;
 
-    await setDoc(doc(db, 'kyc', cleanCourierId), kycPayload, { merge: true });
-    await setDoc(
-      doc(db, 'users', cleanCourierId),
-      { kycStatus: 'en_attente', kycSubmittedAt: new Date().toISOString() },
-      { merge: true }
-    );
+    if (existingKycSnap.exists()) {
+      await updateDoc(kycRef, updateAllowedFields);
+    } else {
+      await setDoc(kycRef, {
+        id: cleanCourierId,
+        userId: cleanCourierId,
+        courierId: cleanCourierId,
+        role: 'coursier',
+        createdAt: nowEpoch,
+        ...updateAllowedFields,
+      });
+    }
+
+    const userRef = doc(db, 'users', cleanCourierId);
+    const userPatch = {
+      kycStatus: 'en_attente',
+      kycSubmittedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
+      await updateDoc(userRef, userPatch);
+    } else {
+      await setDoc(
+        userRef,
+        {
+          uid: cleanCourierId,
+          email: newReq.email || `${cleanCourierId}@livralink.bj`,
+          fullName: newReq.fullName,
+          phone: newReq.phone,
+          role: 'livreur',
+          isKycVerified: false,
+          createdAt: new Date().toISOString(),
+          ...userPatch,
+        },
+        { merge: true }
+      );
+    }
 
     setKycRequests(prev => [
       newReq,
-      ...prev.filter(
-        r => r.id !== id && (r.courierId !== newReq.courierId || r.fullName.toLowerCase() !== newReq.fullName.toLowerCase())
-      ),
+      ...prev.filter(r => r.id !== cleanCourierId && r.courierId !== cleanCourierId),
     ]);
 
-    // Update settings status
     setCourierSettings(prev => ({
       ...prev,
       isKycVerified: false,
@@ -3524,7 +3726,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setUserProfile(prev => (prev ? { ...prev, isKycVerified: false, kycStatus: 'en_attente' } : null));
     }
 
-    addAuditLog('kyc', 'Dépôt Dossier KYC', `Dossier #${id} soumis par ${newReq.fullName} (${newReq.idNumber})`);
+    addAuditLog('kyc', 'Dépôt Dossier KYC', `Dossier #${cleanCourierId} soumis par ${newReq.fullName} (${newReq.idNumber})`);
     addNotification({
       type: 'kyc',
       title: '📁 Dossier KYC transmis',
@@ -3547,190 +3749,124 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newReq;
   };
 
-  const approveKYC = (requestId: string) => {
+  const approveKYC = async (requestId: string) => {
     if (!isAdminAuthenticated) {
       showToast('Action réservée au Super-Admin authentifié.', 'error');
       return;
     }
 
-    const targetReq = kycRequests.find(r => r.id === requestId);
+    const targetReq = kycRequests.find(r => r.id === requestId || r.courierId === requestId);
     const approvedCourierName = targetReq?.fullName || '';
-    const approvedCourierId = targetReq?.courierId || '';
-    const matchedCourier = couriers.find(
-      c => c.id === approvedCourierId || (approvedCourierName && c.name.toLowerCase() === approvedCourierName.toLowerCase())
-    );
-    const targetEmail = targetReq?.email || matchedCourier?.email || '';
+    const approvedCourierId = targetReq?.courierId || requestId;
+
+    if (auth.currentUser) {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch('/api/admin/kyc/decision', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            targetUid: approvedCourierId,
+            requestId: targetReq?.id || requestId,
+            decision: 'valide',
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+          showToast(data.error || 'Échec de validation KYC sur le serveur.', 'error');
+          return;
+        }
+      } catch (err: any) {
+        showToast(err?.message || 'Erreur réseau lors de la validation KYC.', 'error');
+        return;
+      }
+    }
 
     setKycRequests(prev =>
-      prev.map(req => (req.id === requestId ? { ...req, status: 'valide' as const } : req))
+      prev.map(req => (req.id === requestId || req.courierId === approvedCourierId ? { ...req, status: 'valide' as const } : req))
     );
 
     setCouriers(prev =>
-      prev.map(c => {
-        if (
-          c.id === approvedCourierId ||
-          (approvedCourierName && c.name.toLowerCase() === approvedCourierName.toLowerCase())
-        ) {
-          return { ...c, isKycVerified: true, kycStatus: 'valide' as const, badge: 'Livreur Vérifié KYC ★' };
-        }
-        return c;
-      })
+      prev.map(c =>
+        c.id === approvedCourierId
+          ? { ...c, isKycVerified: true, kycStatus: 'valide' as const, badge: 'Livreur Vérifié KYC ★' }
+          : c
+      )
     );
 
-    setSelectedCourier(prev => {
-      if (
-        prev.id === approvedCourierId ||
-        (approvedCourierName && prev.name.toLowerCase() === approvedCourierName.toLowerCase())
-      ) {
-        return { ...prev, isKycVerified: true, kycStatus: 'valide' as const, badge: 'Livreur Vérifié KYC ★' };
-      }
-      return prev;
-    });
+    setSelectedCourier(prev =>
+      prev.id === approvedCourierId
+        ? { ...prev, isKycVerified: true, kycStatus: 'valide' as const, badge: 'Livreur Vérifié KYC ★' }
+        : prev
+    );
 
-    if (
-      userProfile &&
-      (userProfile.uid === approvedCourierId ||
-        (approvedCourierName && userProfile.fullName.toLowerCase() === approvedCourierName.toLowerCase()))
-    ) {
+    if (userProfile && userProfile.uid === approvedCourierId) {
       setUserProfile(prev => (prev ? { ...prev, isKycVerified: true, kycStatus: 'valide' } : null));
       setCourierSettings(prev => ({ ...prev, isKycVerified: true, kycStatus: 'valide' }));
     }
 
-    if (approvedCourierId) {
-      const cleanId = approvedCourierId.replace(/[^a-zA-Z0-9_-]/g, '');
-      try {
-        setDoc(doc(db, 'kyc', cleanId), {
-          status: 'valide',
-          isApproved: true,
-          verified: true,
-          reviewedAt: Date.now(),
-          reviewedBy: auth.currentUser?.uid || 'admin'
-        }, { merge: true }).catch(err => console.warn('Erreur Firestore approveKYC:', err));
-
-        setDoc(doc(db, 'users', cleanId), {
-          isKycVerified: true,
-          kycStatus: 'valide',
-          updatedAt: new Date().toISOString(),
-        }, { merge: true }).catch(err => console.warn('Erreur Firestore users approveKYC:', err));
-      } catch (err) {
-        console.warn('Erreur Firestore approveKYC:', err);
-      }
-    }
-
     addAuditLog('kyc', 'Validation KYC', `Dossier ${requestId} approuvé par l'administrateur (${approvedCourierName})`);
-    addNotification({
-      type: 'kyc',
-      recipientId: approvedCourierId || undefined,
-      title: '🎉 Accréditation KYC validée !',
-      message: `Votre dossier d'accréditation a été validé avec succès. Vous pouvez maintenant passer en ligne et démarrer vos livraisons.`,
-      actionView: 'livreur_dashboard',
-    });
-    if (approvedCourierId) {
-      void dispatchTrustedNotification({
-        type: 'kyc',
-        recipientId: approvedCourierId,
-        title: '🎉 Accréditation KYC validée !',
-        message: 'Votre dossier d\'accréditation a été validé avec succès. Vous pouvez maintenant passer en ligne et démarrer vos livraisons.',
-        actionView: 'livreur_dashboard',
-        dedupKey: `kyc_approved:${approvedCourierId}:${Date.now()}`,
-      });
-    }
-
-    if (targetEmail) {
-      sendKycConfirmationEmail({
-        email: targetEmail,
-        fullName: approvedCourierName || 'Utilisateur LivraLink',
-        role: 'livreur',
-        status: 'approved',
-      }).catch(err => console.warn('Notice email validation KYC:', err));
-    }
-
     showToast(`Dossier KYC (${approvedCourierName || requestId}) approuvé avec succès !`, 'success');
   };
 
-  const rejectKYC = (requestId: string, reason?: string) => {
+  const rejectKYC = async (requestId: string, reason?: string) => {
     if (!isAdminAuthenticated) {
       showToast('Action réservée au Super-Admin authentifié.', 'error');
       return;
     }
 
     const rejectionReason = reason || 'Documents d\'identité non conformes ou illisibles.';
-    const targetReq = kycRequests.find(r => r.id === requestId);
-    const targetCourierName = targetReq?.fullName || '';
-    const targetCourierId = targetReq?.courierId || '';
-    const matchedCourier = couriers.find(
-      c => c.id === targetCourierId || (targetCourierName && c.name.toLowerCase() === targetCourierName.toLowerCase())
-    );
-    const targetEmail = targetReq?.email || matchedCourier?.email || '';
+    const targetReq = kycRequests.find(r => r.id === requestId || r.courierId === requestId);
+    const targetCourierId = targetReq?.courierId || requestId;
 
-    setKycRequests(prev =>
-      prev.map(req => (req.id === requestId ? { ...req, status: 'refuse' as const, rejectionReason } : req))
-    );
-
-    setCouriers(prev =>
-      prev.map(c => {
-        if (
-          c.id === targetCourierId ||
-          (targetCourierName && c.name.toLowerCase() === targetCourierName.toLowerCase())
-        ) {
-          return { ...c, isKycVerified: false, kycStatus: 'refuse' as const, kycRejectionReason: rejectionReason };
-        }
-        return c;
-      })
-    );
-
-    if (targetCourierId) {
-      const cleanId = targetCourierId.replace(/[^a-zA-Z0-9_-]/g, '');
+    if (auth.currentUser) {
       try {
-        setDoc(doc(db, 'kyc', cleanId), {
-          status: 'refuse',
-          isApproved: false,
-          verified: false,
-          rejectionReason,
-          reviewedAt: Date.now(),
-          reviewedBy: auth.currentUser?.uid || 'admin'
-        }, { merge: true }).catch(err => console.warn('Erreur Firestore rejectKYC:', err));
-
-        setDoc(doc(db, 'users', cleanId), {
-          isKycVerified: false,
-          kycStatus: 'refuse',
-          kycRejectionReason: rejectionReason,
-          updatedAt: new Date().toISOString(),
-        }, { merge: true }).catch(err => console.warn('Erreur Firestore users rejectKYC:', err));
-      } catch (err) {
-        console.warn('Erreur Firestore rejectKYC:', err);
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch('/api/admin/kyc/decision', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            targetUid: targetCourierId,
+            requestId: targetReq?.id || requestId,
+            decision: 'refuse',
+            reason: rejectionReason,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+          showToast(data.error || 'Échec du rejet KYC sur le serveur.', 'error');
+          return;
+        }
+      } catch (err: any) {
+        showToast(err?.message || 'Erreur réseau lors du rejet KYC.', 'error');
+        return;
       }
     }
 
+    setKycRequests(prev =>
+      prev.map(req => (req.id === requestId || req.courierId === targetCourierId ? { ...req, status: 'refuse' as const, rejectionReason } : req))
+    );
+
+    setCouriers(prev =>
+      prev.map(c =>
+        c.id === targetCourierId
+          ? { ...c, isKycVerified: false, kycStatus: 'refuse' as const, kycRejectionReason: rejectionReason }
+          : c
+      )
+    );
+
+    if (userProfile && userProfile.uid === targetCourierId) {
+      setUserProfile(prev => (prev ? { ...prev, isKycVerified: false, kycStatus: 'refuse' } : null));
+      setCourierSettings(prev => ({ ...prev, isKycVerified: false, kycStatus: 'refuse', kycRejectionReason: rejectionReason }));
+    }
+
     addAuditLog('kyc', 'Rejet KYC', `Dossier ${requestId} rejeté : ${rejectionReason}`);
-    addNotification({
-      type: 'kyc',
-      recipientId: targetCourierId || undefined,
-      title: '❌ Dossier KYC non validé',
-      message: `Votre dossier KYC a été rejeté. Motif : ${rejectionReason}. Veuillez re-soumettre vos documents.`,
-      actionView: 'livreur_dashboard',
-    });
-    if (targetCourierId) {
-      void dispatchTrustedNotification({
-        type: 'kyc',
-        recipientId: targetCourierId,
-        title: '❌ Dossier KYC non validé',
-        message: `Votre dossier KYC a été rejeté. Motif : ${rejectionReason}. Veuillez re-soumettre vos documents.`,
-        actionView: 'livreur_dashboard',
-        dedupKey: `kyc_rejected:${targetCourierId}:${Date.now()}`,
-      });
-    }
-
-    if (targetEmail) {
-      sendKycConfirmationEmail({
-        email: targetEmail,
-        fullName: targetCourierName || 'Utilisateur LivraLink',
-        role: 'livreur',
-        status: 'rejected',
-        reason: rejectionReason,
-      }).catch(err => console.warn('Notice email rejet KYC:', err));
-    }
-
     showToast(`Dossier KYC rejeté : ${rejectionReason}`, 'error');
   };
 
@@ -3855,8 +3991,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // --- Admin Couriers Management ---
-  const addCourier = (newCourier: Partial<Courier>) => {
-    const id = 'c-' + Math.random().toString(36).substring(2, 9);
+  const addCourier = async (newCourier: Partial<Courier>) => {
+    const id = `c_${Date.now()}_${secureRandomHex(3)}`;
     const initials = newCourier.name
       ? newCourier.name.split(' ').map(w => w[0]).join('').toUpperCase().substring(0, 2)
       : 'LV';
@@ -3884,51 +4020,98 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: new Date().toISOString().split('T')[0]
     };
 
+    if (auth.currentUser && isAdminAuthenticated) {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch('/api/admin/directory/user', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            uid: id,
+            role: 'livreur',
+            fullName: courier.name,
+            phone: courier.phone,
+            email: courier.email,
+            vehicle: courier.vehicle,
+            zone: courier.zone,
+            walletBalanceFCFA: courier.walletBalanceFCFA,
+            isKycVerified: courier.isKycVerified,
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          showToast(data.error || 'Échec de l\'enregistrement serveur du livreur.', 'error');
+          return;
+        }
+      } catch {}
+    }
+
     setCouriers(prev => [courier, ...prev]);
     addAuditLog('system', 'Livreur ajouté', `Nouveau coursier ${courier.name} (${courier.vehicle}) enregistré`);
     showToast(`Livreur ${courier.name} ajouté avec succès !`, 'success');
   };
 
-  const updateCourier = (id: string, updates: Partial<Courier>) => {
+  const updateCourier = async (id: string, updates: Partial<Courier>) => {
     if (!isAdminAuthenticated) return;
+    if (auth.currentUser) {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        await fetch(`/api/admin/directory/user/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(updates),
+        });
+      } catch {}
+    }
     setCouriers(prev =>
       prev.map(c => c.id === id ? { ...c, ...updates } : c)
     );
-    if (auth.currentUser && !id.startsWith('c-')) {
-      const firestoreUpdates: Record<string, any> = { updatedAt: new Date().toISOString() };
-      if (updates.name !== undefined) firestoreUpdates.fullName = updates.name;
-      if (updates.phone !== undefined) firestoreUpdates.phone = updates.phone;
-      if (updates.email !== undefined) firestoreUpdates.email = updates.email;
-      if (updates.vehicle !== undefined) firestoreUpdates.vehicleType = updates.vehicle;
-      if (updates.status !== undefined) firestoreUpdates.status = updates.status;
-      if (updates.isKycVerified !== undefined) firestoreUpdates.isKycVerified = updates.isKycVerified;
-      setDoc(doc(db, 'users', id), firestoreUpdates, { merge: true }).catch(() => {});
-    }
     addAuditLog('system', 'Livreur modifié', `Mise à jour des informations pour le coursier #${id}`);
     showToast(`Informations du coursier mises à jour !`, 'success');
   };
 
-  const toggleCourierStatus = (id: string) => {
+  const toggleCourierStatus = async (id: string) => {
     if (!isAdminAuthenticated) return;
+    const target = couriers.find(c => c.id === id);
+    if (!target) return;
+    const newStatus = target.status === 'suspendu' ? 'en_ligne' : 'suspendu';
+
+    if (auth.currentUser) {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        await fetch(`/api/admin/directory/user/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ status: newStatus }),
+        });
+      } catch {}
+    }
+
     setCouriers(prev =>
-      prev.map(c => {
-        if (c.id === id) {
-          const newStatus = c.status === 'suspendu' ? 'en_ligne' : 'suspendu';
-          if (auth.currentUser && !id.startsWith('c-')) {
-            setDoc(doc(db, 'users', id), { status: newStatus, updatedAt: new Date().toISOString() }, { merge: true }).catch(() => {});
-          }
-          addAuditLog('system', `Statut coursier #${id}`, `Statut passé à: ${newStatus}`);
-          showToast(`Coursier ${c.name} est maintenant : ${newStatus.toUpperCase()}`, newStatus === 'suspendu' ? 'error' : 'success');
-          return { ...c, status: newStatus };
-        }
-        return c;
-      })
+      prev.map(c => (c.id === id ? { ...c, status: newStatus } : c))
     );
+    addAuditLog('system', `Statut coursier #${id}`, `Statut passé à: ${newStatus}`);
+    showToast(`Coursier ${target.name} est maintenant : ${newStatus.toUpperCase()}`, newStatus === 'suspendu' ? 'error' : 'success');
   };
 
   // --- Admin Delivery Management (Supervision) ---
-  const deleteDelivery = (orderId: string) => {
+  const deleteDelivery = async (orderId: string) => {
     if (!isAdminAuthenticated) return;
+    if (auth.currentUser) {
+      const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
+      try {
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch(`/api/admin/deliveries/${encodeURIComponent(cleanDocId)}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          showToast(data.error || 'Échec suppression Firestore de la course.', 'error');
+          return;
+        }
+      } catch {}
+    }
     setDeliveries(prev => prev.filter(d => d.id !== orderId));
     if (selectedDelivery?.id === orderId) {
       setSelectedDelivery(null);
@@ -4033,34 +4216,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // --- Admin Couriers Management (Flotte & Livreurs) ---
   const creditCourierWallet = (id: string, amount: number, note?: string) => {
-    adjustCourierWallet(id, amount, 'credit', note);
+    void adjustCourierWallet(id, amount, 'credit', note);
   };
 
-  const adjustCourierWallet = (id: string, amount: number, type: 'credit' | 'debit', note?: string) => {
+  const adjustCourierWallet = async (id: string, amount: number, type: 'credit' | 'debit', note?: string) => {
+    const delta = Math.abs(Math.round(amount));
+    if (!delta) return;
+
+    if (auth.currentUser && isAdminAuthenticated) {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch('/api/admin/wallet/adjust', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ targetUid: id, amount: delta, type, note }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+          showToast(data.error || 'Échec de l\'ajustement portefeuille côté serveur.', 'error');
+          return;
+        }
+        setCouriers(prev =>
+          prev.map(c => (c.id === id ? { ...c, walletBalanceFCFA: data.balanceAfter } : c))
+        );
+        const opLabel = type === 'credit' ? `+${delta.toLocaleString('fr-FR')} FCFA` : `-${delta.toLocaleString('fr-FR')} FCFA`;
+        addAuditLog('system', `Portefeuille #${id} : ${opLabel}`, note || `Ajustement admin (${type})`);
+        showToast(`Portefeuille mis à jour : ${opLabel} (Solde : ${Number(data.balanceAfter).toLocaleString('fr-FR')} FCFA)`, 'success');
+        return;
+      } catch (err: any) {
+        showToast(err?.message || 'Erreur réseau lors de l\'ajustement portefeuille.', 'error');
+        return;
+      }
+    }
+
     setCouriers(prev =>
       prev.map(c => {
         if (c.id === id) {
           const currentBal = c.walletBalanceFCFA || 0;
-          const delta = Math.abs(amount);
           const newBal = type === 'credit' ? currentBal + delta : Math.max(0, currentBal - delta);
           const opLabel = type === 'credit' ? `+${delta.toLocaleString('fr-FR')} FCFA` : `-${delta.toLocaleString('fr-FR')} FCFA`;
           addAuditLog('system', `Portefeuille #${id} : ${opLabel}`, note || `Ajustement admin (${type})`);
           showToast(`Portefeuille de ${c.name} : ${opLabel}`, 'success');
-
-          const targetEmail = c.email || '';
-          if (targetEmail) {
-            sendPlatformNotification({
-              eventType: 'wallet_transaction',
-              recipientEmail: targetEmail,
-              recipientName: c.name,
-              details: {
-                transactionType: type,
-                amountFCFA: delta,
-                newBalanceFCFA: newBal,
-              },
-            });
-          }
-
           return { ...c, walletBalanceFCFA: newBal };
         }
         return c;
@@ -4068,8 +4264,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const deleteCourier = (id: string) => {
+  const deleteCourier = async (id: string) => {
     if (!isAdminAuthenticated) return;
+    if (auth.currentUser) {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        await fetch(`/api/admin/directory/user/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {}
+    }
     setCouriers(prev => {
       const remaining = prev.filter(c => c.id !== id);
       if (selectedCourier.id === id && remaining.length > 0) {
@@ -4077,16 +4282,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return remaining;
     });
-    if (auth.currentUser && !id.startsWith('c-')) {
-      deleteDoc(doc(db, 'users', id)).catch(() => {});
-    }
     addAuditLog('system', `Livreur supprimé #${id}`, `Compte coursier retiré de la flotte`);
     showToast(`Livreur retiré de la flotte avec succès.`, 'info');
   };
 
   // --- Admin Merchants Management (Boutiques & Vendeurs) ---
-  const addMerchant = (newMerchant: Partial<Merchant>) => {
-    const id = 'm-' + Math.random().toString(36).substring(2, 9);
+  const addMerchant = async (newMerchant: Partial<Merchant>) => {
+    const id = `m_${Date.now()}_${secureRandomHex(3)}`;
     const merchant: Merchant = {
       id,
       storeName: newMerchant.storeName || 'Nouvelle Boutique',
@@ -4105,76 +4307,119 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: new Date().toISOString().split('T')[0]
     };
 
+    if (auth.currentUser && isAdminAuthenticated) {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch('/api/admin/directory/user', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            uid: id,
+            role: 'vendeur',
+            fullName: merchant.managerName,
+            storeName: merchant.storeName,
+            phone: merchant.phone,
+            email: merchant.email,
+            commune: merchant.commune,
+            address: merchant.address,
+            channel: merchant.channel,
+            isVerified: merchant.isVerified,
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          showToast(data.error || 'Échec de l\'enregistrement serveur du marchand.', 'error');
+          return;
+        }
+      } catch {}
+    }
+
     setMerchants(prev => [merchant, ...prev]);
     addAuditLog('system', 'Vendeur ajouté', `Boutique ${merchant.storeName} ajoutée au réseau`);
     showToast(`Marchand ${merchant.storeName} enregistré avec succès !`, 'success');
   };
 
-  const updateMerchant = (id: string, updates: Partial<Merchant>) => {
+  const updateMerchant = async (id: string, updates: Partial<Merchant>) => {
     if (!isAdminAuthenticated) return;
+    if (auth.currentUser) {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        await fetch(`/api/admin/directory/user/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(updates),
+        });
+      } catch {}
+    }
     setMerchants(prev =>
       prev.map(m => m.id === id ? { ...m, ...updates } : m)
     );
-    if (auth.currentUser && !id.startsWith('m-')) {
-      const firestoreUpdates: Record<string, any> = { updatedAt: new Date().toISOString() };
-      if (updates.storeName !== undefined) firestoreUpdates.storeName = updates.storeName;
-      if (updates.managerName !== undefined) firestoreUpdates.fullName = updates.managerName;
-      if (updates.phone !== undefined) firestoreUpdates.phone = updates.phone;
-      if (updates.email !== undefined) firestoreUpdates.email = updates.email;
-      if (updates.commune !== undefined) firestoreUpdates.storeCommune = updates.commune;
-      if (updates.address !== undefined) firestoreUpdates.storeAddress = updates.address;
-      if (updates.status !== undefined) firestoreUpdates.status = updates.status;
-      if (updates.isVerified !== undefined) firestoreUpdates.isKycVerified = updates.isVerified;
-      setDoc(doc(db, 'users', id), firestoreUpdates, { merge: true }).catch(() => {});
-    }
     addAuditLog('system', 'Marchand modifié', `Mise à jour des coordonnées boutique #${id}`);
     showToast(`Boutique mise à jour !`, 'success');
   };
 
-  const deleteMerchant = (id: string) => {
+  const deleteMerchant = async (id: string) => {
     if (!isAdminAuthenticated) return;
-    setMerchants(prev => prev.filter(m => m.id !== id));
-    if (auth.currentUser && !id.startsWith('m-')) {
-      deleteDoc(doc(db, 'users', id)).catch(() => {});
+    if (auth.currentUser) {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        await fetch(`/api/admin/directory/user/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {}
     }
+    setMerchants(prev => prev.filter(m => m.id !== id));
     addAuditLog('system', `Boutique supprimée #${id}`, `Boutique marchande retirée du réseau`);
     showToast(`Boutique supprimée avec succès.`, 'info');
   };
 
-  const toggleMerchantStatus = (id: string) => {
+  const toggleMerchantStatus = async (id: string) => {
     if (!isAdminAuthenticated) return;
+    const target = merchants.find(m => m.id === id);
+    if (!target) return;
+    const newStatus = target.status === 'suspendu' ? 'actif' : 'suspendu';
+
+    if (auth.currentUser) {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        await fetch(`/api/admin/directory/user/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ status: newStatus }),
+        });
+      } catch {}
+    }
+
     setMerchants(prev =>
-      prev.map(m => {
-        if (m.id === id) {
-          const newStatus = m.status === 'suspendu' ? 'actif' : 'suspendu';
-          if (auth.currentUser && !id.startsWith('m-')) {
-            setDoc(doc(db, 'users', id), { status: newStatus, updatedAt: new Date().toISOString() }, { merge: true }).catch(() => {});
-          }
-          addAuditLog('system', `Statut boutique #${id}`, `Statut passé à : ${newStatus}`);
-          showToast(`Boutique ${m.storeName} : ${newStatus.toUpperCase()}`, newStatus === 'suspendu' ? 'error' : 'success');
-          return { ...m, status: newStatus };
-        }
-        return m;
-      })
+      prev.map(m => (m.id === id ? { ...m, status: newStatus } : m))
     );
+    addAuditLog('system', `Statut boutique #${id}`, `Statut passé à : ${newStatus}`);
+    showToast(`Boutique ${target.storeName} : ${newStatus.toUpperCase()}`, newStatus === 'suspendu' ? 'error' : 'success');
   };
 
-  const toggleMerchantVerification = (id: string) => {
+  const toggleMerchantVerification = async (id: string) => {
     if (!isAdminAuthenticated) return;
+    const target = merchants.find(m => m.id === id);
+    if (!target) return;
+    const next = !target.isVerified;
+
+    if (auth.currentUser) {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        await fetch(`/api/admin/directory/user/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ isVerified: next }),
+        });
+      } catch {}
+    }
+
     setMerchants(prev =>
-      prev.map(m => {
-        if (m.id === id) {
-          const next = !m.isVerified;
-          if (auth.currentUser && !id.startsWith('m-')) {
-            setDoc(doc(db, 'users', id), { isKycVerified: next, kycStatus: next ? 'valide' : 'non_soumis', updatedAt: new Date().toISOString() }, { merge: true }).catch(() => {});
-          }
-          addAuditLog('system', `Badge vérifié boutique #${id}`, next ? 'Badge accordé' : 'Badge révoqué');
-          showToast(next ? `Badge vérifié accordé à ${m.storeName}` : `Badge révoqué pour ${m.storeName}`, 'info');
-          return { ...m, isVerified: next };
-        }
-        return m;
-      })
+      prev.map(m => (m.id === id ? { ...m, isVerified: next } : m))
     );
+    addAuditLog('system', `Badge vérifié boutique #${id}`, next ? 'Badge accordé' : 'Badge révoqué');
+    showToast(next ? `Badge vérifié accordé à ${target.storeName}` : `Badge révoqué pour ${target.storeName}`, 'info');
   };
 
   // --- Unified Users Management ---

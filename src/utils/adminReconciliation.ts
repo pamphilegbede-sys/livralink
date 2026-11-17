@@ -17,6 +17,7 @@ export interface FirestoreUserRecord {
   isKycVerified?: boolean;
   kycStatus?: string;
   status?: string;
+  walletBalanceFCFA?: number;
   channel?: 'WhatsApp' | 'Instagram' | 'TikTok' | 'E-commerce';
   createdAt?: any;
   updatedAt?: any;
@@ -162,7 +163,7 @@ export const mapFirestoreUserToCourier = (data: FirestoreUserRecord, docId: stri
     distanceKm: 1.0,
     etaMinutes: 8,
     status,
-    walletBalanceFCFA: 0,
+    walletBalanceFCFA: typeof data.walletBalanceFCFA === 'number' && Number.isFinite(data.walletBalanceFCFA) ? data.walletBalanceFCFA : 0,
     priceFCFA: 2000,
     commissionFCFA: 0,
     netEarningFCFA: 2000,
@@ -394,18 +395,28 @@ export const mergeRemoteUsersIntoAdminLists = (params: {
 };
 
 export const mapFirestoreKycToRequest = (data: any, docId: string): KYCUserRequest => {
+  const fullName = String(data.fullName || 'Livreur LivraLink').trim();
+  const nameParts = fullName.split(/\s+/).filter(Boolean);
+  const derivedLastName = nameParts.length > 0 ? nameParts[0] : '';
+  const derivedFirstName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
   return {
     id: data.id || docId,
     courierId: data.courierId || data.userId || docId,
-    fullName: data.fullName || 'Livreur LivraLink',
+    lastName: data.lastName || derivedLastName,
+    firstName: data.firstName || derivedFirstName,
+    fullName,
     phone: data.phone || '',
     email: data.email || '',
     role: data.role === 'marchand' ? 'marchand' : 'coursier',
     vehicleType: data.vehicleType || 'Moto 125cc',
+    vehiclePlate: data.vehiclePlate || '',
+    idType: data.idType || undefined,
+    npi: data.npi || '',
     idNumber: data.idNumber || '',
+    ifuNumber: data.ifuNumber || '',
     operatingZone: data.operatingZone || data.zone || 'Cotonou',
     documents: data.documents || {
-      cni: Boolean(data.cniUrl),
+      cni: Boolean(data.cniUrl || data.documentPhotoUrl),
       permis: Boolean(data.permisUrl),
       assurance: Boolean(data.assuranceUrl),
     },

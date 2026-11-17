@@ -20,11 +20,15 @@ export const Sidebar: React.FC = () => {
     kycRequests,
     userProfile,
     isUserMasterAdmin,
+    isAdminAuthenticated,
+    firebaseUser,
     courierMissionsFilter,
     setCourierMissionsFilter,
   } = useApp();
 
   const isUserSuperAdmin = isUserMasterAdmin;
+  const activeUid = userProfile?.uid || firebaseUser?.uid || '';
+  const isSupervisory = isAdminAuthenticated && isUserMasterAdmin;
 
   // Résolution déterministe du rôle affiché dans la barre latérale afin que le menu ne disparaisse jamais
   const effectiveNavRole: 'vendeur' | 'livreur' | 'admin' =
@@ -38,10 +42,15 @@ export const Sidebar: React.FC = () => {
       ? userProfile.role
       : currentRole;
 
-  const availableCourierMissionsCount = deliveries.filter((d) => d.status === 'en_attente' || !d.courier).length;
-  const activeCourierMissionsCount = deliveries.filter(
-    (d) => d.status === 'acceptee' || d.status === 'colis_recupere' || d.status === 'en_cours'
+  const availableCourierMissionsCount = deliveries.filter(
+    (d) => d.status === 'en_attente' && !d.courier && !d.courierId
   ).length;
+  const activeCourierMissionsCount = deliveries.filter((d) => {
+    const isOngoing = d.status === 'acceptee' || d.status === 'colis_recupere' || d.status === 'en_cours';
+    if (!isOngoing) return false;
+    if (isSupervisory) return true;
+    return Boolean(activeUid && (d.courier?.id === activeUid || d.courierId === activeUid));
+  }).length;
 
   const handleLogout = async () => {
     await logout();
@@ -702,13 +711,13 @@ export const Sidebar: React.FC = () => {
 
         {/* Profile Card */}
         {(() => {
-          const courierInitials = (courierSettings.fullName || 'Awa Véloce')
+          const courierInitials = (courierSettings.fullName || 'Coursier')
             .split(' ')
             .map((n) => n[0])
             .filter(Boolean)
             .join('')
             .toUpperCase()
-            .slice(0, 2) || 'AV';
+            .slice(0, 2) || 'CL';
 
           const vendorInitials = (merchantSettings.storeName || 'Boutique')
             .split(' ')

@@ -1,5 +1,17 @@
 import { auth } from '../firebase/config';
 
+const createLocalEmailId = (prefix: string): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `${prefix}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+  }
+  const bytes = new Uint8Array(4);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(bytes);
+  }
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${prefix}_${Date.now()}_${hex}`;
+};
+
 const getAdminAuthHeaders = async (withJson = true): Promise<Record<string, string>> => {
   const headers: Record<string, string> = {};
   if (withJson) {
@@ -68,7 +80,7 @@ export const sendWelcomeEmail = async (payload: {
   phone?: string;
 }): Promise<{ success: boolean; emailDelivered?: boolean; message?: string }> => {
   const localRecord: SentEmailItem = {
-    id: `welcome_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    id: createLocalEmailId('welcome'),
     type: 'welcome',
     to: payload.email,
     recipientName: payload.fullName,
@@ -118,7 +130,7 @@ export const sendPasswordChangedConfirmationEmail = async (payload: {
   fullName?: string;
 }): Promise<{ success: boolean; emailDelivered?: boolean }> => {
   const localRecord: SentEmailItem = {
-    id: `pwd_changed_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    id: createLocalEmailId('pwd_changed'),
     type: 'password_changed_confirmation',
     to: payload.email,
     recipientName: payload.fullName || payload.email.split('@')[0],
@@ -170,7 +182,7 @@ export const sendKycConfirmationEmail = async (payload: {
   const roleLabel = payload.role === 'vendeur' ? 'Vendeur / Marchand' : 'Livreur Partenaire';
 
   const localRecord: SentEmailItem = {
-    id: `kyc_${payload.status}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    id: createLocalEmailId(`kyc_${payload.status}`),
     type: isApproved ? 'kyc_approved' : 'kyc_rejected',
     to: payload.email,
     recipientName: payload.fullName,
@@ -233,7 +245,7 @@ export const sendKycSubmissionEmail = async (payload: {
   const roleLabel = payload.role === 'vendeur' ? 'Vendeur / Marchand' : 'Livreur Partenaire';
 
   const localRecord: SentEmailItem = {
-    id: `kyc_sub_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    id: createLocalEmailId('kyc_sub'),
     type: 'kyc_submitted',
     to: payload.email,
     recipientName: payload.fullName,
@@ -469,6 +481,43 @@ export const processEmailQueue = async (): Promise<{
     return {
       success: false,
       message: err?.message || 'Erreur lors du traitement de la file d\'attente.',
+    };
+  }
+};
+
+export const notifyClientDeliveryOtp = async (params: {
+  orderId: string;
+  clientEmail: string;
+  clientName?: string;
+}): Promise<{ success: boolean; emailDelivered?: boolean; queued?: boolean; error?: string; message?: string }> => {
+  try {
+    const cleanDocId = params.orderId.replace(/[^a-zA-Z0-9_-]/g, '');
+    const headers = await getAdminAuthHeaders(true);
+    const res = await fetch(`/api/deliveries/${encodeURIComponent(cleanDocId)}/notify-client-otp`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        clientEmail: params.clientEmail.trim(),
+        clientName: params.clientName?.trim(),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        error: data.error || 'Échec de l\'envoi de l\'OTP par e-mail au client.',
+      };
+    }
+    return {
+      success: true,
+      emailDelivered: Boolean(data.emailDelivered),
+      queued: Boolean(data.queued),
+      message: data.message,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Erreur réseau lors de l\'envoi de l\'e-mail OTP client.',
     };
   }
 };

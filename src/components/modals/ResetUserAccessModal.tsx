@@ -40,12 +40,19 @@ export const ResetUserAccessModal: React.FC<ResetUserAccessModalProps> = ({
 
   const isSuspended = user.status === 'suspendu';
 
-  // Generate strong random password
+  // Generate strong random password using CSPRNG rejection sampling
   const generateStrongPassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
+    const limit = Math.floor(0x100000000 / chars.length) * chars.length;
+    const buf = new Uint32Array(1);
     let res = 'LL-';
     for (let i = 0; i < 8; i++) {
-      res += chars.charAt(Math.floor(Math.random() * chars.length));
+      let rand: number;
+      do {
+        crypto.getRandomValues(buf);
+        rand = buf[0];
+      } while (rand >= limit);
+      res += chars.charAt(rand % chars.length);
     }
     setNewPassword(res);
   };
@@ -67,9 +74,9 @@ export const ResetUserAccessModal: React.FC<ResetUserAccessModalProps> = ({
       // Auto reactivate if requested and currently suspended
       if (autoReactivate && isSuspended) {
         if (user.role === 'livreur') {
-          toggleCourierStatus(user.id);
+          await toggleCourierStatus(user.id);
         } else {
-          toggleMerchantStatus(user.id);
+          await toggleMerchantStatus(user.id);
         }
         if (onUserStatusChange) {
           onUserStatusChange(user.id, user.role, user.role === 'livreur' ? 'en_ligne' : 'actif');
@@ -135,22 +142,29 @@ export const ResetUserAccessModal: React.FC<ResetUserAccessModalProps> = ({
   };
 
   // Toggle user suspension right inside modal
-  const handleToggleSuspension = () => {
-    if (user.role === 'livreur') {
-      toggleCourierStatus(user.id);
-    } else {
-      toggleMerchantStatus(user.id);
+  const handleToggleSuspension = async () => {
+    setIsLoading(true);
+    try {
+      if (user.role === 'livreur') {
+        await toggleCourierStatus(user.id);
+      } else {
+        await toggleMerchantStatus(user.id);
+      }
+      const newStat = isSuspended ? (user.role === 'livreur' ? 'en_ligne' : 'actif') : 'suspendu';
+      if (onUserStatusChange) {
+        onUserStatusChange(user.id, user.role, newStat);
+      }
+      addAuditLog(
+        'security',
+        `${isSuspended ? 'Réactivation' : 'Suspension'} de compte : ${user.name}`,
+        `L'administrateur a ${isSuspended ? 'réactivé' : 'suspendu'} le compte de ${user.name} (${user.role}).`
+      );
+      showToast(`Compte ${isSuspended ? 'réactivé' : 'suspendu'} avec succès !`, 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Erreur lors de la mise à jour du statut.', 'error');
+    } finally {
+      setIsLoading(false);
     }
-    const newStat = isSuspended ? (user.role === 'livreur' ? 'en_ligne' : 'actif') : 'suspendu';
-    if (onUserStatusChange) {
-      onUserStatusChange(user.id, user.role, newStat);
-    }
-    addAuditLog(
-      'security',
-      `${isSuspended ? 'Réactivation' : 'Suspension'} de compte : ${user.name}`,
-      `L'administrateur a ${isSuspended ? 'réactivé' : 'suspendu'} le compte de ${user.name} (${user.role}).`
-    );
-    showToast(`Compte ${isSuspended ? 'réactivé' : 'suspendu'} avec succès !`, 'success');
   };
 
   return (

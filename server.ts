@@ -215,12 +215,34 @@ circuitBreakers.set('gemini_api', { state: 'CLOSED', failures: 0 });
 type P0SecurityService = ReturnType<typeof createP0SecurityService>;
 let cachedP0Security: P0SecurityService | null = null;
 let testP0SecurityOverride: P0SecurityService | null = null;
+let testFirestoreOverride: any = null;
+let testTokenVerifierOverride: ((token: string) => Promise<{ uid: string; email?: string; email_verified?: boolean; admin?: boolean }>) | null = null;
 
 export function setP0SecurityForTests(service: P0SecurityService | null): void {
   if (process.env.NODE_ENV === 'test') {
     testP0SecurityOverride = service;
   }
 }
+
+export function setFirestoreAdminForTests(dbOverride: any): void {
+  if (process.env.NODE_ENV === 'test') {
+    testFirestoreOverride = dbOverride;
+  }
+}
+
+export function setTokenVerifierForTests(
+  verifier: ((token: string) => Promise<{ uid: string; email?: string; email_verified?: boolean; admin?: boolean }>) | null
+): void {
+  if (process.env.NODE_ENV === 'test') {
+    testTokenVerifierOverride = verifier;
+  }
+}
+
+const isFirestoreIamDeniedError = (err: any): boolean => {
+  const code = String(err?.code ?? '');
+  const msg = String(err?.message || err || '');
+  return code === '7' || /PERMISSION_DENIED|Missing or insufficient permissions/i.test(msg);
+};
 
 // =========================================================================
 // POINT 18: JOURNAL D'AUDIT CENTRALISÉ DES ERREURS
@@ -332,7 +354,7 @@ const MAX_ANOMALIES = 50;
 
 const recordSecurityAnomaly = (ip: string, type: string, details: string) => {
   const entry: SecurityAnomalyEntry = {
-    id: `ANOMALY-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    id: `ANOMALY-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
     timestamp: new Date().toISOString(),
     ip,
     type,
@@ -359,6 +381,24 @@ const authenticateFirebaseToken = async (req: AuthenticatedRequest, res: Respons
   if (!token) {
     req.user = undefined;
     return next();
+  }
+
+  if (process.env.NODE_ENV === 'test' && testTokenVerifierOverride) {
+    try {
+      const decoded = await testTokenVerifierOverride(token);
+      const isSuperAdminEmail = (decoded.email || '').toLowerCase().trim() === 'pamphile.gbede@gmail.com';
+      req.user = {
+        uid: decoded.uid,
+        email: decoded.email,
+        email_verified: decoded.email_verified,
+        isAdmin: isSuperAdminEmail || Boolean(decoded.admin),
+      };
+      return next();
+    } catch (err: any) {
+      recordSecurityAnomaly(getClientIp(req), 'INVALID_BEARER_TOKEN', `Échec vérification jeton test: ${err?.message || err}`);
+      req.user = undefined;
+      return next();
+    }
   }
 
   if (firebaseAdminApp) {
@@ -2137,7 +2177,7 @@ app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: A
     // Dispatch individual notifications to Firestore /notifications collection with recipientId
     for (const target of targetUsers) {
       if (validChannel === 'notification' || validChannel === 'both') {
-        const notifId = `notif_broadcast_${nowEpoch}_${Math.random().toString(36).substring(2, 7)}`;
+        const notifId = `notif_broadcast_${nowEpoch}_${crypto.randomBytes(4).toString('hex')}`;
         const notifDoc = {
           id: notifId,
           senderId: adminUid,
@@ -2204,7 +2244,7 @@ app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: A
     }
 
     const record: AnnouncementRecord = {
-      id: `broadcast_${nowEpoch}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `broadcast_${nowEpoch}_${crypto.randomBytes(4).toString('hex')}`,
       title: cleanTitle,
       message: cleanMessage,
       audience: validAudience,
@@ -2610,6 +2650,178 @@ app.post('/api/deliveries/:orderId/complete-pod', requireVerifiedUser as any, as
   }
 });
 
+app.post('/api/deliveries/:orderId/otp', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!firestoreAdmin) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const cleanDocId = String(req.params.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!cleanDocId) {
+      return res.status(400).json({ success: false, error: 'Identifiant de livraison invalide.' });
+    }
+
+    const deliveryRef = firestoreAdmin.collection('deliveries').doc(cleanDocId);
+    const deliverySnap = await deliveryRef.get();
+    if (!deliverySnap.exists) {
+      return res.status(404).json({ success: false, error: 'Livraison introuvable.' });
+    }
+
+    const deliveryData = deliverySnap.data() || {};
+    const callerUid = req.user!.uid;
+    const isAdmin = await checkCallerIsAdmin(req.user);
+    if (!isAdmin && deliveryData.merchantId !== callerUid) {
+      return res.status(403).json({ success: false, error: 'Seul le vendeur propriétaire ou un administrateur peut générer le code OTP.' });
+    }
+    if (deliveryData.status === 'livree' || deliveryData.status === 'echec') {
+      return res.status(409).json({ success: false, error: 'Cette livraison est déjà clôturée.' });
+    }
+
+    const otpCode = crypto.randomInt(1000, 10000).toString();
+    const nowIso = new Date().toISOString();
+    await deliveryRef.collection('private').doc('otp').set({
+      otpCode,
+      merchantId: deliveryData.merchantId || callerUid,
+      generatedAt: nowIso,
+      updatedAt: nowIso,
+    });
+    await deliveryRef.update({
+      otpRequired: true,
+      otpGeneratedAt: nowIso,
+      updatedAt: nowIso,
+    });
+
+    let emailResult: { emailDelivered?: boolean; queued?: boolean } | null = null;
+    const rawClientEmail = typeof req.body?.clientEmail === 'string' ? req.body.clientEmail.trim().toLowerCase() : '';
+    const EMAIL_REGEX = /^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$/;
+    if (rawClientEmail && EMAIL_REGEX.test(rawClientEmail)) {
+      const p1 = getP1EmailService();
+      const safeOrderId = escapeHtml(String(deliveryData.id || `#${cleanDocId}`));
+      const safeClientName = escapeHtml(String(req.body?.clientName || deliveryData.clientName || 'Client'));
+      const safeStoreName = escapeHtml(String(deliveryData.merchantStoreName || 'Boutique LivraLink'));
+      emailResult = await p1.dispatchOrQueueEmail({
+        type: 'custom',
+        to: rawClientEmail,
+        recipientName: String(req.body?.clientName || deliveryData.clientName || 'Client'),
+        subject: `🔐 LivraLink : Votre code de confirmation de livraison (${deliveryData.id || cleanDocId})`,
+        previewText: `Code secret de remise à 4 chiffres : ${otpCode} pour votre commande ${deliveryData.id || cleanDocId}.`,
+        textContent: `Bonjour,\n\nVotre colis (${deliveryData.id || cleanDocId}) expédié par ${deliveryData.merchantStoreName || 'LivraLink'} dispose d'un code secret de confirmation à remettre exclusivement au livreur lors de la réception :\n\nCODE OTP : ${otpCode}\n\nNe communiquez ce code qu'à la remise effective du colis.`,
+        htmlContent: `
+          <div style="font-family: 'Plus Jakarta Sans', sans-serif; max-width: 540px; margin: 0 auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; color: #0f172a;">
+            <div style="background: #0f172a; padding: 20px; text-align: center;">
+              <h1 style="color: #fff; margin: 0; font-size: 22px; font-weight: 800;">Livra<span style="color: #3b82f6;">Link</span></h1>
+            </div>
+            <div style="padding: 24px;">
+              <p style="font-size: 14px; color: #334155;">Bonjour <strong>${safeClientName}</strong>,</p>
+              <p style="font-size: 14px; color: #334155;">Voici votre code secret de sécurité pour la commande <strong>${safeOrderId}</strong> (${safeStoreName}) :</p>
+              <div style="background: #eff6ff; border: 2px dashed #3b82f6; border-radius: 14px; padding: 18px; text-align: center; margin: 18px 0;">
+                <span style="font-size: 34px; font-weight: 900; letter-spacing: 8px; color: #1d4ed8; font-family: monospace;">${otpCode}</span>
+              </div>
+              <p style="font-size: 12px; color: #64748b;">Communiquez ce code au livreur uniquement au moment de la remise effective de votre colis.</p>
+            </div>
+          </div>
+        `,
+        allowQueue: true,
+      });
+    }
+
+    return res.json({
+      success: true,
+      otpCode,
+      generatedAt: nowIso,
+      emailDelivered: Boolean(emailResult?.emailDelivered),
+      queued: Boolean(emailResult?.queued),
+    });
+  } catch (err: any) {
+    console.error('[DELIVERY-OTP-GENERATE ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la génération du code OTP.' });
+  }
+});
+
+app.post('/api/deliveries/:orderId/notify-client-otp', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!firestoreAdmin) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const cleanDocId = String(req.params.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!cleanDocId) {
+      return res.status(400).json({ success: false, error: 'Identifiant de livraison invalide.' });
+    }
+    const cleanClientEmail = String(req.body?.clientEmail || '').trim().toLowerCase();
+    const EMAIL_REGEX = /^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$/;
+    if (!cleanClientEmail || !EMAIL_REGEX.test(cleanClientEmail)) {
+      return res.status(400).json({ success: false, error: 'Adresse e-mail client valide requise.' });
+    }
+
+    const deliveryRef = firestoreAdmin.collection('deliveries').doc(cleanDocId);
+    const [deliverySnap, otpSnap] = await Promise.all([
+      deliveryRef.get(),
+      deliveryRef.collection('private').doc('otp').get(),
+    ]);
+    if (!deliverySnap.exists) {
+      return res.status(404).json({ success: false, error: 'Livraison introuvable.' });
+    }
+
+    const deliveryData = deliverySnap.data() || {};
+    const callerUid = req.user!.uid;
+    const isAdmin = await checkCallerIsAdmin(req.user);
+    if (!isAdmin && deliveryData.merchantId !== callerUid) {
+      return res.status(403).json({ success: false, error: 'Seul le vendeur propriétaire ou un administrateur peut transmettre le code OTP au client.' });
+    }
+
+    const storedOtp = String(otpSnap.exists ? otpSnap.data()?.otpCode || '' : '').trim();
+    if (!/^\d{4}$/.test(storedOtp)) {
+      return res.status(400).json({ success: false, error: 'Aucun code OTP actif enregistré pour cette livraison. Veuillez d\'abord générer un code.' });
+    }
+
+    const p1 = getP1EmailService();
+    const displayOrderId = String(deliveryData.id || `#${cleanDocId}`);
+    const clientName = String(req.body?.clientName || deliveryData.clientName || 'Client').trim().slice(0, 120);
+    const storeName = String(deliveryData.merchantStoreName || deliveryData.pickupLocation?.name || 'Boutique LivraLink').trim();
+    const payable = Number(deliveryData.totalCustomerPayable ?? (Number(deliveryData.itemValueCOD || 0) + Number(deliveryData.deliveryFee || 0)));
+
+    const dispatch = await p1.dispatchOrQueueEmail({
+      type: 'custom',
+      to: cleanClientEmail,
+      recipientName: clientName,
+      subject: `🔐 Code de confirmation LivraLink (${displayOrderId})`,
+      previewText: `Code OTP à 4 chiffres : ${storedOtp} — Montant à régler à la livraison : ${payable.toLocaleString('fr-FR')} FCFA.`,
+      textContent: `Bonjour ${clientName},\n\nVotre commande ${displayOrderId} (${storeName}) est prise en charge via LivraLink.\nMontant total à la remise : ${payable.toLocaleString('fr-FR')} FCFA.\nVotre code secret de confirmation (OTP) : ${storedOtp}\n\nNe communiquez ce code au livreur qu'au moment de la remise effective du colis.`,
+      htmlContent: `
+        <div style="font-family: 'Plus Jakarta Sans', sans-serif; max-width: 560px; margin: 0 auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; color: #0f172a;">
+          <div style="background: #0f172a; padding: 20px; text-align: center;">
+            <h1 style="color: #fff; margin: 0; font-size: 22px; font-weight: 800;">Livra<span style="color: #3b82f6;">Link</span></h1>
+          </div>
+          <div style="padding: 24px;">
+            <p style="font-size: 14px; color: #334155;">Bonjour <strong>${escapeHtml(clientName)}</strong>,</p>
+            <p style="font-size: 14px; color: #334155;">Votre commande <strong>${escapeHtml(displayOrderId)}</strong> expédiée par <strong>${escapeHtml(storeName)}</strong> est sécurisée par un code OTP.</p>
+            <div style="background: #eff6ff; border: 2px dashed #3b82f6; border-radius: 14px; padding: 18px; text-align: center; margin: 18px 0;">
+              <div style="font-size: 11px; color: #1e40af; font-weight: 700; text-transform: uppercase; margin-bottom: 6px;">Code Secret Client</div>
+              <span style="font-size: 34px; font-weight: 900; letter-spacing: 8px; color: #1d4ed8; font-family: monospace;">${storedOtp}</span>
+            </div>
+            <p style="font-size: 13px; color: #334155;">Montant total à la livraison : <strong>${payable.toLocaleString('fr-FR')} FCFA</strong></p>
+            <p style="font-size: 12px; color: #64748b;">Ne communiquez ce code au livreur qu'après réception et vérification de votre colis.</p>
+          </div>
+        </div>
+      `,
+      allowQueue: true,
+    });
+
+    return res.json({
+      success: dispatch.emailDelivered || dispatch.queued,
+      emailDelivered: dispatch.emailDelivered,
+      queued: dispatch.queued,
+      message: dispatch.emailDelivered
+        ? `Code OTP transmis par e-mail à ${cleanClientEmail}.`
+        : dispatch.queued
+          ? `Relais SMTP occupé : e-mail OTP mis en file d'attente pour ${cleanClientEmail}.`
+          : dispatch.lastError || 'Impossible d\'envoyer l\'e-mail.',
+    });
+  } catch (err: any) {
+    console.error('[NOTIFY-CLIENT-OTP ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de l\'envoi de l\'e-mail OTP au client.' });
+  }
+});
+
 app.post('/api/notifications/dispatch', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!firestoreAdmin) {
@@ -2892,7 +3104,7 @@ app.post('/api/logs/error', requireAuthenticatedUser as any, (req: Authenticated
   const ip = getClientIp(req);
   const safeDetails = details && typeof details === 'object' ? JSON.stringify(details).slice(0, 500) : undefined;
   const entry: ErrorLogEntry = {
-    id: `LOG-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    id: `LOG-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
     timestamp: new Date().toISOString(),
     ip,
     message: String(message || 'Erreur non spécifiée').slice(0, 500),
@@ -3252,6 +3464,589 @@ app.get('/api/admin/sync-overview', requireAdminAuthorization as any, async (_re
       success: false,
       error: err?.message || 'Erreur lors de la synchronisation globale administrateur.',
     });
+  }
+});
+
+// =========================================================================
+// ENDPOINTS DE GESTION MÉTIER PARTAGÉE (KYC, WALLET, ASSIGNATION, CONFIG)
+// =========================================================================
+app.post('/api/admin/kyc/decision', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!firestoreAdmin) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const { targetUid, requestId, decision, reason } = req.body || {};
+    if (decision !== 'valide' && decision !== 'refuse') {
+      return res.status(400).json({ success: false, error: 'Décision invalide ("valide" ou "refuse" requis).' });
+    }
+    const cleanTargetUid = String(targetUid || requestId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    const cleanRequestId = String(requestId || cleanTargetUid).trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!cleanTargetUid && !cleanRequestId) {
+      return res.status(400).json({ success: false, error: 'Identifiant utilisateur/dossier KYC requis.' });
+    }
+
+    const cleanReason = decision === 'refuse'
+      ? String(reason || 'Documents non conformes ou illisibles. Veuillez soumettre un dossier complet.').trim().slice(0, 500)
+      : '';
+    const nowIso = new Date().toISOString();
+    const isApproved = decision === 'valide';
+
+    let resolvedUid = cleanTargetUid;
+    let kycDocData: Record<string, any> = {};
+    const kycCandidates = Array.from(new Set([cleanRequestId, cleanTargetUid].filter(Boolean)));
+    let kycDocIdToUpdate = cleanTargetUid || cleanRequestId;
+
+    for (const candidateId of kycCandidates) {
+      const snap = await firestoreAdmin.collection('kyc').doc(candidateId).get();
+      if (snap.exists) {
+        kycDocIdToUpdate = snap.id;
+        kycDocData = snap.data() || {};
+        if (typeof kycDocData.userId === 'string' && kycDocData.userId.trim()) {
+          resolvedUid = kycDocData.userId.trim();
+        } else if (typeof kycDocData.courierId === 'string' && kycDocData.courierId.trim()) {
+          resolvedUid = kycDocData.courierId.trim();
+        }
+        break;
+      }
+    }
+
+    const userRef = firestoreAdmin.collection('users').doc(resolvedUid);
+    const userSnap = await userRef.get();
+    const userData = userSnap.exists ? userSnap.data() || {} : {};
+    const userRole = String(userData.role || (kycDocData.role === 'marchand' ? 'vendeur' : 'livreur')).toLowerCase();
+    const fullName = String(userData.fullName || kycDocData.fullName || 'Partenaire LivraLink').trim();
+    const recipientEmail = String(userData.email || kycDocData.email || '').trim().toLowerCase();
+
+    const batch = firestoreAdmin.batch();
+    const kycRef = firestoreAdmin.collection('kyc').doc(kycDocIdToUpdate);
+    batch.set(
+      kycRef,
+      {
+        id: kycDocIdToUpdate,
+        userId: resolvedUid,
+        courierId: resolvedUid,
+        status: decision,
+        isApproved,
+        verified: isApproved,
+        rejectionReason: isApproved ? null : cleanReason,
+        reviewedAt: nowIso,
+        reviewedBy: req.user?.email || req.user?.uid || 'admin',
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
+
+    const userPatch: Record<string, any> = {
+      isKycVerified: isApproved,
+      kycStatus: decision,
+      kycRejectionReason: isApproved ? null : cleanReason,
+      updatedAt: nowIso,
+    };
+    if (isApproved) {
+      userPatch.status = userRole === 'vendeur' ? 'actif' : 'en_ligne';
+    }
+    batch.set(userRef, userPatch, { merge: true });
+
+    const notifId = `notif_kyc_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    batch.set(firestoreAdmin.collection('notifications').doc(notifId), {
+      id: notifId,
+      senderId: req.user!.uid,
+      recipientId: resolvedUid,
+      type: 'kyc',
+      title: isApproved ? '✅ Compte vérifié et accrédité' : '⚠️ Dossier KYC refusé — Action requise',
+      message: isApproved
+        ? `Félicitations ${fullName} ! Votre dossier d'identité KYC est validé. Toutes les fonctionnalités LivraLink sont débloquées.`
+        : `Votre dossier KYC n'a pas pu être validé : ${cleanReason}`,
+      isRead: false,
+      read: false,
+      createdAt: Date.now(),
+      timestamp: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+    });
+
+    await batch.commit();
+
+    if (recipientEmail) {
+      const p1 = getP1EmailService();
+      await p1.dispatchOrQueueEmail({
+        type: isApproved ? 'kyc_approved' : 'kyc_rejected',
+        to: recipientEmail,
+        recipientName: fullName,
+        recipientRole: userRole,
+        subject: isApproved
+          ? `🎉 Compte Activé ! Votre vérification KYC LivraLink est confirmée`
+          : `⚠️ Dossier KYC LivraLink : Action requise pour la validation de votre compte`,
+        previewText: isApproved
+          ? 'Votre dossier KYC est validé. Votre compte LivraLink est pleinement actif.'
+          : `Dossier KYC refusé : ${cleanReason}`,
+        textContent: isApproved
+          ? `Bonjour ${fullName},\n\nVotre dossier KYC a été approuvé par notre équipe. Votre compte LivraLink est désormais actif.`
+          : `Bonjour ${fullName},\n\nVotre dossier KYC a été refusé pour la raison suivante : ${cleanReason}\nVeuillez soumettre à nouveau vos pièces depuis votre espace.`,
+        htmlContent: `
+          <div style="font-family: 'Plus Jakarta Sans', sans-serif; padding: 24px; color: #0f172a;">
+            <h2 style="color: ${isApproved ? '#16a34a' : '#dc2626'};">${isApproved ? '🎉 Compte vérifié KYC !' : '⚠️ Mise à jour de votre dossier KYC'}</h2>
+            <p>Bonjour <strong>${escapeHtml(fullName)}</strong>,</p>
+            ${
+              isApproved
+                ? '<p>Votre dossier KYC a été <strong>approuvé</strong> par l\'administration LivraLink. Votre compte est désormais pleinement opérationnel.</p>'
+                : `<p>Votre dossier KYC n'a pas pu être validé en l'état :</p><blockquote style="background:#fef2f2;border-left:4px solid #ef4444;padding:12px;color:#991b1b;">${escapeHtml(cleanReason)}</blockquote><p>Veuillez corriger et soumettre à nouveau votre dossier depuis votre espace.</p>`
+            }
+          </div>
+        `,
+        allowQueue: true,
+      }).catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      targetUid: resolvedUid,
+      kycId: kycDocIdToUpdate,
+      decision,
+      isApproved,
+      rejectionReason: isApproved ? undefined : cleanReason,
+    });
+  } catch (err: any) {
+    console.error('[ADMIN KYC DECISION ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la décision administrative KYC.' });
+  }
+});
+
+app.post('/api/admin/wallet/adjust', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!firestoreAdmin) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const { targetUid, amount, type, note } = req.body || {};
+    const cleanUid = String(targetUid || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!cleanUid) {
+      return res.status(400).json({ success: false, error: 'Identifiant utilisateur requis.' });
+    }
+    if (type !== 'credit' && type !== 'debit') {
+      return res.status(400).json({ success: false, error: 'Type d\'opération invalide ("credit" ou "debit").' });
+    }
+    const numericAmount = Math.round(Number(amount));
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0 || numericAmount > 50_000_000) {
+      return res.status(400).json({ success: false, error: 'Montant invalide.' });
+    }
+    const cleanNote = String(note || `Ajustement administratif (${type === 'credit' ? 'Crédit' : 'Débit'})`).trim().slice(0, 256);
+
+    const userRef = firestoreAdmin.collection('users').doc(cleanUid);
+    const txResult = await firestoreAdmin.runTransaction(async (tx) => {
+      const snap = await tx.get(userRef);
+      if (!snap.exists) {
+        return { ok: false as const, status: 404, error: 'Compte utilisateur introuvable.' };
+      }
+      const userData = snap.data() || {};
+      const currentBalance = typeof userData.walletBalanceFCFA === 'number' && Number.isFinite(userData.walletBalanceFCFA)
+        ? userData.walletBalanceFCFA
+        : 0;
+
+      if (type === 'debit' && currentBalance < numericAmount) {
+        return {
+          ok: false as const,
+          status: 400,
+          error: `Solde insuffisant (${currentBalance.toLocaleString('fr-FR')} FCFA disponibles).`,
+        };
+      }
+
+      const newBalance = type === 'credit' ? currentBalance + numericAmount : currentBalance - numericAmount;
+      const nowIso = new Date().toISOString();
+      const txId = `wtx_adm_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+
+      tx.update(userRef, {
+        walletBalanceFCFA: newBalance,
+        updatedAt: nowIso,
+      });
+
+      tx.set(firestoreAdmin!.collection('wallet_transactions').doc(txId), {
+        id: txId,
+        uid: cleanUid,
+        type: type === 'credit' ? 'admin_credit' : 'admin_debit',
+        direction: type,
+        amountFCFA: numericAmount,
+        balanceBefore: currentBalance,
+        balanceAfter: newBalance,
+        note: cleanNote,
+        adminUid: req.user!.uid,
+        adminEmail: req.user?.email || 'admin',
+        createdAt: Date.now(),
+        createdAtIso: nowIso,
+      });
+
+      const notifId = `notif_wtx_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+      tx.set(firestoreAdmin!.collection('notifications').doc(notifId), {
+        id: notifId,
+        senderId: req.user!.uid,
+        recipientId: cleanUid,
+        type: 'system',
+        title: type === 'credit' ? `💰 Crédit de ${numericAmount.toLocaleString('fr-FR')} FCFA` : `💳 Débit de ${numericAmount.toLocaleString('fr-FR')} FCFA`,
+        message: `${cleanNote} — Nouveau solde : ${newBalance.toLocaleString('fr-FR')} FCFA.`,
+        isRead: false,
+        read: false,
+        createdAt: Date.now(),
+        timestamp: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      });
+
+      return {
+        ok: true as const,
+        txId,
+        balanceBefore: currentBalance,
+        balanceAfter: newBalance,
+        email: String(userData.email || '').trim().toLowerCase(),
+        fullName: String(userData.fullName || 'Livreur LivraLink').trim(),
+      };
+    });
+
+    if (!txResult.ok) {
+      return res.status(txResult.status).json({ success: false, error: txResult.error });
+    }
+
+    if (txResult.email) {
+      getP1EmailService().dispatchOrQueueEmail({
+        type: 'custom',
+        to: txResult.email,
+        recipientName: txResult.fullName,
+        subject: `LivraLink Portefeuille : ${type === 'credit' ? '+' : '-'}${numericAmount.toLocaleString('fr-FR')} FCFA`,
+        previewText: `${cleanNote} — Nouveau solde : ${txResult.balanceAfter.toLocaleString('fr-FR')} FCFA.`,
+        textContent: `Bonjour ${txResult.fullName},\n\nUne opération administrative a été enregistrée sur votre portefeuille LivraLink :\n- Type : ${type === 'credit' ? 'Crédit' : 'Débit'}\n- Montant : ${numericAmount.toLocaleString('fr-FR')} FCFA\n- Motif : ${cleanNote}\n- Nouveau solde : ${txResult.balanceAfter.toLocaleString('fr-FR')} FCFA`,
+        htmlContent: `<div style="font-family:sans-serif;padding:20px;color:#0f172a;"><h2>Mise à jour portefeuille LivraLink</h2><p>Bonjour <strong>${escapeHtml(txResult.fullName)}</strong>,</p><p>${escapeHtml(cleanNote)} : <strong>${type === 'credit' ? '+' : '-'}${numericAmount.toLocaleString('fr-FR')} FCFA</strong></p><p>Nouveau solde : <strong>${txResult.balanceAfter.toLocaleString('fr-FR')} FCFA</strong></p></div>`,
+        allowQueue: true,
+      }).catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      txId: txResult.txId,
+      balanceBefore: txResult.balanceBefore,
+      balanceAfter: txResult.balanceAfter,
+    });
+  } catch (err: any) {
+    console.error('[ADMIN WALLET ADJUST ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de l\'ajustement du portefeuille.' });
+  }
+});
+
+app.post('/api/admin/deliveries/:orderId/assign', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!firestoreAdmin) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const cleanDocId = String(req.params.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    const cleanCourierId = String(req.body?.courierId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!cleanDocId || !cleanCourierId) {
+      return res.status(400).json({ success: false, error: 'Identifiant de course et identifiant livreur requis.' });
+    }
+
+    const callerUid = req.user!.uid;
+    const isAdmin = await checkCallerIsAdmin(req.user);
+
+    const deliveryRef = firestoreAdmin.collection('deliveries').doc(cleanDocId);
+    const courierRef = firestoreAdmin.collection('users').doc(cleanCourierId);
+    const missionRef = firestoreAdmin.collection('priority_missions').doc(cleanDocId);
+
+    const [deliverySnap, courierSnap, missionSnap] = await Promise.all([
+      deliveryRef.get(),
+      courierRef.get(),
+      missionRef.get(),
+    ]);
+
+    if (!deliverySnap.exists) {
+      return res.status(404).json({ success: false, error: 'Livraison introuvable.' });
+    }
+    const deliveryData = deliverySnap.data() || {};
+    if (!isAdmin && deliveryData.merchantId !== callerUid) {
+      return res.status(403).json({ success: false, error: 'Autorisation refusée pour assigner cette livraison.' });
+    }
+    if (deliveryData.status === 'livree' || deliveryData.status === 'echec') {
+      return res.status(409).json({ success: false, error: 'Impossible d\'assigner une course déjà clôturée.' });
+    }
+    if (!courierSnap.exists) {
+      return res.status(404).json({ success: false, error: 'Livreur sélectionné introuvable.' });
+    }
+    const courierData = courierSnap.data() || {};
+    if (courierData.role !== 'livreur') {
+      return res.status(400).json({ success: false, error: 'Le compte sélectionné n\'est pas un livreur.' });
+    }
+    if (!courierData.isKycVerified && courierData.kycStatus !== 'valide') {
+      return res.status(403).json({ success: false, error: 'Ce livreur n\'est pas encore vérifié KYC.' });
+    }
+
+    const courierName = String(courierData.fullName || courierData.name || 'Coursier LivraLink').trim();
+    const courierPhone = String(courierData.phone || '').trim();
+    const nowIso = new Date().toISOString();
+    const fee = Number(deliveryData.deliveryFee || 0);
+    const courierObj = {
+      id: cleanCourierId,
+      name: courierName,
+      phone: courierPhone,
+      email: courierData.email || '',
+      avatarInitials: courierName.split(' ').map((n: string) => n[0]).filter(Boolean).join('').toUpperCase().slice(0, 2) || 'CR',
+      rating: 5.0,
+      totalDeliveries: Number(courierData.totalDeliveries || 0),
+      vehicle: courierData.vehicleType || 'Moto 125cc',
+      zone: courierData.locationCommune || 'Cotonou',
+      distanceKm: 1.0,
+      etaMinutes: 10,
+      status: 'en_course',
+      priceFCFA: fee,
+      commissionFCFA: 0,
+      netEarningFCFA: fee,
+      isKycVerified: true,
+    };
+
+    const batch = firestoreAdmin.batch();
+    batch.update(deliveryRef, {
+      courierId: cleanCourierId,
+      courierName,
+      courier: courierObj,
+      status: 'assignee',
+      assignedAt: nowIso,
+      updatedAt: nowIso,
+      statusNote: `Assignée à ${courierName}`,
+    });
+
+    if (missionSnap.exists) {
+      batch.update(missionRef, {
+        courierId: cleanCourierId,
+        courierName,
+        status: 'assignee',
+        assignedAt: nowIso,
+        updatedAt: nowIso,
+      });
+    }
+
+    const notifId = `notif_assign_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    batch.set(firestoreAdmin.collection('notifications').doc(notifId), {
+      id: notifId,
+      senderId: callerUid,
+      recipientId: cleanCourierId,
+      type: 'order_assigned',
+      title: `📦 Nouvelle mission assignée (${deliveryData.id || cleanDocId})`,
+      message: `Course ${deliveryData.id || cleanDocId} : ${deliveryData.pickupLocation?.commune || 'Retrait'} → ${deliveryData.dropoffLocation?.commune || 'Destination'} (${fee.toLocaleString('fr-FR')} FCFA).`,
+      orderId: String(deliveryData.id || cleanDocId),
+      orderDocId: cleanDocId,
+      actionView: 'livreur-missions',
+      isRead: false,
+      read: false,
+      createdAt: Date.now(),
+      timestamp: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+    });
+
+    await batch.commit();
+
+    return res.json({
+      success: true,
+      orderId: deliveryData.id || cleanDocId,
+      courier: courierObj,
+    });
+  } catch (err: any) {
+    console.error('[ASSIGN DELIVERY ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de l\'assignation de la course.' });
+  }
+});
+
+app.delete('/api/admin/deliveries/:orderId', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!firestoreAdmin) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const cleanDocId = String(req.params.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!cleanDocId) {
+      return res.status(400).json({ success: false, error: 'Identifiant de livraison invalide.' });
+    }
+
+    const deliveryRef = firestoreAdmin.collection('deliveries').doc(cleanDocId);
+    const missionRef = firestoreAdmin.collection('priority_missions').doc(cleanDocId);
+    const otpRef = deliveryRef.collection('private').doc('otp');
+
+    const batch = firestoreAdmin.batch();
+    batch.delete(otpRef);
+    batch.delete(missionRef);
+    batch.delete(deliveryRef);
+    await batch.commit();
+
+    return res.json({ success: true, deletedId: cleanDocId });
+  } catch (err: any) {
+    console.error('[DELETE DELIVERY ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la suppression de la livraison.' });
+  }
+});
+
+app.post('/api/admin/directory/user', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!firestoreAdmin) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const body = req.body || {};
+    const role = body.role === 'livreur' ? 'livreur' : 'vendeur';
+    const uid = String(body.uid || body.id || `${role === 'livreur' ? 'c' : 'm'}_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`)
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, '');
+    const fullName = String(body.fullName || body.name || body.managerName || '').trim().slice(0, 128);
+    if (!uid || fullName.length < 2) {
+      return res.status(400).json({ success: false, error: 'Nom complet valide requis (min 2 caractères).' });
+    }
+    const nowIso = new Date().toISOString();
+    const isVerified = Boolean(body.isKycVerified || body.isVerified);
+    const docPayload: Record<string, any> = {
+      uid,
+      id: uid,
+      role,
+      fullName,
+      email: String(body.email || '').trim().toLowerCase().slice(0, 128),
+      phone: String(body.phone || '').trim().slice(0, 32),
+      status: body.status || (role === 'livreur' ? 'en_ligne' : 'actif'),
+      isKycVerified: isVerified,
+      kycStatus: isVerified ? 'valide' : 'non_soumis',
+      createdAt: body.createdAt || nowIso,
+      updatedAt: nowIso,
+      createdByAdmin: req.user?.email || req.user?.uid || 'admin',
+    };
+    if (role === 'vendeur') {
+      docPayload.storeName = String(body.storeName || `Boutique ${fullName}`).trim().slice(0, 128);
+      docPayload.storeCommune = String(body.commune || body.storeCommune || 'Cotonou').trim().slice(0, 128);
+      docPayload.storeAddress = String(body.address || body.storeAddress || '').trim().slice(0, 256);
+      docPayload.channel = body.channel || 'WhatsApp';
+    } else {
+      docPayload.vehicleType = String(body.vehicle || body.vehicleType || 'Moto 125cc').trim().slice(0, 64);
+      docPayload.locationCommune = String(body.zone || body.locationCommune || 'Cotonou').trim().slice(0, 128);
+      docPayload.walletBalanceFCFA = typeof body.walletBalanceFCFA === 'number' ? body.walletBalanceFCFA : 0;
+    }
+
+    await firestoreAdmin.collection('users').doc(uid).set(docPayload, { merge: true });
+    return res.status(201).json({ success: true, uid, user: docPayload });
+  } catch (err: any) {
+    console.error('[ADMIN DIRECTORY CREATE ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de l\'enregistrement dans l\'annuaire.' });
+  }
+});
+
+app.patch('/api/admin/directory/user/:uid', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!firestoreAdmin) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const uid = String(req.params.uid || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!uid) {
+      return res.status(400).json({ success: false, error: 'Identifiant utilisateur requis.' });
+    }
+    const allowedFields = [
+      'fullName', 'email', 'phone', 'status', 'isKycVerified', 'kycStatus',
+      'storeName', 'storeCommune', 'storeAddress', 'channel',
+      'vehicleType', 'vehiclePlate', 'locationCommune', 'preferredRateDiscountPercent',
+    ];
+    const patch: Record<string, any> = { updatedAt: new Date().toISOString() };
+    const body = req.body || {};
+    for (const key of allowedFields) {
+      if (body[key] !== undefined) {
+        patch[key] = body[key];
+      }
+    }
+    if (body.name && !patch.fullName) patch.fullName = String(body.name).trim().slice(0, 128);
+    if (body.managerName && !patch.fullName) patch.fullName = String(body.managerName).trim().slice(0, 128);
+    if (body.commune && !patch.storeCommune) patch.storeCommune = String(body.commune).trim().slice(0, 128);
+    if (body.address && !patch.storeAddress) patch.storeAddress = String(body.address).trim().slice(0, 256);
+    if (body.vehicle && !patch.vehicleType) patch.vehicleType = String(body.vehicle).trim().slice(0, 64);
+    if (body.zone && !patch.locationCommune) patch.locationCommune = String(body.zone).trim().slice(0, 128);
+    if (typeof body.isVerified === 'boolean' && patch.isKycVerified === undefined) {
+      patch.isKycVerified = body.isVerified;
+      patch.kycStatus = body.isVerified ? 'valide' : 'non_soumis';
+    }
+
+    await firestoreAdmin.collection('users').doc(uid).set(patch, { merge: true });
+    return res.json({ success: true, uid, updated: patch });
+  } catch (err: any) {
+    console.error('[ADMIN DIRECTORY UPDATE ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la mise à jour du compte.' });
+  }
+});
+
+app.delete('/api/admin/directory/user/:uid', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!firestoreAdmin) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const uid = String(req.params.uid || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!uid) {
+      return res.status(400).json({ success: false, error: 'Identifiant utilisateur requis.' });
+    }
+    await firestoreAdmin.collection('users').doc(uid).delete();
+    await firestoreAdmin.collection('kyc').doc(uid).delete().catch(() => {});
+    return res.json({ success: true, deletedUid: uid });
+  } catch (err: any) {
+    console.error('[ADMIN DIRECTORY DELETE ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la suppression du compte.' });
+  }
+});
+
+app.get('/api/platform/config', requireAuthenticatedUser as any, async (_req: AuthenticatedRequest, res: Response) => {
+  const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+  try {
+    if (!activeDb) {
+      return res.json({ success: true, source: 'defaults', pricingRules: null, featureFlags: null });
+    }
+    const snap = await activeDb.collection('system_config').doc('platform_settings').get();
+    if (!snap.exists) {
+      return res.json({ success: true, source: 'defaults', pricingRules: null, featureFlags: null });
+    }
+    const data = snap.data() || {};
+    return res.json({
+      success: true,
+      source: 'firestore',
+      pricingRules: data.pricingRules || null,
+      featureFlags: data.featureFlags || null,
+      updatedAt: data.updatedAt || null,
+    });
+  } catch (err: any) {
+    if (isFirestoreIamDeniedError(err)) {
+      console.warn('[PLATFORM CONFIG GET] Bascule sur valeurs par défaut (permissions IAM Firestore indisponibles):', err?.message || err);
+      return res.json({
+        success: true,
+        source: 'defaults_iam_fallback',
+        iamPermissionDenied: true,
+        pricingRules: null,
+        featureFlags: null,
+      });
+    }
+    console.error('[PLATFORM CONFIG GET ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors du chargement de la configuration plateforme.' });
+  }
+});
+
+app.post('/api/platform/config', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+  try {
+    if (!activeDb) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const { pricingRules, featureFlags } = req.body || {};
+    if (!pricingRules && !featureFlags) {
+      return res.status(400).json({ success: false, error: 'pricingRules ou featureFlags requis.' });
+    }
+    const nowIso = new Date().toISOString();
+    const payload: Record<string, any> = {
+      updatedAt: nowIso,
+      updatedBy: req.user?.email || req.user?.uid || 'admin',
+    };
+    if (pricingRules && typeof pricingRules === 'object') {
+      payload.pricingRules = pricingRules;
+    }
+    if (featureFlags && typeof featureFlags === 'object') {
+      payload.featureFlags = featureFlags;
+    }
+
+    await activeDb.collection('system_config').doc('platform_settings').set(payload, { merge: true });
+    return res.json({ success: true, ...payload });
+  } catch (err: any) {
+    if (isFirestoreIamDeniedError(err)) {
+      console.warn('[PLATFORM CONFIG POST] Permissions IAM Firestore insuffisantes:', err?.message || err);
+      return res.status(503).json({
+        success: false,
+        code: 'IAM_PERMISSION_DENIED',
+        error: 'Permissions IAM Firestore insuffisantes pour enregistrer la configuration plateforme côté serveur.',
+      });
+    }
+    console.error('[PLATFORM CONFIG POST ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de l\'enregistrement de la configuration plateforme.' });
   }
 });
 

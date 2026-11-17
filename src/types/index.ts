@@ -98,6 +98,9 @@ export interface DeliveryOrder {
   deliveryFee: number;  // Frais de livraison LivraLink in FCFA
   totalCustomerPayable: number; // COD + Fee in FCFA
   courier?: Courier;
+  courierId?: string;
+  courierName?: string;
+  assignedAt?: string | number;
   courierRating?: CourierRating;
   status: DeliveryStatus;
   statusNote?: string;

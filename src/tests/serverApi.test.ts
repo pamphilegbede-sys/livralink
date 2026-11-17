@@ -102,4 +102,57 @@ test('Express API security & health integration tests', async (t) => {
     const body = await resWeak.json();
     assert.equal(body.success, false);
   });
+
+  await t.test('GET/POST /api/platform/config handle Firestore 7 PERMISSION_DENIED cleanly without 500 error', async () => {
+    const serverMod = await import('../../server');
+    const permDeniedErr: any = new Error('7 PERMISSION_DENIED: Missing or insufficient permissions.');
+    permDeniedErr.code = 7;
+
+    serverMod.setTokenVerifierForTests(async (tok) => {
+      if (tok === 'admin-tok') {
+        return { uid: 'admin_1', email: 'Pamphile.gbede@gmail.com', email_verified: true, admin: true };
+      }
+      return { uid: 'user_1', email: 'vendeur@livralink.bj', email_verified: true };
+    });
+
+    serverMod.setFirestoreAdminForTests({
+      collection: () => ({
+        doc: () => ({
+          get: async () => {
+            throw permDeniedErr;
+          },
+          set: async () => {
+            throw permDeniedErr;
+          },
+        }),
+      }),
+    });
+
+    try {
+      const getRes = await fetch(`${baseUrl}/api/platform/config`, {
+        headers: { Authorization: 'Bearer user-tok' },
+      });
+      assert.equal(getRes.status, 200);
+      const getBody = await getRes.json();
+      assert.equal(getBody.success, true);
+      assert.equal(getBody.source, 'defaults_iam_fallback');
+      assert.equal(getBody.iamPermissionDenied, true);
+
+      const postRes = await fetch(`${baseUrl}/api/platform/config`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer admin-tok',
+        },
+        body: JSON.stringify({ pricingRules: { baseFeeFCFA: 1000 } }),
+      });
+      assert.equal(postRes.status, 503);
+      const postBody = await postRes.json();
+      assert.equal(postBody.success, false);
+      assert.equal(postBody.code, 'IAM_PERMISSION_DENIED');
+    } finally {
+      serverMod.setFirestoreAdminForTests(null);
+      serverMod.setTokenVerifierForTests(null);
+    }
+  });
 });

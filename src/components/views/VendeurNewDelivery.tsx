@@ -37,6 +37,7 @@ export const VendeurNewDelivery: React.FC = () => {
   // Step 1: Destinataire (TOUS VIDES par défaut à la demande du vendeur)
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
+  const [clientEmail, setClientEmail] = useState('');
   const [clientNote, setClientNote] = useState('');
 
   // Fonction pour obtenir les coordonnées Google Maps de la boutique du vendeur
@@ -215,7 +216,7 @@ export const VendeurNewDelivery: React.FC = () => {
 
   // Step 3: Attribution Coursier & Diffusion
   const [dispatchMode, setDispatchMode] = useState<'broadcast' | 'direct'>('broadcast');
-  const [selectedDriverId, setSelectedDriverId] = useState(selectedCourier.id || couriers[0]?.id || 'c-david');
+  const [selectedDriverId, setSelectedDriverId] = useState(selectedCourier?.id || couriers[0]?.id || '');
   const [filterType, setFilterType] = useState<'all' | 'nearest' | 'top'>('all');
 
   // Validation errors
@@ -337,10 +338,15 @@ export const VendeurNewDelivery: React.FC = () => {
     // Par défaut : diffusion ouverte à tous les livreurs (aucune assignation automatique)
     const isDirect = dispatchMode === 'direct' && !forceBroadcast;
     const assignedDriver = isDirect ? currentSelectedDriver : undefined;
+    if (isDirect && !assignedDriver) {
+      showToast('Aucun livreur sélectionné pour une attribution directe. Passez en mode diffusion.', 'error');
+      return;
+    }
 
     const effectiveOrigin = originPos || (pickupCommune ? getLocationForCommune(pickupCommune) : (pickupAddress.trim() ? getLocationForCommune(pickupAddress) : getLocationForCommune('Cotonou - Haie Vive')));
     const effectiveDestination = destinationPos || (dropoffCommune ? getLocationForCommune(dropoffCommune) : (dropoffAddress.trim() ? getLocationForCommune(dropoffAddress) : getLocationForCommune('Cotonou - Cadjehoun')));
 
+    const trimmedClientEmail = clientEmail.trim();
     const newOrder = createDelivery({
       clientName: clientName.trim(),
       clientPhone: clientPhone.trim(),
@@ -369,7 +375,7 @@ export const VendeurNewDelivery: React.FC = () => {
       statusNote: assignedDriver
         ? `Assignée au livreur (${assignedDriver.name})`
         : `Course publiée • En attente d'acceptation par les livreurs de la zone (${dropoffCommune || 'Bénin'})`
-    });
+    }, trimmedClientEmail ? { clientEmail: trimmedClientEmail } : undefined);
 
     if (!assignedDriver) {
       showToast(`🚀 Course ${newOrder.id} publiée avec succès ! Elle est désormais disponible pour tous les livreurs de la zone (${dropoffCommune}).`, 'success');
@@ -432,6 +438,7 @@ export const VendeurNewDelivery: React.FC = () => {
                 onClick={() => {
                   setClientName('');
                   setClientPhone('');
+                  setClientEmail('');
                   setClientNote('');
                   setDropoffAddress('');
                   setItemDescription('');
@@ -609,6 +616,25 @@ export const VendeurNewDelivery: React.FC = () => {
                         {step1Errors.phone}
                       </p>
                     )}
+                  </div>
+
+                  {/* Email du client (Optionnel) */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Adresse e-mail du client (Optionnel - pour envoi du code OTP)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                        <span className="material-symbols-outlined text-lg">mail</span>
+                      </span>
+                      <input
+                        type="email"
+                        value={clientEmail}
+                        onChange={(e) => setClientEmail(e.target.value)}
+                        placeholder="Ex: client@exemple.com"
+                        className="w-full pl-10 pr-4 py-3 rounded-2xl border border-slate-300 focus:border-blue-600 focus:ring-2 focus:ring-blue-100 text-sm transition-all outline-none"
+                      />
+                    </div>
                   </div>
 
                   {/* Note / Consignes de livraison */}
@@ -1339,15 +1365,16 @@ export const VendeurNewDelivery: React.FC = () => {
                   ) : (
                     <div className="space-y-3">
                       <p className="text-[11px] text-slate-300 leading-relaxed">
-                        Attribution ciblée : la course sera directement assignée au coursier <strong>{currentSelectedDriver.name}</strong> sélectionné dans la liste ci-contre.
+                        Attribution ciblée : la course sera directement assignée au coursier <strong>{currentSelectedDriver?.name || 'Aucun livreur disponible'}</strong> sélectionné dans la liste ci-contre.
                       </p>
                       <button
                         type="button"
+                        disabled={!currentSelectedDriver}
                         onClick={() => handleConfirmAssignment(false)}
-                        className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                        className="w-full py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
                       >
                         <span className="material-symbols-outlined text-base">person_check</span>
-                        <span>Assigner à {currentSelectedDriver.name}</span>
+                        <span>Assigner à {currentSelectedDriver?.name || 'Aucun livreur disponible'}</span>
                       </button>
                     </div>
                   )}
@@ -1512,11 +1539,12 @@ export const VendeurNewDelivery: React.FC = () => {
                   ) : (
                     <button
                       type="button"
+                      disabled={!currentSelectedDriver}
                       onClick={() => handleConfirmAssignment(false)}
-                      className="min-h-[44px] flex-1 py-3.5 px-6 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-blue-600/30 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer text-center"
+                      className="min-h-[44px] flex-1 py-3.5 px-6 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-blue-600/30 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer text-center"
                     >
                       <span className="material-symbols-outlined text-lg">person_check</span>
-                      <span className="truncate">Attribuer à {currentSelectedDriver.name}</span>
+                      <span className="truncate">Attribuer à {currentSelectedDriver?.name || 'Aucun livreur disponible'}</span>
                     </button>
                   )}
                 </div>

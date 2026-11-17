@@ -34,7 +34,20 @@ export const LivreurMissions: React.FC = () => {
     openChatModal,
     courierMissionsFilter,
     setCourierMissionsFilter,
+    firebaseUser,
+    isAdminAuthenticated,
+    isUserMasterAdmin,
   } = useApp();
+
+  const activeUid = userProfile?.uid || firebaseUser?.uid || '';
+  const isSupervisory = isAdminAuthenticated && isUserMasterAdmin;
+
+  const isolatedDeliveries = deliveries.filter((d) => {
+    if (isSupervisory) return true;
+    const isAvailable = d.status === 'en_attente' && !d.courier && !d.courierId;
+    if (isAvailable) return true;
+    return Boolean(activeUid && (d.courier?.id === activeUid || d.courierId === activeUid));
+  });
 
   const [activeTab, setActiveTab] = useState<'all' | 'en_cours' | 'en_attente' | 'livree'>(courierMissionsFilter || 'all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -50,9 +63,9 @@ export const LivreurMissions: React.FC = () => {
     setCurrentPage(1);
   }, [courierMissionsFilter]);
 
-  const filteredOrders = deliveries.filter((d) => {
+  const filteredOrders = isolatedDeliveries.filter((d) => {
     if (activeTab === 'en_cours' && !(d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere')) return false;
-    if (activeTab === 'en_attente' && !(d.status === 'en_attente' || !d.courier)) return false;
+    if (activeTab === 'en_attente' && !(d.status === 'en_attente' && !d.courier && !d.courierId)) return false;
     if (activeTab === 'livree' && d.status !== 'livree') return false;
 
     if (searchTerm.trim()) {
@@ -173,17 +186,14 @@ export const LivreurMissions: React.FC = () => {
 
           {/* KYC Status Warning Banner */}
           {(() => {
-            const courierName = userProfile?.fullName || courierSettings.fullName || selectedCourier?.name || '';
+            const kycTargetId = activeUid || (isSupervisory ? selectedCourier?.id || '' : '');
             const isApproved =
-              selectedCourier?.isKycVerified ||
+              (isSupervisory && selectedCourier?.isKycVerified) ||
               userProfile?.isKycVerified ||
               courierSettings.isKycVerified ||
-              kycRequests.some(
-                (k) =>
-                  (k.courierId === (userProfile?.uid || selectedCourier?.id) ||
-                    k.fullName.toLowerCase() === courierName.toLowerCase()) &&
-                  k.status === 'valide'
-              );
+              (kycTargetId
+                ? kycRequests.some((k) => k.courierId === kycTargetId && k.status === 'valide')
+                : false);
 
             if (isApproved) return null;
 
@@ -224,7 +234,7 @@ export const LivreurMissions: React.FC = () => {
                   activeTab === 'all' ? 'bg-blue-600 text-white font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Toutes ({deliveries.length})
+                Toutes ({isolatedDeliveries.length})
               </button>
               <button
                 type="button"
@@ -233,7 +243,7 @@ export const LivreurMissions: React.FC = () => {
                   activeTab === 'en_cours' ? 'bg-blue-600 text-white font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                En cours ({deliveries.filter((d) => d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere').length})
+                En cours ({isolatedDeliveries.filter((d) => d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere').length})
               </button>
               <button
                 type="button"
@@ -242,7 +252,7 @@ export const LivreurMissions: React.FC = () => {
                   activeTab === 'en_attente' ? 'bg-blue-600 text-white font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Disponibles ({deliveries.filter((d) => d.status === 'en_attente' || !d.courier).length})
+                Disponibles ({isolatedDeliveries.filter((d) => d.status === 'en_attente' && !d.courier && !d.courierId).length})
               </button>
               <button
                 type="button"
@@ -251,7 +261,7 @@ export const LivreurMissions: React.FC = () => {
                   activeTab === 'livree' ? 'bg-blue-600 text-white font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Livrées ({deliveries.filter((d) => d.status === 'livree').length})
+                Livrées ({isolatedDeliveries.filter((d) => d.status === 'livree').length})
               </button>
             </div>
 

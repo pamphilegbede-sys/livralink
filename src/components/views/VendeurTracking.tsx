@@ -7,6 +7,7 @@ import { DeliveryOrder } from '../../types';
 import { GoogleMapDelivery } from '../maps/GoogleMapDelivery';
 import { getLocationForCommune } from '../../config/maps';
 import { filterVendorDeliveries } from '../../utils/deliveryIsolation';
+import { notifyClientDeliveryOtp } from '../../services/emailService';
 
 export const VendeurTracking: React.FC = () => {
   const {
@@ -49,6 +50,9 @@ export const VendeurTracking: React.FC = () => {
   );
   const [activeFilter, setActiveFilter] = useState<'all' | 'en_attente' | 'en_cours' | 'terminees'>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [showEmailOtpBox, setShowEmailOtpBox] = useState(false);
+  const [otpClientEmail, setOtpClientEmail] = useState('');
+  const [sendingEmailOtp, setSendingEmailOtp] = useState(false);
 
   // Sync active course strictly within merchantDeliveries
   React.useEffect(() => {
@@ -145,6 +149,32 @@ export const VendeurTracking: React.FC = () => {
     const newOtp = await generateNewOTP(currentOrder.id);
     if (newOtp) {
       showToast(`Nouveau code secret #${newOtp} généré avec succès !`, 'success');
+    }
+  };
+
+  const handleSendOtpByEmail = async () => {
+    if (!currentOrder) return;
+    const trimmed = otpClientEmail.trim();
+    if (!trimmed || !trimmed.includes('@')) {
+      showToast('Veuillez saisir une adresse e-mail client valide.', 'error');
+      return;
+    }
+    setSendingEmailOtp(true);
+    try {
+      const res = await notifyClientDeliveryOtp({
+        orderId: currentOrder.id,
+        clientEmail: trimmed,
+        clientName: currentOrder.clientName,
+      });
+      if (res.success) {
+        showToast(res.message || `Code OTP envoyé par e-mail à ${trimmed}`, 'success');
+        setOtpClientEmail('');
+        setShowEmailOtpBox(false);
+      } else {
+        showToast(res.message || 'Échec de l’envoi du code OTP par e-mail.', 'error');
+      }
+    } finally {
+      setSendingEmailOtp(false);
     }
   };
 
@@ -333,6 +363,15 @@ export const VendeurTracking: React.FC = () => {
 
                     <button
                       type="button"
+                      onClick={() => setShowEmailOtpBox((prev) => !prev)}
+                      className="px-3 py-1.5 rounded-xl bg-blue-600/80 hover:bg-blue-500 text-white text-xs font-bold transition-all flex items-center gap-1 active:scale-95 cursor-pointer border border-blue-400/30"
+                    >
+                      <span className="material-symbols-outlined text-sm">mail</span>
+                      <span>Envoyer OTP par E-mail</span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={handleSendOtpWhatsApp}
                       className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md shadow-emerald-600/30 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
                     >
@@ -341,6 +380,35 @@ export const VendeurTracking: React.FC = () => {
                     </button>
                   </div>
                 </div>
+
+                {showEmailOtpBox && (
+                  <div className="pt-3 mt-1 border-t border-white/10 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <input
+                      type="email"
+                      value={otpClientEmail}
+                      onChange={(e) => setOtpClientEmail(e.target.value)}
+                      placeholder="Adresse e-mail du destinataire (ex: client@exemple.com)"
+                      className="flex-1 px-3 py-2 rounded-xl bg-black/30 border border-white/20 text-white placeholder-slate-400 text-xs outline-none focus:border-blue-400"
+                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={sendingEmailOtp}
+                        onClick={() => void handleSendOtpByEmail()}
+                        className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-bold transition-all cursor-pointer"
+                      >
+                        {sendingEmailOtp ? 'Envoi...' : 'Confirmer envoi'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowEmailOtpBox(false)}
+                        className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-slate-200 text-xs font-bold transition-all cursor-pointer"
+                      >
+                        Annuler
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Certificat de Livraison POD Tri-Facteur (affiché si la course est livrée) */}

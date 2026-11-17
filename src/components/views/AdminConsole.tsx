@@ -6,6 +6,8 @@ import { BackButton } from '../common/BackButton';
 import { DisputeResolutionModal } from '../modals/DisputeResolutionModal';
 import { Courier, Merchant, DeliveryOrder, DeliveryStatus, KYCUserRequest } from '../../types';
 import { loginWithGoogle, getFirebaseAuthErrorMessage } from '../../firebase/authService';
+import { auth } from '../../firebase/config';
+import { downloadCsvFile } from '../../utils/csvExport';
 import { AdminOverviewDashboard } from './AdminOverviewDashboard';
 import { AdminCommunicationsSection } from '../admin/AdminCommunicationsSection';
 import { ResetUserAccessModal, TargetResetUser } from '../modals/ResetUserAccessModal';
@@ -272,7 +274,7 @@ export const AdminConsole: React.FC = () => {
   // Search & Filter state
   const [adminSearch, setAdminSearch] = useState('');
   const [userTypeFilter, setUserTypeFilter] = useState<'all' | 'livreur' | 'vendeur'>('all');
-  const [kycStatusFilter, setKycStatusFilter] = useState<'all' | 'en_attente' | 'valide' | 'rejete'>('all');
+  const [kycStatusFilter, setKycStatusFilter] = useState<'all' | 'en_attente' | 'valide' | 'refuse'>('all');
   const [courierStatusFilter, setCourierStatusFilter] = useState<'all' | 'en_ligne' | 'en_course' | 'suspendu'>('all');
   const [merchantStatusFilter, setMerchantStatusFilter] = useState<'all' | 'actif' | 'suspendu' | 'en_attente_kyc'>('all');
   const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<'all' | 'en_attente' | 'assignee' | 'en_cours' | 'livree' | 'echec'>('all');
@@ -415,6 +417,83 @@ export const AdminConsole: React.FC = () => {
   const [isOutboxLoading, setIsOutboxLoading] = useState(false);
   const [outboxFilter, setOutboxFilter] = useState<'all' | 'welcome' | 'password_reset_request' | 'password_changed_confirmation' | 'priority_mission' | 'custom'>('all');
   const [previewModalEmail, setPreviewModalEmail] = useState<SentEmailItem | null>(null);
+
+  // Pending wallet payouts reconciliation state
+  const [pendingPayouts, setPendingPayouts] = useState<Array<Record<string, any>>>([]);
+  const [isLoadingPendingPayouts, setIsLoadingPendingPayouts] = useState(false);
+  const [reconcilingPayoutKey, setReconcilingPayoutKey] = useState<string | null>(null);
+
+  const loadPendingPayouts = async () => {
+    if (!auth.currentUser) return;
+    setIsLoadingPendingPayouts(true);
+    try {
+      const token = await auth.currentUser.getIdToken();
+      const res = await fetch('/api/admin/wallet/pending-payouts', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok && data.success && Array.isArray(data.items)) {
+        setPendingPayouts(data.items);
+      } else if (!res.ok) {
+        showToast(data?.error || 'Impossible de charger les retraits en attente.', 'error');
+      }
+    } catch {
+      showToast('Erreur réseau lors du chargement des retraits en attente.', 'error');
+    } finally {
+      setIsLoadingPendingPayouts(false);
+    }
+  };
+
+  const handleReconcilePayout = async (
+    item: Record<string, any>,
+    resolution: 'confirm_succeeded' | 'compensate_failed'
+  ) => {
+    const targetUid = String(item?.uid || item?.userId || '').trim();
+    if (!auth.currentUser || !targetUid || !item?.idempotencyKey) return;
+    setReconcilingPayoutKey(String(item.idempotencyKey));
+    try {
+      const token = await auth.currentUser.getIdToken();
+      const res = await fetch('/api/admin/wallet/reconcile-payout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          targetUid,
+          idempotencyKey: String(item.idempotencyKey),
+          resolution,
+          reason:
+            resolution === 'confirm_succeeded'
+              ? 'Confirmation manuelle admin depuis Console Admin'
+              : 'Compensation/remboursement admin suite à échec opérateur',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data?.error || 'Échec de réconciliation du retrait.', 'error');
+      } else {
+        showToast(
+          resolution === 'confirm_succeeded'
+            ? `Retrait ${item.idempotencyKey} confirmé comme payé.`
+            : `Retrait ${item.idempotencyKey} remboursé sur le solde du livreur.`,
+          'success'
+        );
+        await loadPendingPayouts();
+        await refreshAdminData(true);
+      }
+    } catch {
+      showToast('Erreur réseau lors de la réconciliation.', 'error');
+    } finally {
+      setReconcilingPayoutKey(null);
+    }
+  };
+
+  useEffect(() => {
+    if (activeViewTab === 'couriers' && isAdminAuthenticated) {
+      void loadPendingPayouts();
+    }
+  }, [activeViewTab, isAdminAuthenticated]);
 
   useEffect(() => {
     if (activeViewTab === 'email_settings') {
@@ -569,7 +648,7 @@ export const AdminConsole: React.FC = () => {
     setIsAddMerchantModalOpen(false);
   };
 
-  const handleWalletRechargeSubmit = (e: React.FormEvent) => {
+  const handleWalletRechargeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!walletModalCourier) return;
     const amt = parseInt(walletAmount, 10);
@@ -577,44 +656,45 @@ export const AdminConsole: React.FC = () => {
       showToast('Montant de transaction invalide.', 'error');
       return;
     }
-    adjustCourierWallet(walletModalCourier.id, amt, walletModalType, walletNote || undefined);
+    await adjustCourierWallet(walletModalCourier.id, amt, walletModalType, walletNote || undefined);
     setWalletModalCourier(null);
     setWalletNote('');
   };
 
   const exportDeliveriesCSV = () => {
     const headers = ['ID', 'Date', 'Boutique', 'Commune_Collecte', 'Client', 'Telephone_Client', 'Commune_Livraison', 'Livreur', 'Statut', 'COD_FCFA', 'Frais_FCFA'];
-    const rows = deliveries.map(d => [
-      d.id,
-      new Date(d.createdAt).toISOString(),
-      `"${(d.pickupLocation?.name || '').replace(/"/g, '""')}"`,
-      `"${(d.pickupLocation?.commune || '').replace(/"/g, '""')}"`,
-      `"${(d.clientName || '').replace(/"/g, '""')}"`,
-      d.clientPhone || '',
-      `"${(d.dropoffLocation?.commune || '').replace(/"/g, '""')}"`,
-      `"${(d.courier?.name || 'Non assigne').replace(/"/g, '""')}"`,
-      d.status,
-      d.itemValueCOD || 0,
-      d.deliveryFee || 0
-    ]);
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `livralink_export_courses_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const rows = deliveries.map((d) => {
+      const parsedTs = d.createdAt ? new Date(d.createdAt) : null;
+      const dateStr = parsedTs && !Number.isNaN(parsedTs.getTime()) ? parsedTs.toISOString() : (d.createdAt || '');
+      return [
+        d.id,
+        dateStr,
+        d.pickupLocation?.name || '',
+        d.pickupLocation?.commune || '',
+        d.clientName || '',
+        d.clientPhone || '',
+        d.dropoffLocation?.commune || '',
+        d.courier?.name || 'Non assigne',
+        d.status,
+        d.itemValueCOD || 0,
+        d.deliveryFee || 0,
+      ];
+    });
+    downloadCsvFile(
+      `livralink_export_courses_${new Date().toISOString().split('T')[0]}.csv`,
+      headers,
+      rows
+    );
     showToast('Export CSV des courses généré avec succès !', 'success');
   };
 
-  const handleConfirmAssignment = (e: React.FormEvent) => {
+  const handleConfirmAssignment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!assigningOrder || !selectedCourierForAssign) {
       showToast('Veuillez sélectionner un coursier.', 'error');
       return;
     }
-    assignCourierToDelivery(assigningOrder.id, selectedCourierForAssign);
+    await assignCourierToDelivery(assigningOrder.id, selectedCourierForAssign);
     setAssigningOrder(null);
     setSelectedCourierForAssign('');
   };
@@ -799,9 +879,9 @@ export const AdminConsole: React.FC = () => {
     setEditingDelivery(null);
   };
 
-  const handleConfirmDeleteDelivery = () => {
+  const handleConfirmDeleteDelivery = async () => {
     if (!deletingDelivery) return;
-    deleteDelivery(deletingDelivery.id);
+    await deleteDelivery(deletingDelivery.id);
     setDeletingDelivery(null);
   };
 
@@ -831,11 +911,11 @@ export const AdminConsole: React.FC = () => {
     setEditUserVerified(user.isVerified ?? false);
   };
 
-  const handleUpdateUserSubmit = (e: React.FormEvent) => {
+  const handleUpdateUserSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingUser) return;
     if (editingUser.role === 'livreur') {
-      updateCourier(editingUser.id, {
+      await updateCourier(editingUser.id, {
         name: editUserName.trim(),
         phone: editUserPhone.trim(),
         email: editUserEmail.trim() || undefined,
@@ -845,7 +925,7 @@ export const AdminConsole: React.FC = () => {
         vehiclePlate: editUserPlate.trim() || undefined
       });
     } else {
-      updateMerchant(editingUser.id, {
+      await updateMerchant(editingUser.id, {
         storeName: editUserName.trim(),
         phone: editUserPhone.trim(),
         email: editUserEmail.trim(),
@@ -858,9 +938,9 @@ export const AdminConsole: React.FC = () => {
     setEditingUser(null);
   };
 
-  const handleConfirmDeleteUser = () => {
+  const handleConfirmDeleteUser = async () => {
     if (!deletingUser) return;
-    deleteUser(deletingUser.id, deletingUser.role);
+    await deleteUser(deletingUser.id, deletingUser.role);
     setDeletingUser(null);
   };
 
@@ -1857,6 +1937,12 @@ export const AdminConsole: React.FC = () => {
                   >
                     🟢 Validées ({kycRequests.filter(k => k.status === 'valide').length})
                   </button>
+                  <button
+                    onClick={() => setKycStatusFilter('refuse')}
+                    className={`px-2.5 py-1 rounded-lg ${kycStatusFilter === 'refuse' ? 'bg-white text-red-700 shadow-2xs' : 'text-slate-600'}`}
+                  >
+                    🔴 Refusées ({kycRequests.filter(k => k.status === 'refuse').length})
+                  </button>
                 </div>
               </div>
 
@@ -1923,14 +2009,14 @@ export const AdminConsole: React.FC = () => {
                         {kyc.status === 'en_attente' ? (
                           <>
                             <button
-                              onClick={() => approveKYC(kyc.id)}
+                              onClick={() => void approveKYC(kyc.id)}
                               className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer"
                               title="Valider directement"
                             >
                               <span className="material-symbols-outlined text-sm">check</span>
                             </button>
                             <button
-                              onClick={() => rejectKYC(kyc.id)}
+                              onClick={() => void rejectKYC(kyc.id)}
                               className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
                               title="Refuser directement"
                             >
@@ -2047,22 +2133,26 @@ export const AdminConsole: React.FC = () => {
                           {kyc.status === 'en_attente' ? (
                             <>
                               <button
-                                onClick={() => approveKYC(kyc.id)}
+                                onClick={() => void approveKYC(kyc.id)}
                                 className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold shadow-2xs transition-all active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
                               >
                                 <span className="material-symbols-outlined text-xs">check</span>
                                 <span>Valider</span>
                               </button>
                               <button
-                                onClick={() => rejectKYC(kyc.id)}
+                                onClick={() => void rejectKYC(kyc.id)}
                                 className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-[10px] font-bold transition-all active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
                               >
                                 <span>Refuser</span>
                               </button>
                             </>
-                          ) : (
+                          ) : kyc.status === 'valide' ? (
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 text-center">
                               Validé ✓
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800 text-center">
+                              Refusé ✕
                             </span>
                           )}
                         </div>
@@ -2071,6 +2161,76 @@ export const AdminConsole: React.FC = () => {
                   </div>
                 </div>
               )}
+
+              {/* Réconciliation Retraits en Attente (P0 Wallet Idempotency) */}
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-indigo-600 text-lg">account_balance_wallet</span>
+                    <h3 className="font-bold text-xs text-slate-900 uppercase tracking-wider">
+                      Réconciliation Retraits en Attente / Incertains ({pendingPayouts.length})
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isLoadingPendingPayouts}
+                    onClick={() => void loadPendingPayouts()}
+                    className="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  >
+                    <span className={`material-symbols-outlined text-xs ${isLoadingPendingPayouts ? 'animate-spin' : ''}`}>sync</span>
+                    <span>Actualiser</span>
+                  </button>
+                </div>
+
+                {pendingPayouts.length === 0 ? (
+                  <p className="text-[11px] text-slate-500">
+                    Aucun retrait bloqué en statut « processing » ou « uncertain ».
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {pendingPayouts.map((item) => {
+                      const key = String(item.idempotencyKey || '');
+                      const busy = reconcilingPayoutKey === key;
+                      return (
+                        <div key={key} className="p-3 bg-white rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="font-bold text-slate-900 flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-[11px] truncate">{key}</span>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                item.status === 'uncertain' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'
+                              }`}>
+                                {String(item.status || 'processing').toUpperCase()}
+                                {item.leaseExpired ? ' (Bail expiré)' : ''}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500">
+                              UID: <span className="font-mono">{item.uid || item.userId}</span> • Montant: <strong>{Number(item.amount || 0).toLocaleString('fr-FR')} FCFA</strong>
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void handleReconcilePayout(item, 'confirm_succeeded')}
+                              className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[11px] font-bold cursor-pointer"
+                            >
+                              Confirmer payé
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void handleReconcilePayout(item, 'compensate_failed')}
+                              className="px-2.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-[11px] font-bold cursor-pointer"
+                            >
+                              Rembourser solde
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
               {/* Mobile Cards for Couriers Fleet */}
               <div className="md:hidden divide-y divide-slate-100 space-y-3">
@@ -3685,8 +3845,20 @@ export const AdminConsole: React.FC = () => {
                   <p className="text-xs text-slate-500">Traçabilité complète des actions administrateur et des événements réseau</p>
                 </div>
                 <button
-                  onClick={() => showToast('Journal d\'audit exporté au format CSV !', 'success')}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1"
+                  type="button"
+                  onClick={() => {
+                    if (auditLogs.length === 0) {
+                      showToast('Aucune entrée d\'audit à exporter.', 'info');
+                      return;
+                    }
+                    downloadCsvFile(
+                      `livralink_audit_${new Date().toISOString().split('T')[0]}.csv`,
+                      ['ID', 'Type', 'Titre', 'Details', 'Horodatage'],
+                      auditLogs.map((l) => [l.id, l.type, l.title, l.details, l.timestamp])
+                    );
+                    showToast('Journal d\'audit exporté au format CSV !', 'success');
+                  }}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer"
                 >
                   <span className="material-symbols-outlined text-sm">download</span>
                   <span>Exporter CSV</span>

@@ -27,49 +27,50 @@ export const LivreurDashboard: React.FC = () => {
     refuseDelivery,
     updateDeliveryStatus,
     updateDeliveryDetails,
-    createDelivery,
     setCurrentView,
     featureFlags,
     openKYCModal,
     kycRequests,
+    firebaseUser,
+    isAdminAuthenticated,
+    isUserMasterAdmin,
   } = useApp();
 
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [expandedMapOrderId, setExpandedMapOrderId] = useState<string | null>(null);
 
+  const activeUid = userProfile?.uid || firebaseUser?.uid || '';
+  const isSupervisory = isAdminAuthenticated && isUserMasterAdmin;
+
   // Livraisons en attente d'acceptation par les livreurs
   const pendingDeliveries = deliveries.filter(
-    (d) => d.status === 'en_attente' || !d.courier
+    (d) => d.status === 'en_attente' && !d.courier && !d.courierId
   );
 
   const activeCourierName =
     (userProfile?.role === 'livreur' && userProfile?.fullName) ||
     courierSettings.fullName ||
-    selectedCourier?.name ||
+    (isSupervisory ? selectedCourier?.name : '') ||
     'Coursier LivraLink';
 
   const displayName = activeCourierName.split(' ')[0] || 'Livreur';
-  const activeCourierPhone = (userProfile?.role === 'livreur' && userProfile.phone) || courierSettings.phone || selectedCourier?.phone || '';
-  const activeCourierVehicle = courierSettings.vehicleType || selectedCourier?.vehicle || 'Moto';
+  const activeCourierPhone = (userProfile?.role === 'livreur' && userProfile.phone) || courierSettings.phone || (isSupervisory ? selectedCourier?.phone : '') || '';
+  const activeCourierVehicle = courierSettings.vehicleType || (isSupervisory ? selectedCourier?.vehicle : '') || 'Moto';
 
-  // KYC status evaluation
+  const kycTargetId = activeUid || (isSupervisory ? selectedCourier?.id || '' : '');
+
+  // KYC status evaluation (strictly scoped by UID)
   const isKycApproved =
-    selectedCourier?.isKycVerified ||
+    (isSupervisory && selectedCourier?.isKycVerified) ||
     userProfile?.isKycVerified ||
     courierSettings.isKycVerified ||
-    kycRequests.some(
-      (k) =>
-        (k.courierId === (userProfile?.uid || selectedCourier?.id) ||
-          k.fullName.toLowerCase() === activeCourierName.toLowerCase()) &&
-        k.status === 'valide'
-    );
+    (kycTargetId
+      ? kycRequests.some((k) => k.courierId === kycTargetId && k.status === 'valide')
+      : false);
 
-  const existingKyc = kycRequests.find(
-    (k) =>
-      k.courierId === (userProfile?.uid || selectedCourier?.id) ||
-      k.fullName.toLowerCase() === activeCourierName.toLowerCase() ||
-      k.phone === activeCourierPhone
-  );
+  const existingKyc = kycTargetId
+    ? kycRequests.find((k) => k.courierId === kycTargetId)
+    : undefined;
 
   const kycStatus: 'valide' | 'en_attente' | 'refuse' | 'non_soumis' = isKycApproved
     ? 'valide'
@@ -90,20 +91,17 @@ export const LivreurDashboard: React.FC = () => {
     }
   }, [isKycApproved, courierSettings.isAvailable, userProfile?.uid, setCourierSettings]);
 
-  // Mission active en cours attribuée à ce livreur
+  // Mission active en cours attribuée à ce livreur (isolation stricte par UID)
   const activeOrder = deliveries.find((d) => {
     const isOngoing = d.status === 'acceptee' || d.status === 'colis_recupere' || d.status === 'en_cours';
     if (!isOngoing) return false;
-    if (userProfile?.role === 'livreur') {
-      const isDemo = userProfile.fullName === 'Awa Véloce Livraisons';
-      if (isDemo) return true;
-      return (
-        d.courier?.id === userProfile.uid ||
-        (d.courier?.email && userProfile.email && d.courier.email.toLowerCase() === userProfile.email.toLowerCase()) ||
-        (d.courier?.name && d.courier.name.toLowerCase() === userProfile.fullName.toLowerCase())
-      );
+    if (activeUid) {
+      return d.courier?.id === activeUid || d.courierId === activeUid;
     }
-    return d.courier?.id === selectedCourier?.id || (selectedCourier && d.courier?.name === selectedCourier.name);
+    if (isSupervisory && selectedCourier?.id) {
+      return d.courier?.id === selectedCourier.id || d.courierId === selectedCourier.id;
+    }
+    return false;
   });
 
   // Transmission automatique de la position GPS du livreur en direct pendant une course active
@@ -177,50 +175,16 @@ export const LivreurDashboard: React.FC = () => {
     showToast(`Colis récupéré pour la course ${orderId}`, 'success');
   };
 
-  const handleCreateTestOrder = () => {
-    const testOrder = createDelivery({
-      clientName: 'Marius Dossou',
-      clientPhone: '+229 97 12 34 56',
-      clientNote: 'Appeler à l\'arrivée au carrefour Kpota',
-      channel: 'WhatsApp',
-      pickupLocation: {
-        name: 'Boutique Cotonou Chic',
-        address: 'Avenue Jean-Paul II, Haie Vive, Cotonou',
-        commune: 'Cotonou - Haie Vive',
-        coordinates: [6.3571, 2.4175],
-      },
-      dropoffLocation: {
-        name: 'Marius Dossou',
-        address: 'Carrefour Kpota, Abomey-Calavi',
-        commune: 'Abomey-Calavi - Centre',
-        coordinates: [6.4485, 2.3556],
-      },
-      itemDescription: 'Vêtements & Chaussures de mode',
-      itemWeightKg: 1.5,
-      itemFormat: 'M',
-      isFragile: false,
-      itemValueCOD: 25000,
-      deliveryFee: calculateDeliveryPrice(calculateDistanceKm({ lat: 6.3571, lng: 2.4175 }, { lat: 6.4485, lng: 2.3556 })),
-      status: 'en_attente',
-      statusNote: 'Nouvelle course créée par le vendeur',
-    });
-    showToast(`Nouvelle course ${testOrder.id} créée !`, 'success');
-  };
-
   // Livraisons terminées attribuées spécifiquement à ce livreur
   const myCompletedDeliveries = deliveries.filter((d) => {
     if (d.status !== 'livree') return false;
-    if (userProfile?.role === 'livreur') {
-      return (
-        d.courier?.id === userProfile.uid ||
-        (d.courier?.email && userProfile.email && d.courier.email.toLowerCase() === userProfile.email.toLowerCase()) ||
-        (d.courier?.name && d.courier.name.toLowerCase() === activeCourierName.toLowerCase())
-      );
+    if (activeUid) {
+      return d.courier?.id === activeUid || d.courierId === activeUid;
     }
-    return (
-      (selectedCourier?.id && d.courier?.id === selectedCourier.id) ||
-      (selectedCourier?.name && d.courier?.name === selectedCourier.name)
-    );
+    if (isSupervisory && selectedCourier?.id) {
+      return d.courier?.id === selectedCourier.id || d.courierId === selectedCourier.id;
+    }
+    return false;
   });
 
   const myEstimatedEarnings = myCompletedDeliveries.reduce(
@@ -262,18 +226,20 @@ export const LivreurDashboard: React.FC = () => {
                 </div>
                 <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
                   <span>{activeCourierVehicle} · {activeCourierPhone}</span>
-                  <select
-                    value={selectedCourier?.name || activeCourierName}
-                    onChange={(e) => selectActiveCourier(e.target.value)}
-                    className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md px-2 py-0.5 text-xs text-slate-700 dark:text-slate-200 focus:outline-none"
-                    title="Changer de coursier"
-                  >
-                    {couriers.map((c) => (
-                      <option key={c.id} value={c.name} className="bg-white dark:bg-slate-900">
-                        {c.name} ({c.vehicle})
-                      </option>
-                    ))}
-                  </select>
+                  {isSupervisory && couriers.length > 0 && (
+                    <select
+                      value={selectedCourier?.name || activeCourierName}
+                      onChange={(e) => selectActiveCourier(e.target.value)}
+                      className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md px-2 py-0.5 text-xs text-slate-700 dark:text-slate-200 focus:outline-none"
+                      title="Changer de coursier"
+                    >
+                      {couriers.map((c) => (
+                        <option key={c.id} value={c.name} className="bg-white dark:bg-slate-900">
+                          {c.name} ({c.vehicle})
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               </div>
             </div>
@@ -368,14 +334,9 @@ export const LivreurDashboard: React.FC = () => {
             </div>
 
             {pendingDeliveries.length === 0 ? (
-              <div className="py-8 text-center text-xs text-slate-500 space-y-3">
+              <div className="py-8 text-center text-xs text-slate-500 space-y-2">
                 <p>Aucune course vendeur en attente pour le moment.</p>
-                <button
-                  onClick={handleCreateTestOrder}
-                  className="px-3 py-1.5 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700"
-                >
-                  Simuler une nouvelle course
-                </button>
+                <p className="text-[11px] text-slate-400">Restez en ligne pour recevoir les nouvelles commandes dès publication par les vendeurs.</p>
               </div>
             ) : (
               <div className="space-y-3">
