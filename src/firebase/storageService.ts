@@ -16,9 +16,38 @@ export interface UploadedKYCDocumentResult {
   size: number;
 }
 
+export type KYCStepCode =
+  | 'KYC-STEP-A'
+  | 'KYC-STEP-B'
+  | 'KYC-STEP-C'
+  | 'KYC-STEP-D'
+  | 'KYC-STEP-E'
+  | 'KYC-STEP-F';
+
+export interface KYCStepError extends Error {
+  stepCode?: KYCStepCode;
+  originalCode?: string;
+  uploadedAsset?: UploadedKYCDocumentResult;
+}
+
+export function createKYCStepError(
+  stepCode: KYCStepCode,
+  message: string,
+  extra?: { originalCode?: string; uploadedAsset?: UploadedKYCDocumentResult }
+): KYCStepError {
+  const prefix = `[${stepCode}] `;
+  const formatted = message.startsWith(prefix) ? message : `${prefix}${message}`;
+  const err = new Error(formatted) as KYCStepError;
+  err.stepCode = stepCode;
+  if (extra?.originalCode) err.originalCode = extra.originalCode;
+  if (extra?.uploadedAsset) err.uploadedAsset = extra.uploadedAsset;
+  return err;
+}
+
 export interface UploadProgressOptions {
   onProgress?: (percent: number) => void;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 const DEFAULT_UPLOAD_TIMEOUT_MS = 35_000;
@@ -81,29 +110,33 @@ export function isAllowedKycMimeType(contentType: string): boolean {
   return ALLOWED_KYC_MIME_TYPES.has(norm);
 }
 
-export function formatStorageErrorMessage(error: any, storagePath: string): string {
+export function formatStorageErrorMessage(error: any, storagePath: string, stepCode?: KYCStepCode): string {
   const code = String(error?.code || '');
   const rawMessage = String(error?.message || '');
+  const prefix = stepCode ? `[${stepCode}] ` : '';
 
   if (code === 'storage/unauthorized' || /403|permission|unauthorized/i.test(rawMessage)) {
-    return 'Accès refusé par Firebase Storage (403). Vérifiez que votre adresse e-mail est bien vérifiée et que vous n’avez pas déjà un dossier en attente ou validé.';
+    return `${prefix}Accès refusé par Firebase Storage (403). Vérifiez que votre adresse e-mail est bien vérifiée et que vous n’avez pas déjà un dossier en attente ou validé.`;
   }
   if (code === 'storage/unauthenticated') {
-    return 'Session Firebase expirée ou non authentifiée. Reconnectez-vous puis réessayez.';
+    return `${prefix}Session Firebase expirée ou non authentifiée. Reconnectez-vous puis réessayez.`;
   }
   if (code === 'storage/canceled') {
-    return rawMessage || 'Téléversement annulé ou délai réseau dépassé. Vérifiez votre connexion et réessayez.';
+    return rawMessage.startsWith(prefix)
+      ? rawMessage
+      : `${prefix}${rawMessage || 'Téléversement annulé ou délai réseau dépassé. Vérifiez votre connexion et réessayez.'}`;
   }
   if (code === 'storage/retry-limit-exceeded') {
-    return 'Connexion instable ou serveur Firebase Storage inaccessible. Vérifiez votre connexion internet et réessayez.';
+    return `${prefix}Connexion instable ou serveur Firebase Storage inaccessible. Vérifiez votre connexion internet et réessayez.`;
   }
   if (code === 'storage/quota-exceeded') {
-    return 'Quota de stockage temporairement atteint. Contactez le support LivraLink.';
+    return `${prefix}Quota de stockage temporairement atteint. Contactez le support LivraLink.`;
   }
   if (rawMessage) {
-    return `Erreur de stockage (${storagePath}) : ${rawMessage}`;
+    const safePath = storagePath.replace(/[^a-zA-Z0-9_./-]/g, '');
+    return rawMessage.startsWith(prefix) ? rawMessage : `${prefix}Erreur de stockage (${safePath}) : ${rawMessage}`;
   }
-  return `Échec du téléversement vers Firebase Storage (${storagePath}).`;
+  return `${prefix}Échec du téléversement vers Firebase Storage.`;
 }
 
 function uploadResumableWithTimeout(
@@ -114,15 +147,30 @@ function uploadResumableWithTimeout(
 ): Promise<void> {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_UPLOAD_TIMEOUT_MS;
   const onProgress = options?.onProgress;
+  const signal = options?.signal;
 
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      const abortErr = new Error('Téléversement annulé par l’utilisateur.');
+      (abortErr as any).code = 'storage/canceled';
+      reject(abortErr);
+      return;
+    }
+
     let settled = false;
     let uploadTask: UploadTask;
+
+    const cleanupSignal = () => {
+      if (signal && onAbort) {
+        signal.removeEventListener('abort', onAbort);
+      }
+    };
 
     const finishError = (err: any) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      cleanupSignal();
       reject(err);
     };
 
@@ -130,9 +178,23 @@ function uploadResumableWithTimeout(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      cleanupSignal();
       if (onProgress) onProgress(100);
       resolve();
     };
+
+    const onAbort = () => {
+      try {
+        uploadTask?.cancel();
+      } catch {}
+      const abortErr = new Error('Téléversement interrompu ou annulé. Vous pouvez relancer l’envoi.');
+      (abortErr as any).code = 'storage/canceled';
+      finishError(abortErr);
+    };
+
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
 
     const timer = setTimeout(() => {
       try {
@@ -296,26 +358,29 @@ export async function uploadKYCDocument(
 ): Promise<UploadedKYCDocumentResult> {
   const currentUser = auth.currentUser;
   if (!currentUser) {
-    throw new Error('Authentification Firebase requise pour téléverser votre pièce KYC.');
+    throw createKYCStepError('KYC-STEP-A', 'Authentification Firebase requise pour téléverser votre pièce KYC.');
   }
   if (!currentUser.emailVerified) {
-    throw new Error('Votre adresse e-mail doit être vérifiée avant de téléverser votre pièce KYC.');
+    throw createKYCStepError('KYC-STEP-A', 'Votre adresse e-mail doit être vérifiée avant de téléverser votre pièce KYC.');
   }
 
   const cleanUserId = userId.replace(/[^a-zA-Z0-9_-]/g, '');
   if (!cleanUserId || cleanUserId !== currentUser.uid) {
-    throw new Error('Identifiant utilisateur incohérent pour le téléversement KYC.');
+    throw createKYCStepError('KYC-STEP-A', 'Identifiant utilisateur incohérent pour le téléversement KYC.');
   }
 
   const { blob, contentType } = await resolveBlobAndMimeType(fileOrDataUrl);
   if (!isAllowedKycMimeType(contentType)) {
-    throw new Error('Format de document non autorisé. Formats acceptés : JPG, JPEG, PNG, WebP ou PDF.');
+    throw createKYCStepError(
+      'KYC-STEP-B',
+      'Format de document non autorisé. Formats acceptés : JPG, JPEG, PNG, WebP ou PDF.'
+    );
   }
   if (blob.size <= 0) {
-    throw new Error('Le fichier sélectionné est vide.');
+    throw createKYCStepError('KYC-STEP-B', 'Le fichier sélectionné est vide.');
   }
   if (blob.size >= MAX_KYC_FILE_BYTES) {
-    throw new Error('Le document dépasse la taille maximale autorisée de 10 Mo.');
+    throw createKYCStepError('KYC-STEP-B', 'Le document dépasse la taille maximale autorisée de 10 Mo.');
   }
 
   const ext = getExtensionForMimeType(contentType);
@@ -341,7 +406,9 @@ export async function uploadKYCDocument(
       size: blob.size,
     };
   } catch (error: any) {
-    throw new Error(formatStorageErrorMessage(error, storagePath));
+    throw createKYCStepError('KYC-STEP-B', formatStorageErrorMessage(error, storagePath, 'KYC-STEP-B'), {
+      originalCode: String(error?.code || ''),
+    });
   }
 }
 

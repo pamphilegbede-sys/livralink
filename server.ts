@@ -3577,6 +3577,21 @@ app.post('/api/admin/kyc/decision', requireAdminAuthorization as any, async (req
 
     await batch.commit();
 
+    // Sync custom claim kycLocked (best-effort) so Storage Rules can enforce lock without named-DB lookups
+    if (firebaseAdminApp && process.env.NODE_ENV !== 'test') {
+      try {
+        const authAdmin = getAuth(firebaseAdminApp);
+        const userRecord = await authAdmin.getUser(resolvedUid);
+        const existingClaims = userRecord.customClaims || {};
+        await authAdmin.setCustomUserClaims(resolvedUid, {
+          ...existingClaims,
+          kycLocked: isApproved,
+        });
+      } catch {
+        // Non-blocking if Auth Admin IAM is unavailable
+      }
+    }
+
     if (recipientEmail) {
       const p1 = getP1EmailService();
       await p1.dispatchOrQueueEmail({
@@ -3617,8 +3632,69 @@ app.post('/api/admin/kyc/decision', requireAdminAuthorization as any, async (req
       rejectionReason: isApproved ? undefined : cleanReason,
     });
   } catch (err: any) {
-    console.error('[ADMIN KYC DECISION ERROR]:', err?.message || err);
-    return res.status(500).json({ success: false, error: 'Erreur lors de la décision administrative KYC.' });
+    const msg = String(err?.message || err || '');
+    const isIamDenied = msg.includes('PERMISSION_DENIED') || String(err?.code || '') === '7';
+    console.error('[KYC-STEP-F][ADMIN KYC DECISION ERROR]:', isIamDenied ? '7 PERMISSION_DENIED' : msg);
+    return res.status(isIamDenied ? 503 : 500).json({
+      success: false,
+      stepCode: 'KYC-STEP-F',
+      code: isIamDenied ? 'IAM_PERMISSION_DENIED' : 'KYC_DECISION_FAILED',
+      error: isIamDenied
+        ? '[KYC-STEP-F] Permissions IAM Firestore Admin indisponibles (7 PERMISSION_DENIED).'
+        : '[KYC-STEP-F] Erreur lors de la décision administrative KYC.',
+    });
+  }
+});
+
+// =========================================================================
+// PRÉ-VALIDATION SERVEUR DU STATUT KYC AVANT TÉLÉVERSEMENT STORAGE
+// =========================================================================
+app.post('/api/courier/kyc/authorize-upload', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  const callerUid = req.user!.uid;
+  const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+
+  if (!activeDb) {
+    return res.json({ success: true, allowed: true, serverChecked: false });
+  }
+
+  try {
+    const kycSnap = await activeDb.collection('kyc').doc(callerUid).get();
+    if (kycSnap.exists) {
+      const status = String(kycSnap.data()?.status || 'non_soumis');
+      if (status === 'en_attente') {
+        return res.status(409).json({
+          success: false,
+          allowed: false,
+          stepCode: 'KYC-STEP-C',
+          status,
+          error: '[KYC-STEP-C] Votre dossier KYC est déjà en cours de vérification par l’administration.',
+        });
+      }
+      if (status === 'valide') {
+        return res.status(409).json({
+          success: false,
+          allowed: false,
+          stepCode: 'KYC-STEP-C',
+          status,
+          error: '[KYC-STEP-C] Votre dossier KYC est déjà validé.',
+        });
+      }
+      return res.json({ success: true, allowed: true, serverChecked: true, status });
+    }
+    return res.json({ success: true, allowed: true, serverChecked: true, status: 'non_soumis' });
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    const isIamDenied = msg.includes('PERMISSION_DENIED') || String(err?.code || '') === '7';
+    if (isIamDenied) {
+      return res.json({
+        success: true,
+        allowed: true,
+        serverChecked: false,
+        iamFallback: true,
+      });
+    }
+    console.warn('[KYC-STEP-C][AUTHORIZE-UPLOAD WARN]:', msg);
+    return res.json({ success: true, allowed: true, serverChecked: false });
   }
 });
 

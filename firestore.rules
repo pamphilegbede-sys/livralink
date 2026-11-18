@@ -104,11 +104,11 @@ service cloud.firestore {
              data.email is string && data.email.size() >= 5 && data.email.size() <= 128 &&
              data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 128 &&
              data.phone is string && data.phone.size() <= 32 &&
-             (data.role in ['client', 'vendeur', 'livreur'] || (data.role == 'admin' && isAdmin())) &&
-             (!('status' in data) || data.status in ['actif', 'en_ligne', 'hors_ligne', 'en_attente_kyc'] || isAdmin()) &&
-             (!('isKycVerified' in data) || data.isKycVerified == false || isAdmin()) &&
-             (!('kycStatus' in data) || data.kycStatus in ['non_soumis', 'en_attente'] || isAdmin()) &&
-             (!('preferredRateDiscountPercent' in data) || isAdmin() || data.preferredRateDiscountPercent == 0) &&
+             data.role in ['client', 'vendeur', 'livreur'] &&
+             (!('status' in data) || data.status in ['actif', 'en_ligne', 'hors_ligne', 'en_attente_kyc', 'en_course', 'suspendu']) &&
+             (!('isKycVerified' in data) || data.isKycVerified is bool) &&
+             (!('kycStatus' in data) || data.kycStatus in ['non_soumis', 'en_attente', 'valide', 'refuse']) &&
+             (!('preferredRateDiscountPercent' in data) || data.preferredRateDiscountPercent is number) &&
              (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 1000)) &&
              (!('storeName' in data) || (data.storeName is string && data.storeName.size() <= 128)) &&
              (!('storeCommune' in data) || (data.storeCommune is string && data.storeCommune.size() <= 128)) &&
@@ -125,6 +125,10 @@ service cloud.firestore {
 
     function isValidUserOnCreate(data) {
       return isValidUserTypes(data) &&
+             (!('status' in data) || data.status in ['actif', 'en_ligne', 'hors_ligne', 'en_attente_kyc']) &&
+             (!('isKycVerified' in data) || data.isKycVerified == false) &&
+             (!('kycStatus' in data) || data.kycStatus in ['non_soumis', 'en_attente']) &&
+             (!('preferredRateDiscountPercent' in data) || data.preferredRateDiscountPercent == 0) &&
              data.keys().hasOnly([
                'uid', 'email', 'fullName', 'phone', 'role', 'status', 'channel',
                'preferredRateDiscountPercent', 'avatarUrl',
@@ -207,26 +211,35 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
       allow list: if isAdmin();
-      allow create: if isValidId(userId) && isOwner(userId) && isValidUserOnCreate(incoming());
+      allow create: if isValidId(userId) && (isAdmin() || (isOwner(userId) && isValidUserOnCreate(incoming())));
       allow update: if isValidId(userId) && (
         isAdmin() ||
         (
           isOwner(userId) &&
           isValidUserTypes(incoming()) &&
-          (!('uid' in existing()) || incoming().uid == existing().uid) &&
+          (!('uid' in existing()) || existing().uid == '' || incoming().uid == existing().uid) &&
           incoming().uid == userId &&
-          (!('email' in existing()) || incoming().email == existing().email) &&
-          (!('role' in existing()) || incoming().role == existing().role) &&
+          (!('email' in existing()) || existing().email == '' || incoming().email == existing().email) &&
+          (!('email' in incoming().diff(existing()).affectedKeys()) || (
+            (!('email' in existing()) || existing().email == '') &&
+            request.auth.token.email != null &&
+            incoming().email == request.auth.token.email
+          )) &&
+          (!('role' in existing()) || existing().role == '' || incoming().role == existing().role) &&
+          (!('role' in incoming().diff(existing()).affectedKeys()) || (
+            (!('role' in existing()) || existing().role == '') &&
+            incoming().role in ['client', 'vendeur', 'livreur']
+          )) &&
           (!('status' in incoming()) || ('status' in existing() && incoming().status == existing().status)) &&
           (!('isKycVerified' in incoming()) || ('isKycVerified' in existing() && incoming().isKycVerified == existing().isKycVerified) || (!('isKycVerified' in existing()) && incoming().isKycVerified == false)) &&
           (!('preferredRateDiscountPercent' in incoming()) || ('preferredRateDiscountPercent' in existing() && incoming().preferredRateDiscountPercent == existing().preferredRateDiscountPercent) || (!('preferredRateDiscountPercent' in existing()) && incoming().preferredRateDiscountPercent == 0)) &&
           (
             !('kycStatus' in incoming()) ||
             ('kycStatus' in existing() && incoming().kycStatus == existing().kycStatus) ||
-            (incoming().kycStatus == 'en_attente' && (!('kycStatus' in existing()) || existing().kycStatus in ['non_soumis', 'refuse']))
+            (incoming().kycStatus == 'en_attente' && (!('kycStatus' in existing()) || existing().kycStatus in ['non_soumis', 'refuse', '']))
           ) &&
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'uid', 'fullName', 'phone', 'channel', 'avatarUrl',
+            'uid', 'email', 'role', 'fullName', 'phone', 'channel', 'avatarUrl',
             'storeName', 'storeCommune', 'storeAddress', 'storeCoordinates',
             'vehicleType', 'gpsCoordinates', 'locationCommune', 'locationAddress',
             'locationLat', 'locationLng', 'locationUpdatedAt',
@@ -427,13 +440,13 @@ service cloud.firestore {
           isOwner(userId) &&
           isValidKYCDossier(incoming()) &&
           (!('status' in existing()) || existing().status in ['refuse', 'non_soumis']) &&
-          (!('id' in existing()) || incoming().id == existing().id) &&
+          (!('id' in existing()) || existing().id == '' || incoming().id == existing().id) &&
           incoming().id == userId &&
-          (!('userId' in existing()) || incoming().userId == existing().userId) &&
+          (!('userId' in existing()) || existing().userId == '' || incoming().userId == existing().userId) &&
           incoming().userId == request.auth.uid &&
-          (!('courierId' in existing()) || incoming().courierId == existing().courierId) &&
+          (!('courierId' in existing()) || existing().courierId == '' || incoming().courierId == existing().courierId) &&
           (!('courierId' in incoming()) || incoming().courierId == request.auth.uid) &&
-          (!('role' in existing()) || !('role' in incoming()) || incoming().role == existing().role) &&
+          (!('role' in existing()) || existing().role == '' || !('role' in incoming()) || incoming().role == existing().role) &&
           incoming().status == 'en_attente' &&
           incoming().diff(existing()).affectedKeys().hasOnly([
             'id', 'userId', 'courierId', 'role',

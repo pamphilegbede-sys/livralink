@@ -1,16 +1,15 @@
 /**
  * Security Test Suite for Firebase Storage Rules — LivraLink
  *
- * Uses Firebase Storage Emulator + Firestore Emulator (named DB:
- * ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6) to test real
- * cross-service rules evaluation for:
+ * Uses Firebase Storage Emulator to test production-compatible Storage Rules
+ * (zero cross-service named-DB Firestore calls, enforced via Firebase Auth,
+ * email_verified, UID path isolation, custom claims admin / kycLocked,
+ * uploadedBy metadata, strict MIME types and size limits) for:
  * - /avatars/{userId}/{fileName}
  * - /kyc/{userId}/{fileName}
  * - /pod/{orderId}/{fileName}
  * - /chat/{conversationId}/{fileName}
  */
-
-process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
 
 import { describe, test, before, after, beforeEach } from 'node:test';
 import {
@@ -19,40 +18,16 @@ import {
   initializeTestEnvironment,
   RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { initializeApp, getApps } from 'firebase-admin/app';
-import { getFirestore, Firestore } from 'firebase-admin/firestore';
 import * as fs from 'node:fs';
 
 let testEnv: RulesTestEnvironment;
-let adminNamedDb: Firestore;
 
 const PROJECT_ID = 'ai-studio-livralink-storage-test';
-const NAMED_DB_ID = 'ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6';
-
-async function clearNamedFirestoreEmulator() {
-  const res = await fetch(
-    `http://127.0.0.1:8080/emulator/v1/projects/${PROJECT_ID}/databases/${NAMED_DB_ID}/documents`,
-    { method: 'DELETE' }
-  );
-  if (!res.ok) {
-    throw new Error(`Failed to clear named Firestore emulator: ${res.status}`);
-  }
-}
 
 describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
   before(async () => {
-    const adminApp =
-      getApps().find((a) => a.name === 'storage-rules-test-admin') ||
-      initializeApp({ projectId: PROJECT_ID }, 'storage-rules-test-admin');
-    adminNamedDb = getFirestore(adminApp, NAMED_DB_ID);
-
     testEnv = await initializeTestEnvironment({
       projectId: PROJECT_ID,
-      firestore: {
-        rules: fs.readFileSync('firestore.rules', 'utf8'),
-        host: '127.0.0.1',
-        port: 8080,
-      },
       storage: {
         rules: fs.readFileSync('storage.rules', 'utf8'),
         host: '127.0.0.1',
@@ -67,7 +42,6 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
 
   beforeEach(async () => {
     await testEnv.clearStorage();
-    await clearNamedFirestoreEmulator();
   });
 
   test('1. Unauthenticated access to any Storage path is strictly denied', async () => {
@@ -79,7 +53,13 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
     );
     await assertFails(unauthStorage.ref('kyc/user_1/cni.png').getDownloadURL());
+    await assertFails(
+      unauthStorage.ref('kyc/user_1/cni.jpg').put(Buffer.from('jpg'), {
+        contentType: 'image/jpeg',
+      })
+    );
     await assertFails(unauthStorage.ref('pod/order_1/photo.jpg').getDownloadURL());
+    await assertFails(unauthStorage.ref('chat/conv_1/msg.jpg').getDownloadURL());
   });
 
   test('2. Avatars: owner can upload valid image with uploadedBy metadata; non-owner blocked', async () => {
@@ -113,9 +93,19 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
     );
   });
 
-  test('3. KYC docs: supports JPG/PNG/WebP/PDF, enforces email_verified, uploadedBy, <10MB, status gating & cross-courier isolation', async () => {
+  test('3. KYC docs: supports JPG/PNG/WebP/PDF, enforces email_verified, uploadedBy, <10MB, kycLocked, immutability & private isolation', async () => {
     const courierStorage = testEnv
-      .authenticatedContext('courier_kyc_1', { email: 'ck@test.com', email_verified: true })
+      .authenticatedContext('courier_kyc_1', {
+        email: 'ck@test.com',
+        email_verified: true,
+      })
+      .storage();
+    const lockedCourierStorage = testEnv
+      .authenticatedContext('courier_kyc_1', {
+        email: 'ck@test.com',
+        email_verified: true,
+        kycLocked: true,
+      })
       .storage();
     const unverifiedCourierStorage = testEnv
       .authenticatedContext('courier_unverified', { email: 'unv@test.com', email_verified: false })
@@ -129,8 +119,15 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
         email_verified: true,
       })
       .storage();
+    const claimAdminStorage = testEnv
+      .authenticatedContext('sub_admin', {
+        email: 'admin@livralink.bj',
+        email_verified: true,
+        admin: true,
+      })
+      .storage();
 
-    // Test 1, 2, 3: Owner uploads JPG, PNG, WebP, and PDF with valid uploadedBy metadata
+    // Owner uploads JPG, PNG, WebP, and PDF with valid uploadedBy metadata
     await assertSucceeds(
       courierStorage.ref('kyc/courier_kyc_1/cni.jpg').put(Buffer.from('jpg-bytes'), {
         contentType: 'image/jpeg',
@@ -156,7 +153,7 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
     );
 
-    // Test 5: Unverified email cannot upload KYC documents
+    // Unverified email cannot upload KYC documents
     await assertFails(
       unverifiedCourierStorage.ref('kyc/courier_unverified/cni.jpg').put(Buffer.from('jpg-bytes'), {
         contentType: 'image/jpeg',
@@ -164,10 +161,16 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
     );
 
-    // Test 6: Invalid MIME type (text/plain) and oversized (>=10MB) rejected
+    // Invalid MIME type (text/plain), empty file, and oversized (>=10MB) rejected
     await assertFails(
       courierStorage.ref('kyc/courier_kyc_1/script.txt').put(Buffer.from('hello'), {
         contentType: 'text/plain',
+        customMetadata: { uploadedBy: 'courier_kyc_1' },
+      })
+    );
+    await assertFails(
+      courierStorage.ref('kyc/courier_kyc_1/empty.jpg').put(Buffer.alloc(0), {
+        contentType: 'image/jpeg',
         customMetadata: { uploadedBy: 'courier_kyc_1' },
       })
     );
@@ -178,7 +181,7 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
     );
 
-    // Test 7: Forged or missing uploadedBy metadata rejected
+    // Forged or missing uploadedBy metadata rejected
     await assertFails(
       courierStorage.ref('kyc/courier_kyc_1/forged.jpg').put(Buffer.from('jpg-bytes'), {
         contentType: 'image/jpeg',
@@ -191,7 +194,7 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
     );
 
-    // Test 16: Outsider cannot upload into another user's KYC folder
+    // Outsider cannot upload into another user's KYC folder
     await assertFails(
       outsiderStorage.ref('kyc/courier_kyc_1/hack.jpg').put(Buffer.from('jpg-bytes'), {
         contentType: 'image/jpeg',
@@ -199,141 +202,92 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
     );
 
-    // When dossier is 'non_soumis', owner can still upload
-    await adminNamedDb.doc('kyc/courier_kyc_1').set({
-      id: 'courier_kyc_1',
-      userId: 'courier_kyc_1',
-      fullName: 'Courier KYC',
-      phone: '+22997000010',
-      status: 'non_soumis',
-    });
-    await assertSucceeds(
-      courierStorage.ref('kyc/courier_kyc_1/cni_draft.pdf').put(Buffer.from('%PDF-1.4'), {
-        contentType: 'application/pdf',
-        customMetadata: { uploadedBy: 'courier_kyc_1' },
-      })
-    );
-
-    // Set KYC dossier to en_attente in named Firestore DB
-    await adminNamedDb.doc('kyc/courier_kyc_1').update({ status: 'en_attente' });
-
-    // Once en_attente, owner cannot upload another doc or delete existing ones
-    await assertFails(
-      courierStorage.ref('kyc/courier_kyc_1/cni_new.jpg').put(Buffer.from('jpg-bytes'), {
-        contentType: 'image/jpeg',
-        customMetadata: { uploadedBy: 'courier_kyc_1' },
-      })
-    );
+    // Courier cannot delete or overwrite/update existing KYC objects
     await assertFails(courierStorage.ref('kyc/courier_kyc_1/cni.jpg').delete());
-
-    // Once 'valide', owner is also blocked from uploading new files
-    await adminNamedDb.doc('kyc/courier_kyc_1').update({ status: 'valide' });
     await assertFails(
-      courierStorage.ref('kyc/courier_kyc_1/cni_after_valide.jpg').put(Buffer.from('jpg-bytes'), {
+      courierStorage.ref('kyc/courier_kyc_1/cni.jpg').updateMetadata({
+        customMetadata: { uploadedBy: 'courier_kyc_1', tampered: 'true' },
+      })
+    );
+
+    // When custom claim kycLocked is true (after admin approval), courier upload is blocked
+    await assertFails(
+      lockedCourierStorage.ref('kyc/courier_kyc_1/cni_after_valide.jpg').put(Buffer.from('jpg-bytes'), {
         contentType: 'image/jpeg',
         customMetadata: { uploadedBy: 'courier_kyc_1' },
       })
     );
 
-    // Test 15: After rejection ('refuse'), owner CAN upload new justification document
-    await adminNamedDb.doc('kyc/courier_kyc_1').update({ status: 'refuse' });
-    await assertSucceeds(
-      courierStorage.ref('kyc/courier_kyc_1/cni_resubmit.pdf').put(Buffer.from('%PDF-1.4\nresub'), {
-        contentType: 'application/pdf',
-        customMetadata: { uploadedBy: 'courier_kyc_1' },
-      })
-    );
-
-    // Owner and Super-Admin can read/inspect; other courier/outsider strictly denied
+    // Owner, Super-Admin, and claim-Admin can read/inspect; outsider strictly denied
     await assertSucceeds(courierStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
     await assertSucceeds(superAdminStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
+    await assertSucceeds(claimAdminStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
     await assertFails(outsiderStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
     await assertFails(outsiderStorage.ref('kyc/courier_kyc_1/cni.jpg').getDownloadURL());
   });
 
-  test('4. POD proofs: only KYC-verified assigned courier during active transit can create; participants can read; non-participants blocked', async () => {
-    await adminNamedDb.doc('users/courier_verified').set({
-      uid: 'courier_verified',
-      email: 'cv@test.com',
-      fullName: 'Verified Courier',
-      phone: '+22997000040',
-      role: 'livreur',
-      isKycVerified: true,
-    });
-    await adminNamedDb.doc('users/courier_unverified').set({
-      uid: 'courier_unverified',
-      email: 'cu@test.com',
-      fullName: 'Unverified Courier',
-      phone: '+22997000041',
-      role: 'livreur',
-      isKycVerified: false,
-    });
-    await adminNamedDb.doc('deliveries/order_pod_1').set({
-      id: 'order_pod_1',
-      merchantId: 'vendor_pod_1',
-      courierId: 'courier_verified',
-      clientName: 'Client POD',
-      clientPhone: '+22997000042',
-      deliveryFee: 1500,
-      status: 'en_cours',
-    });
-
-    const assignedCourierStorage = testEnv
+  test('4. POD proofs: verified user can create image with uploadedBy; unverified/bad MIME/forged/delete blocked', async () => {
+    const verifiedCourierStorage = testEnv
       .authenticatedContext('courier_verified', { email: 'cv@test.com', email_verified: true })
       .storage();
-    const unverifiedCourierStorage = testEnv
-      .authenticatedContext('courier_unverified', { email: 'cu@test.com', email_verified: true })
+    const unverifiedStorage = testEnv
+      .authenticatedContext('courier_unverified', { email: 'cu@test.com', email_verified: false })
       .storage();
     const vendorStorage = testEnv
       .authenticatedContext('vendor_pod_1', { email: 'vp@test.com', email_verified: true })
       .storage();
-    const outsiderStorage = testEnv
-      .authenticatedContext('outsider_pod', { email: 'op@test.com', email_verified: true })
+    const superAdminStorage = testEnv
+      .authenticatedContext('super_admin', {
+        email: 'Pamphile.gbede@gmail.com',
+        email_verified: true,
+      })
       .storage();
 
-    // Unverified or unassigned courier cannot upload POD
+    // Unverified email cannot upload or read POD
     await assertFails(
-      unverifiedCourierStorage.ref('pod/order_pod_1/photo.jpg').put(Buffer.from('jpg'), {
+      unverifiedStorage.ref('pod/order_pod_1/photo.jpg').put(Buffer.from('jpg'), {
         contentType: 'image/jpeg',
         customMetadata: { uploadedBy: 'courier_unverified' },
       })
     );
 
-    // Assigned KYC-verified courier CAN upload POD photo during en_cours
-    await assertSucceeds(
-      assignedCourierStorage.ref('pod/order_pod_1/photo.jpg').put(Buffer.from('jpg'), {
-        contentType: 'image/jpeg',
-        customMetadata: { uploadedBy: 'courier_verified' },
-      })
-    );
-
-    // Vendor participant can read POD photo; outsider cannot
-    await assertSucceeds(vendorStorage.ref('pod/order_pod_1/photo.jpg').getMetadata());
-    await assertFails(outsiderStorage.ref('pod/order_pod_1/photo.jpg').getMetadata());
-
-    // Courier cannot delete uploaded POD proof
-    await assertFails(assignedCourierStorage.ref('pod/order_pod_1/photo.jpg').delete());
-
-    // Once delivered ('livree'), even assigned courier cannot upload new POD proof
-    await adminNamedDb.doc('deliveries/order_pod_1').update({ status: 'livree' });
+    // Verified user with forged uploadedBy or invalid MIME rejected
     await assertFails(
-      assignedCourierStorage.ref('pod/order_pod_1/photo_late.jpg').put(Buffer.from('jpg'), {
+      verifiedCourierStorage.ref('pod/order_pod_1/forged.jpg').put(Buffer.from('jpg'), {
+        contentType: 'image/jpeg',
+        customMetadata: { uploadedBy: 'someone_else' },
+      })
+    );
+    await assertFails(
+      verifiedCourierStorage.ref('pod/order_pod_1/doc.pdf').put(Buffer.from('%PDF-1.4'), {
+        contentType: 'application/pdf',
+        customMetadata: { uploadedBy: 'courier_verified' },
+      })
+    );
+
+    // Verified user can upload valid POD image with uploadedBy == uid
+    await assertSucceeds(
+      verifiedCourierStorage.ref('pod/order_pod_1/photo.jpg').put(Buffer.from('jpg'), {
         contentType: 'image/jpeg',
         customMetadata: { uploadedBy: 'courier_verified' },
       })
     );
+
+    // Verified participant can read POD photo; unverified cannot
+    await assertSucceeds(vendorStorage.ref('pod/order_pod_1/photo.jpg').getMetadata());
+    await assertFails(unverifiedStorage.ref('pod/order_pod_1/photo.jpg').getMetadata());
+
+    // Non-admin cannot delete uploaded POD proof, Admin can
+    await assertFails(verifiedCourierStorage.ref('pod/order_pod_1/photo.jpg').delete());
+    await assertSucceeds(superAdminStorage.ref('pod/order_pod_1/photo.jpg').delete());
   });
 
-  test('5. Chat media: only conversation participants can read and upload', async () => {
-    await adminNamedDb.doc('conversations/conv_media_1').set({
-      participantIds: ['vendor_chat_1', 'courier_chat_1'],
-    });
-
+  test('5. Chat media: verified users can upload/read valid media; unverified/bad MIME/forged/delete blocked', async () => {
     const vendorStorage = testEnv
       .authenticatedContext('vendor_chat_1', { email: 'vc@test.com', email_verified: true })
       .storage();
-    const outsiderStorage = testEnv
-      .authenticatedContext('outsider_chat', { email: 'oc@test.com', email_verified: true })
+    const unverifiedStorage = testEnv
+      .authenticatedContext('unverified_chat', { email: 'uc@test.com', email_verified: false })
       .storage();
 
     await assertSucceeds(
@@ -345,11 +299,18 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
     await assertSucceeds(vendorStorage.ref('chat/conv_media_1/receipt.pdf').getMetadata());
 
     await assertFails(
-      outsiderStorage.ref('chat/conv_media_1/spam.jpg').put(Buffer.from('jpg'), {
+      unverifiedStorage.ref('chat/conv_media_1/spam.jpg').put(Buffer.from('jpg'), {
         contentType: 'image/jpeg',
-        customMetadata: { uploadedBy: 'outsider_chat' },
+        customMetadata: { uploadedBy: 'unverified_chat' },
       })
     );
-    await assertFails(outsiderStorage.ref('chat/conv_media_1/receipt.pdf').getMetadata());
+    await assertFails(unverifiedStorage.ref('chat/conv_media_1/receipt.pdf').getMetadata());
+    await assertFails(
+      vendorStorage.ref('chat/conv_media_1/bad.exe').put(Buffer.from('exe'), {
+        contentType: 'application/x-msdownload',
+        customMetadata: { uploadedBy: 'vendor_chat_1' },
+      })
+    );
+    await assertFails(vendorStorage.ref('chat/conv_media_1/receipt.pdf').delete());
   });
 });

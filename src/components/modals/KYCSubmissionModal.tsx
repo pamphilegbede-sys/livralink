@@ -100,6 +100,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
   const [pendingUploadedAsset, setPendingUploadedAsset] = useState<UploadedKYCDocumentResult | null>(null);
 
   const objectUrlRef = useRef<string | null>(null);
+  const uploadAbortRef = useRef<AbortController | null>(null);
 
   const revokeObjectPreview = () => {
     if (objectUrlRef.current && objectUrlRef.current.startsWith('blob:')) {
@@ -112,6 +113,9 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
   useEffect(() => {
     return () => {
+      try {
+        uploadAbortRef.current?.abort();
+      } catch {}
       revokeObjectPreview();
     };
   }, []);
@@ -175,6 +179,12 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
   if (!isOpen) return null;
 
   const handleCloseModal = () => {
+    if (uploadAbortRef.current) {
+      try {
+        uploadAbortRef.current.abort();
+      } catch {}
+      uploadAbortRef.current = null;
+    }
     if (pendingUploadedAsset) {
       void cleanupOrphanKYCDocument(pendingUploadedAsset.storagePath);
       setPendingUploadedAsset(null);
@@ -182,6 +192,15 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     setSubmitError(null);
     setUploadProgress(null);
     onClose();
+  };
+
+  const handleCancelOngoingUpload = () => {
+    if (uploadAbortRef.current) {
+      try {
+        uploadAbortRef.current.abort();
+      } catch {}
+      uploadAbortRef.current = null;
+    }
   };
 
   const handleResendVerificationEmail = async () => {
@@ -379,10 +398,14 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       status: 'en_attente',
     };
 
+    const abortController = new AbortController();
+    uploadAbortRef.current = abortController;
+
     try {
       await submitKYCRequest(newKycData, {
         onProgress: (pct) => setUploadProgress(pct),
         reuseUploadedAsset: pendingUploadedAsset,
+        signal: abortController.signal,
       });
       setPendingUploadedAsset(null);
       setSubmitError(null);
@@ -391,10 +414,14 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       if (err?.uploadedAsset) {
         setPendingUploadedAsset(err.uploadedAsset);
       }
-      const errMsg = err?.message || 'Erreur lors de la soumission du dossier KYC. Veuillez réessayer.';
+      const stepPrefix = err?.stepCode && !String(err?.message || '').includes(err.stepCode)
+        ? `[${err.stepCode}] `
+        : '';
+      const errMsg = `${stepPrefix}${err?.message || '[KYC-STEP-D] Erreur lors de la soumission du dossier KYC. Veuillez réessayer.'}`;
       setSubmitError(errMsg);
       showToast(errMsg, 'error');
     } finally {
+      uploadAbortRef.current = null;
       setIsSubmitting(false);
       setUploadProgress(null);
     }
@@ -827,7 +854,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
           {/* Inline Upload Progress & Error Alert */}
           {isSubmitting && (
             <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 space-y-2">
-              <div className="flex items-center justify-between text-[11px] font-bold text-emerald-900 dark:text-emerald-200">
+              <div className="flex items-center justify-between gap-2 text-[11px] font-bold text-emerald-900 dark:text-emerald-200">
                 <span className="flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-sm animate-spin">sync</span>
                   <span>
@@ -836,7 +863,16 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                       : 'Enregistrement du dossier KYC dans Firestore...'}
                   </span>
                 </span>
-                {uploadProgress !== null && <span className="font-mono">{uploadProgress}%</span>}
+                <div className="flex items-center gap-2">
+                  {uploadProgress !== null && <span className="font-mono">{uploadProgress}%</span>}
+                  <button
+                    type="button"
+                    onClick={handleCancelOngoingUpload}
+                    className="px-2 py-0.5 rounded-lg bg-emerald-100 hover:bg-red-100 text-emerald-900 hover:text-red-700 text-[10px] font-bold cursor-pointer transition-colors"
+                  >
+                    Annuler
+                  </button>
+                </div>
               </div>
               <div className="w-full h-2 rounded-full bg-emerald-200/70 dark:bg-emerald-900 overflow-hidden">
                 <div

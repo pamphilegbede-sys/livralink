@@ -275,5 +275,37 @@ describe('Suite de tests — KYC, Notifications & Isolation (LivraLink)', () => 
     const { deleteApp } = await import('firebase/app');
     await deleteApp(app).catch(() => {});
   });
+
+  test('5. Diagnostic par étape KYC-STEP-A..F : formatage propre sans fuite de secrets ni PII', async () => {
+    const { createKYCStepError, formatStorageErrorMessage } = await import('../firebase/storageService');
+
+    const errA = createKYCStepError('KYC-STEP-A', 'Adresse e-mail non vérifiée.');
+    assert.equal(errA.stepCode, 'KYC-STEP-A');
+    assert.equal(errA.message, '[KYC-STEP-A] Adresse e-mail non vérifiée.');
+
+    const errB = createKYCStepError(
+      'KYC-STEP-B',
+      formatStorageErrorMessage({ code: 'storage/unauthorized', message: 'Forbidden' }, 'kyc/u1/doc.pdf', 'KYC-STEP-B')
+    );
+    assert.equal(errB.stepCode, 'KYC-STEP-B');
+    assert.match(errB.message, /^\[KYC-STEP-B\]/);
+    assert.match(errB.message, /403/);
+
+    const errD = createKYCStepError('KYC-STEP-D', 'Enregistrement refusé par les règles Firestore.', {
+      originalCode: 'permission-denied',
+      uploadedAsset: {
+        storagePath: 'kyc/u1/cni_1.pdf',
+        contentType: 'application/pdf',
+        fileName: 'cni_1.pdf',
+        size: 1024,
+      },
+    });
+    assert.equal(errD.stepCode, 'KYC-STEP-D');
+    assert.equal(errD.uploadedAsset?.storagePath, 'kyc/u1/cni_1.pdf');
+
+    const { app } = await import('../firebase/config');
+    const { deleteApp } = await import('firebase/app');
+    await deleteApp(app).catch(() => {});
+  });
 });
 

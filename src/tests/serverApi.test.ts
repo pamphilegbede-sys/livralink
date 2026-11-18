@@ -273,5 +273,88 @@ test('Express API security & health integration tests', async (t) => {
       serverMod.setTokenVerifierForTests(null);
     }
   });
+
+  await t.test('POST /api/courier/kyc/authorize-upload & POST /api/admin/kyc/decision enforce KYC-STEP-C/F gating & IAM fallback', async () => {
+    const serverMod = await import('../../server');
+    let kycStatus = 'en_attente';
+    let simulateIamDenied = false;
+
+    serverMod.setTokenVerifierForTests(async (tok) => {
+      if (tok === 'admin-tok') {
+        return { uid: 'admin_uid', email: 'Pamphile.gbede@gmail.com', email_verified: true, admin: true };
+      }
+      if (tok === 'courier-a-tok') {
+        return { uid: 'courier_a', email: 'ca@livralink.bj', email_verified: true };
+      }
+      throw new Error('Invalid token');
+    });
+
+    serverMod.setFirestoreAdminForTests({
+      collection: (name: string) => ({
+        doc: (id: string) => ({
+          get: async () => {
+            if (simulateIamDenied) {
+              const err: any = new Error('7 PERMISSION_DENIED: Missing or insufficient permissions.');
+              err.code = 7;
+              throw err;
+            }
+            if (name === 'kyc' && id === 'courier_a') {
+              return { exists: true, data: () => ({ id: 'courier_a', status: kycStatus }) };
+            }
+            return { exists: false, data: () => undefined };
+          },
+        }),
+      }),
+    });
+
+    try {
+      // 1. en_attente -> 409 KYC-STEP-C
+      const resPending = await fetch(`${baseUrl}/api/courier/kyc/authorize-upload`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer courier-a-tok' },
+      });
+      assert.equal(resPending.status, 409);
+      assert.equal((await resPending.json()).stepCode, 'KYC-STEP-C');
+
+      // 2. valide -> 409 KYC-STEP-C
+      kycStatus = 'valide';
+      const resValid = await fetch(`${baseUrl}/api/courier/kyc/authorize-upload`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer courier-a-tok' },
+      });
+      assert.equal(resValid.status, 409);
+
+      // 3. refuse -> 200 allowed=true
+      kycStatus = 'refuse';
+      const resRefused = await fetch(`${baseUrl}/api/courier/kyc/authorize-upload`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer courier-a-tok' },
+      });
+      assert.equal(resRefused.status, 200);
+      assert.equal((await resRefused.json()).allowed, true);
+
+      // 4. IAM 7 PERMISSION_DENIED fallback on authorize-upload returns 200 iamFallback=true, and 503 KYC-STEP-F on admin decision
+      simulateIamDenied = true;
+      const resIamFallback = await fetch(`${baseUrl}/api/courier/kyc/authorize-upload`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer courier-a-tok' },
+      });
+      assert.equal(resIamFallback.status, 200);
+      assert.equal((await resIamFallback.json()).iamFallback, true);
+
+      const resDecision503 = await fetch(`${baseUrl}/api/admin/kyc/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer admin-tok' },
+        body: JSON.stringify({ targetUid: 'courier_a', requestId: 'courier_a', decision: 'valide' }),
+      });
+      assert.equal(resDecision503.status, 503);
+      const decisionBody = await resDecision503.json();
+      assert.equal(decisionBody.stepCode, 'KYC-STEP-F');
+      assert.equal(decisionBody.code, 'IAM_PERMISSION_DENIED');
+    } finally {
+      serverMod.setFirestoreAdminForTests(null);
+      serverMod.setTokenVerifierForTests(null);
+    }
+  });
 });
 

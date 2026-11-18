@@ -1234,4 +1234,101 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
       })
     );
   });
+
+  // 31. Legacy /users/{uid} doc with en_course/suspendu status and missing email/role safely submits KYC batch
+  test('31. Legacy user doc with en_course status and missing email/role can submit KYC batch without bypassing privilege locks', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/courier_legacy_u').set({
+        uid: 'courier_legacy_u',
+        fullName: 'Courier En Course',
+        phone: '+22997000059',
+        role: '',
+        email: '',
+        status: 'en_course',
+        kycStatus: 'non_soumis',
+      });
+    });
+
+    const ctx = testEnv.authenticatedContext('courier_legacy_u', {
+      email: 'legacy_u@test.com',
+      email_verified: true,
+    });
+    const db = ctx.firestore();
+
+    const batch = db.batch();
+    batch.set(db.doc('kyc/courier_legacy_u'), {
+      id: 'courier_legacy_u',
+      userId: 'courier_legacy_u',
+      courierId: 'courier_legacy_u',
+      fullName: 'Courier En Course',
+      phone: '+22997000059',
+      status: 'en_attente',
+      documentStoragePath: 'kyc/courier_legacy_u/cni.pdf',
+    });
+    batch.update(db.doc('users/courier_legacy_u'), {
+      email: 'legacy_u@test.com',
+      role: 'livreur',
+      kycStatus: 'en_attente',
+      kycSubmittedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    await assertSucceeds(batch.commit());
+
+    // Cannot escalate to admin even when backfilling missing role
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/courier_legacy_u2').set({
+        uid: 'courier_legacy_u2',
+        fullName: 'Hacker',
+        phone: '+22997000060',
+        role: '',
+        email: 'hacker2@test.com',
+      });
+    });
+    const ctx2 = testEnv.authenticatedContext('courier_legacy_u2', {
+      email: 'hacker2@test.com',
+      email_verified: true,
+    });
+    await assertFails(
+      ctx2.firestore().doc('users/courier_legacy_u2').update({
+        role: 'admin',
+      })
+    );
+  });
+
+  // 32. KYC-verified courier (isKycVerified=true, kycStatus=valide) can update GPS/phone while escalation stays blocked
+  test('32. Verified courier can update own GPS/phone while cannot tamper isKycVerified or status', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/courier_verified_u').set({
+        uid: 'courier_verified_u',
+        email: 'verified_u@test.com',
+        fullName: 'Courier Verifie',
+        phone: '+22997000061',
+        role: 'livreur',
+        status: 'en_ligne',
+        isKycVerified: true,
+        kycStatus: 'valide',
+      });
+    });
+
+    const ctx = testEnv.authenticatedContext('courier_verified_u', {
+      email: 'verified_u@test.com',
+      email_verified: true,
+    });
+    const db = ctx.firestore();
+
+    await assertSucceeds(
+      db.doc('users/courier_verified_u').update({
+        locationCommune: 'Abomey-Calavi',
+        locationLat: 6.4485,
+        locationLng: 2.3557,
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    await assertFails(
+      db.doc('users/courier_verified_u').update({
+        preferredRateDiscountPercent: 50,
+      })
+    );
+  });
 });
