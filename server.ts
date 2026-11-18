@@ -7,6 +7,7 @@ import fs from 'fs';
 import { initializeApp, cert, getApps, App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 import {
   createP0SecurityService,
   getAssignedCourierIdFromOrder,
@@ -216,6 +217,7 @@ type P0SecurityService = ReturnType<typeof createP0SecurityService>;
 let cachedP0Security: P0SecurityService | null = null;
 let testP0SecurityOverride: P0SecurityService | null = null;
 let testFirestoreOverride: any = null;
+let testStorageBucketOverride: any = null;
 let testTokenVerifierOverride: ((token: string) => Promise<{ uid: string; email?: string; email_verified?: boolean; admin?: boolean }>) | null = null;
 
 export function setP0SecurityForTests(service: P0SecurityService | null): void {
@@ -227,6 +229,12 @@ export function setP0SecurityForTests(service: P0SecurityService | null): void {
 export function setFirestoreAdminForTests(dbOverride: any): void {
   if (process.env.NODE_ENV === 'test') {
     testFirestoreOverride = dbOverride;
+  }
+}
+
+export function setStorageBucketForTests(bucketOverride: any): void {
+  if (process.env.NODE_ENV === 'test') {
+    testStorageBucketOverride = bucketOverride;
   }
 }
 
@@ -284,6 +292,8 @@ const uptimeTracker: UptimeHealthTracker = {
 let firebaseAdminApp: App | null = null;
 let firestoreAdmin: Firestore | null = null;
 let configuredDatabaseId = process.env.FIREBASE_DATABASE_ID || process.env.FIRESTORE_DATABASE_ID || '(default)';
+let configuredStorageBucket =
+  process.env.FIREBASE_STORAGE_BUCKET || 'gen-lang-client-0654978401.firebasestorage.app';
 
 try {
   let projectId = process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT || 'gen-lang-client-0654978401';
@@ -293,6 +303,7 @@ try {
       const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       if (cfg.projectId) projectId = cfg.projectId;
       if (cfg.firestoreDatabaseId) configuredDatabaseId = cfg.firestoreDatabaseId;
+      if (cfg.storageBucket) configuredStorageBucket = cfg.storageBucket;
     } catch {}
   }
 
@@ -305,13 +316,14 @@ try {
         firebaseAdminApp = initializeApp({
           credential: cert(parsedSa),
           projectId: parsedSa.project_id || projectId,
+          storageBucket: configuredStorageBucket,
         });
       } catch (saParseErr: any) {
         console.warn('[FIREBASE-ADMIN] FIREBASE_SERVICE_ACCOUNT_KEY invalide, bascule ADC:', saParseErr?.message);
-        firebaseAdminApp = initializeApp({ projectId });
+        firebaseAdminApp = initializeApp({ projectId, storageBucket: configuredStorageBucket });
       }
     } else {
-      firebaseAdminApp = initializeApp({ projectId });
+      firebaseAdminApp = initializeApp({ projectId, storageBucket: configuredStorageBucket });
     }
     console.log(`[FIREBASE-ADMIN] SDK initialisé avec succès pour le projet: ${projectId}`);
   } else {
@@ -3607,6 +3619,124 @@ app.post('/api/admin/kyc/decision', requireAdminAuthorization as any, async (req
   } catch (err: any) {
     console.error('[ADMIN KYC DECISION ERROR]:', err?.message || err);
     return res.status(500).json({ success: false, error: 'Erreur lors de la décision administrative KYC.' });
+  }
+});
+
+// =========================================================================
+// ACCÈS SÉCURISÉ AUX JUSTIFICATIFS KYC & NETTOYAGE DES FICHIERS ORPHELINS
+// =========================================================================
+app.get('/api/kyc/document', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const rawPath = String(req.query?.path || '').trim();
+    const match = rawPath.match(/^kyc\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)$/);
+    if (!match || rawPath.includes('..')) {
+      return res.status(400).json({ success: false, error: 'Chemin de justificatif KYC invalide.' });
+    }
+
+    const targetUid = match[1];
+    const fileName = match[2];
+    const isOwner = req.user?.uid === targetUid;
+    const isAdminCaller = isOwner ? false : await checkCallerIsAdmin(req.user);
+
+    if (!isOwner && !isAdminCaller) {
+      recordSecurityAnomaly(
+        getClientIp(req),
+        'KYC_DOCUMENT_IDOR_ATTEMPT',
+        `Tentative de lecture non autorisée du justificatif KYC ${rawPath} par ${req.user?.uid}`
+      );
+      return res.status(403).json({
+        success: false,
+        error: 'Accès refusé. Vous n’êtes pas autorisé à consulter ce document KYC.',
+      });
+    }
+
+    const activeBucket =
+      process.env.NODE_ENV === 'test' && testStorageBucketOverride
+        ? testStorageBucketOverride
+        : firebaseAdminApp
+        ? getStorage(firebaseAdminApp).bucket(configuredStorageBucket)
+        : null;
+
+    if (!activeBucket) {
+      return res.status(503).json({ success: false, error: 'Firebase Storage Admin indisponible.' });
+    }
+
+    const fileRef = activeBucket.file(rawPath);
+    const [exists] = await fileRef.exists();
+    if (!exists) {
+      return res.status(404).json({ success: false, error: 'Justificatif KYC introuvable dans le stockage.' });
+    }
+
+    const [metadata] = await fileRef.getMetadata().catch(() => [{} as any]);
+    const [buffer] = await fileRef.download();
+    const lowerName = fileName.toLowerCase();
+    const contentType =
+      metadata?.contentType ||
+      (lowerName.endsWith('.pdf')
+        ? 'application/pdf'
+        : lowerName.endsWith('.png')
+        ? 'image/png'
+        : lowerName.endsWith('.webp')
+        ? 'image/webp'
+        : 'image/jpeg');
+
+    const disposition = req.query?.download === '1' ? 'attachment' : 'inline';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${fileName.replace(/[^a-zA-Z0-9_.-]/g, '_')}"`);
+    res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    return res.status(200).send(buffer);
+  } catch (err: any) {
+    console.error('[KYC DOCUMENT PROXY ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Impossible de récupérer le justificatif KYC.' });
+  }
+});
+
+app.post('/api/courier/kyc/cleanup-orphan', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const rawPath = String(req.body?.storagePath || '').trim();
+    const callerUid = req.user!.uid;
+    const match = rawPath.match(/^kyc\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)$/);
+    if (!match || rawPath.includes('..') || match[1] !== callerUid) {
+      return res.status(403).json({
+        success: false,
+        error: 'Action refusée. Vous ne pouvez nettoyer que vos propres fichiers temporaires KYC.',
+      });
+    }
+
+    const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+    if (activeDb) {
+      const kycSnap = await activeDb.collection('kyc').doc(callerUid).get();
+      if (kycSnap.exists) {
+        const kycData = kycSnap.data() || {};
+        if (
+          (kycData.status === 'en_attente' || kycData.status === 'valide') &&
+          (kycData.documentStoragePath === rawPath ||
+            (typeof kycData.documentPhotoUrl === 'string' && kycData.documentPhotoUrl.includes(encodeURIComponent(rawPath))))
+        ) {
+          return res.status(409).json({
+            success: false,
+            error: 'Impossible de supprimer un justificatif lié à un dossier actif ou validé.',
+          });
+        }
+      }
+    }
+
+    const activeBucket =
+      process.env.NODE_ENV === 'test' && testStorageBucketOverride
+        ? testStorageBucketOverride
+        : firebaseAdminApp
+        ? getStorage(firebaseAdminApp).bucket(configuredStorageBucket)
+        : null;
+
+    if (!activeBucket) {
+      return res.status(503).json({ success: false, error: 'Firebase Storage Admin indisponible.' });
+    }
+
+    await activeBucket.file(rawPath).delete({ ignoreNotFound: true });
+    return res.json({ success: true, cleanedPath: rawPath });
+  } catch (err: any) {
+    console.error('[KYC ORPHAN CLEANUP ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors du nettoyage du fichier KYC orphelin.' });
   }
 });
 

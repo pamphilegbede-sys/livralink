@@ -211,4 +211,69 @@ describe('Suite de tests — KYC, Notifications & Isolation (LivraLink)', () => 
 
     assert.equal(notifsCourier.length, 0, 'Livreur A ne reçoit pas les notifications des vendeurs');
   });
+
+  test('4. Helpers Storage & KYC : MIME réel (JPG/PNG/WebP/PDF), chemin sécurisé, erreurs et hydratation Firestore', async () => {
+    const {
+      normalizeMimeType,
+      getExtensionForMimeType,
+      isAllowedKycMimeType,
+      extractStoragePathFromUrl,
+      formatStorageErrorMessage,
+    } = await import('../firebase/storageService');
+    const { mapFirestoreKycToRequest } = await import('../utils/adminReconciliation');
+
+    // PDF doit rester application/pdf et .pdf (jamais forcé en image/jpeg)
+    assert.equal(normalizeMimeType('application/pdf', 'piece.pdf'), 'application/pdf');
+    assert.equal(normalizeMimeType('', 'carte_nationale.PDF'), 'application/pdf');
+    assert.equal(normalizeMimeType('application/octet-stream', 'scan.webp'), 'image/webp');
+    assert.equal(normalizeMimeType('image/jpg', 'photo.jpg'), 'image/jpeg');
+    assert.equal(normalizeMimeType('image/png', 'photo.png'), 'image/png');
+
+    assert.equal(getExtensionForMimeType('application/pdf'), 'pdf');
+    assert.equal(getExtensionForMimeType('image/png'), 'png');
+    assert.equal(getExtensionForMimeType('image/webp'), 'webp');
+    assert.equal(getExtensionForMimeType('image/jpeg'), 'jpg');
+
+    assert.equal(isAllowedKycMimeType('image/jpeg'), true);
+    assert.equal(isAllowedKycMimeType('image/png'), true);
+    assert.equal(isAllowedKycMimeType('image/webp'), true);
+    assert.equal(isAllowedKycMimeType('application/pdf'), true);
+    assert.equal(isAllowedKycMimeType('text/plain'), false);
+    assert.equal(isAllowedKycMimeType('application/x-msdownload'), false);
+
+    assert.equal(
+      extractStoragePathFromUrl(
+        'https://firebasestorage.googleapis.com/v0/b/gen-lang-client-0654978401.firebasestorage.app/o/kyc%2Fuid_123%2Fidentity_photo_1.pdf?alt=media'
+      ),
+      'kyc/uid_123/identity_photo_1.pdf'
+    );
+
+    const msg403 = formatStorageErrorMessage({ code: 'storage/unauthorized', message: 'Forbidden' }, 'kyc/u1/cni.pdf');
+    assert.match(msg403, /403|refusé|vérifiée/i);
+
+    const mapped = mapFirestoreKycToRequest(
+      {
+        userId: 'courier_reload_1',
+        courierId: 'courier_reload_1',
+        fullName: 'Koffi Adjovi',
+        phone: '+22997001122',
+        status: 'en_attente',
+        documentStoragePath: 'kyc/courier_reload_1/identity_photo_1700.pdf',
+        documentMimeType: 'application/pdf',
+        documentFileName: 'identity_photo_1700.pdf',
+      },
+      'courier_reload_1'
+    );
+    assert.equal(mapped.status, 'en_attente');
+    assert.equal(mapped.documentStoragePath, 'kyc/courier_reload_1/identity_photo_1700.pdf');
+    assert.equal(mapped.documentMimeType, 'application/pdf');
+    assert.equal(mapped.documentFileName, 'identity_photo_1700.pdf');
+    assert.equal(mapped.documents.cni, true);
+    assert.equal(mapped.documentPhotoUrl, undefined);
+
+    const { app } = await import('../firebase/config');
+    const { deleteApp } = await import('firebase/app');
+    await deleteApp(app).catch(() => {});
+  });
 });
+

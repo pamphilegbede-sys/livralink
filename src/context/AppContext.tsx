@@ -57,7 +57,7 @@ import {
   INITIAL_NOTIFICATIONS
 } from '../data/mockData';
 import { calculateDeliveryPrice, calculateDistanceKm, DetectedUserLocation } from '../config/maps';
-import { collection, doc, getDoc, getDocs, onSnapshot, setDoc, updateDoc, deleteDoc, query, where, runTransaction } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, onSnapshot, setDoc, updateDoc, deleteDoc, query, where, runTransaction, writeBatch } from 'firebase/firestore';
 import {
   mergeRemoteUsersIntoAdminLists,
   enrichMerchantsWithDeliveries,
@@ -69,6 +69,7 @@ import {
   uploadPODPhoto,
   uploadPODSignature,
   uploadKYCDocument,
+  UploadedKYCDocumentResult,
 } from '../firebase/storageService';
 import { playPriorityMissionChime } from '../utils/audioChime';
 import { 
@@ -202,8 +203,8 @@ interface AppContextType {
   fetchOrderPrivateOtp: (orderId: string) => Promise<string | null>;
   toggleCourierAvailability: () => void;
   selectActiveCourier: (courierOrId: Courier | string) => void;
-  approveKYC: (requestId: string) => void;
-  rejectKYC: (requestId: string, reason?: string) => void;
+  approveKYC: (requestId: string) => Promise<boolean> | void;
+  rejectKYC: (requestId: string, reason?: string) => Promise<boolean> | void;
   resolveDispute: (orderId: string, resolutionNote: string) => void;
   
   // Admin Entity Management & Full Control
@@ -350,7 +351,13 @@ interface AppContextType {
   isKYCModalOpen: boolean;
   openKYCModal: () => void;
   closeKYCModal: () => void;
-  submitKYCRequest: (data: Partial<KYCUserRequest>) => Promise<KYCUserRequest>;
+  submitKYCRequest: (
+    data: Partial<KYCUserRequest>,
+    options?: {
+      onProgress?: (percent: number) => void;
+      reuseUploadedAsset?: UploadedKYCDocumentResult | null;
+    }
+  ) => Promise<KYCUserRequest>;
 
   // Courier Rating Modal & Action (Vendeurs)
   isRateLivreurModalOpen: boolean;
@@ -2002,6 +2009,73 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => unsub();
   }, [firebaseUser?.uid, firebaseUser?.emailVerified]);
 
+  // Real-time Firestore listener for logged-in courier/user's own /kyc/{uid} dossier (owner-scoped)
+  useEffect(() => {
+    if (!firebaseUser?.uid || isAdminAuthenticated) return;
+    const uid = firebaseUser.uid;
+    const ownKycRef = doc(db, 'kyc', uid);
+
+    const syncOwnKycDoc = (docData: any | null) => {
+      if (!docData) return;
+      const mapped = mapFirestoreKycToRequest(docData, uid);
+      setKycRequests((prev) => {
+        const others = prev.filter((k) => k.id !== uid && k.courierId !== uid);
+        return [mapped, ...others];
+      });
+      const nextKycStatus = mapped.status;
+      const isApproved = nextKycStatus === 'valide';
+      setUserProfile((prev) =>
+        prev && prev.uid === uid
+          ? {
+              ...prev,
+              isKycVerified: isApproved,
+              kycStatus: nextKycStatus,
+              kycRejectionReason: mapped.rejectionReason,
+            }
+          : prev
+      );
+      setCourierSettings((prev) => ({
+        ...prev,
+        isKycVerified: isApproved,
+        kycStatus: nextKycStatus,
+        kycRejectionReason: mapped.rejectionReason,
+      }));
+      setCouriers((prev) =>
+        prev.map((c) =>
+          c.id === uid
+            ? {
+                ...c,
+                isKycVerified: isApproved,
+                kycStatus: nextKycStatus,
+                kycRejectionReason: mapped.rejectionReason,
+                badge: isApproved ? 'Livreur Vérifié KYC ★' : c.badge,
+              }
+            : c
+        )
+      );
+    };
+
+    getDoc(ownKycRef)
+      .then((snap) => {
+        if (snap.exists()) syncOwnKycDoc(snap.data());
+      })
+      .catch(() => {});
+
+    const unsub = onSnapshot(
+      ownKycRef,
+      (snap) => {
+        if (snap.exists()) {
+          syncOwnKycDoc(snap.data());
+        }
+      },
+      (err) => {
+        console.warn('Écouteur KYC personnel:', err?.message || err);
+      }
+    );
+
+    return () => unsub();
+  }, [firebaseUser?.uid, isAdminAuthenticated]);
+
   // Contextual real-time Firestore listener for priority missions (strictly gated on authenticated KYC courier/admin)
   useEffect(() => {
     if (!firebaseUser || !firebaseUser.emailVerified) return;
@@ -2126,12 +2200,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
 
-    if (Array.isArray(remoteKyc) && remoteKyc.length > 0) {
+    if (Array.isArray(remoteKyc)) {
       setKycRequests((prev) => {
         const byId = new Map<string, KYCUserRequest>();
         prev.forEach((k) => byId.set(k.id, k));
         remoteKyc.forEach((rk) => byId.set(rk.id, { ...(byId.get(rk.id) || {}), ...rk }));
-        return Array.from(byId.values());
+        const statusOrder: Record<string, number> = { en_attente: 0, refuse: 1, valide: 2 };
+        return Array.from(byId.values()).sort(
+          (a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9)
+        );
       });
     }
 
@@ -2294,7 +2371,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         applyRemoteAdminSnapshot(
           finalUsers,
           finalDeliveries.length > 0 ? finalDeliveries : undefined,
-          finalKyc.length > 0 ? finalKyc : undefined
+          finalKyc
         );
         setLastAdminSyncAt(new Date().toISOString());
         if (!silent) {
@@ -3593,30 +3670,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  const submitKYCRequest = async (data: Partial<KYCUserRequest>): Promise<KYCUserRequest> => {
-    const courierDocId = data.courierId || auth.currentUser?.uid || userProfile?.uid || '';
+  const submitKYCRequest = async (
+    data: Partial<KYCUserRequest>,
+    options?: {
+      onProgress?: (percent: number) => void;
+      reuseUploadedAsset?: UploadedKYCDocumentResult | null;
+    }
+  ): Promise<KYCUserRequest> => {
+    const activeUser = auth.currentUser;
+    const courierDocId = activeUser?.uid || data.courierId || userProfile?.uid || '';
     const cleanCourierId = courierDocId.replace(/[^a-zA-Z0-9_-]/g, '');
 
-    if (!cleanCourierId || !auth.currentUser) {
+    if (!cleanCourierId || !activeUser) {
       throw new Error('Authentification Firebase requise pour transmettre un dossier KYC.');
     }
-    if (!auth.currentUser.emailVerified) {
+
+    // Force refresh auth user & ID token so Storage & Firestore rules receive an up-to-date email_verified claim
+    try {
+      await activeUser.reload();
+      await activeUser.getIdToken(true);
+    } catch {
+      throw new Error('Impossible de rafraîchir votre session Firebase. Reconnectez-vous puis réessayez.');
+    }
+
+    if (!activeUser.emailVerified) {
       throw new Error('Veuillez vérifier votre adresse e-mail avant de soumettre votre dossier KYC.');
-    }
-
-    let docUrl = data.documentPhotoUrl || '';
-    if (!docUrl) {
-      throw new Error('La photo de la pièce d\'identité est requise.');
-    }
-
-    if (docUrl.startsWith('data:') || docUrl.startsWith('blob:')) {
-      docUrl = await uploadKYCDocument(cleanCourierId, 'cni', docUrl);
     }
 
     const kycRef = doc(db, 'kyc', cleanCourierId);
     const existingKycSnap = await getDoc(kycRef);
-    if (existingKycSnap.exists()) {
-      const existingStatus = existingKycSnap.data()?.status;
+    const existingKycData = existingKycSnap.exists() ? (existingKycSnap.data() || {}) : null;
+
+    if (existingKycData) {
+      const existingStatus = existingKycData.status;
       if (existingStatus === 'en_attente') {
         throw new Error('Votre dossier KYC est déjà en cours de vérification par l\'administration.');
       }
@@ -3625,25 +3711,66 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
+    let uploadedAsset: UploadedKYCDocumentResult | null = options?.reuseUploadedAsset || null;
+    let newlyUploadedThisAttempt = false;
+    let docStoragePath = uploadedAsset?.storagePath || data.documentStoragePath || existingKycData?.documentStoragePath || '';
+    let docMimeType = uploadedAsset?.contentType || data.documentMimeType || existingKycData?.documentMimeType || '';
+    let docFileName = uploadedAsset?.fileName || data.documentFileName || existingKycData?.documentFileName || '';
+    let legacyDocUrl = data.documentPhotoUrl || existingKycData?.documentPhotoUrl || '';
+
+    const rawFileOrBlob = data.documentFile;
+    if (!uploadedAsset) {
+      if (rawFileOrBlob) {
+        uploadedAsset = await uploadKYCDocument(cleanCourierId, 'cni', rawFileOrBlob, {
+          onProgress: options?.onProgress,
+        });
+        newlyUploadedThisAttempt = true;
+      } else if (legacyDocUrl && (legacyDocUrl.startsWith('data:') || legacyDocUrl.startsWith('blob:'))) {
+        uploadedAsset = await uploadKYCDocument(cleanCourierId, 'cni', legacyDocUrl, {
+          onProgress: options?.onProgress,
+        });
+        newlyUploadedThisAttempt = true;
+      }
+    }
+
+    if (uploadedAsset) {
+      docStoragePath = uploadedAsset.storagePath;
+      docMimeType = uploadedAsset.contentType;
+      docFileName = uploadedAsset.fileName;
+      legacyDocUrl = '';
+    }
+
+    if (!docStoragePath && !legacyDocUrl) {
+      throw new Error('La pièce d\'identité (image JPG/PNG/WebP ou PDF) est requise.');
+    }
+
+    const cleanFullName = (data.fullName || userProfile?.fullName || courierSettings.fullName || 'Coursier LivraLink').trim();
+    const safeFullName = cleanFullName.length >= 2 ? cleanFullName.slice(0, 128) : `${cleanFullName} LL`.slice(0, 128);
+    const cleanPhone = (data.phone || userProfile?.phone || courierSettings.phone || '').trim().slice(0, 32);
+    const cleanEmail = (userProfile?.email || courierSettings.email || activeUser.email || '').trim().toLowerCase().slice(0, 128);
+
     const newReq: KYCUserRequest = {
       id: cleanCourierId,
       courierId: cleanCourierId,
-      lastName: data.lastName,
-      firstName: data.firstName,
-      fullName: data.fullName || userProfile?.fullName || courierSettings.fullName || 'Coursier LivraLink',
-      phone: data.phone || userProfile?.phone || courierSettings.phone || '',
-      email: userProfile?.email || courierSettings.email || auth.currentUser.email || '',
+      lastName: data.lastName?.trim(),
+      firstName: data.firstName?.trim(),
+      fullName: safeFullName,
+      phone: cleanPhone,
+      email: cleanEmail,
       role: 'coursier',
       vehicleType: data.vehicleType || courierSettings.vehicleType || 'Moto',
       vehiclePlate: data.vehiclePlate || courierSettings.vehiclePlate || '',
       idType: data.idType || 'CIP',
-      npi: data.npi,
+      npi: data.npi?.trim() || undefined,
       idNumber: data.idNumber || '',
-      ifuNumber: data.ifuNumber,
+      ifuNumber: data.ifuNumber?.trim() || undefined,
       operatingZone: data.operatingZone || 'Cotonou Littoral',
       submittedAt: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
       status: 'en_attente',
-      documentPhotoUrl: docUrl,
+      documentPhotoUrl: legacyDocUrl || undefined,
+      documentStoragePath: docStoragePath || undefined,
+      documentMimeType: docMimeType || undefined,
+      documentFileName: docFileName || undefined,
       documents: {
         cni: data.documents?.cni ?? true,
         permis: data.documents?.permis ?? true,
@@ -3661,7 +3788,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       idType: newReq.idType || 'CIP',
       idNumber: newReq.idNumber,
       operatingZone: newReq.operatingZone,
-      documentPhotoUrl: docUrl,
+      documentPhotoUrl: legacyDocUrl || '',
+      documentStoragePath: docStoragePath || '',
+      documentMimeType: docMimeType || '',
+      documentFileName: docFileName || '',
       documents: newReq.documents,
       status: 'en_attente',
       isApproved: false,
@@ -3669,13 +3799,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       submittedAt: nowEpoch,
       updatedAt: nowEpoch,
     };
+    if (newReq.lastName) updateAllowedFields.lastName = newReq.lastName;
+    if (newReq.firstName) updateAllowedFields.firstName = newReq.firstName;
     if (newReq.ifuNumber) updateAllowedFields.ifuNumber = newReq.ifuNumber;
-    if (data.npi) updateAllowedFields.npi = data.npi;
+    if (newReq.npi) updateAllowedFields.npi = newReq.npi;
 
-    if (existingKycSnap.exists()) {
-      await updateDoc(kycRef, updateAllowedFields);
+    const userRef = doc(db, 'users', cleanCourierId);
+    const userSnap = await getDoc(userRef);
+
+    // Atomic WriteBatch updating /kyc/{uid} and /users/{uid} together (prevents partial state)
+    const batch = writeBatch(db);
+    if (existingKycData) {
+      const updatePayload: Record<string, any> = { ...updateAllowedFields };
+      if (!existingKycData.id) updatePayload.id = cleanCourierId;
+      if (!existingKycData.userId) updatePayload.userId = cleanCourierId;
+      if (!existingKycData.courierId) updatePayload.courierId = cleanCourierId;
+      if (!existingKycData.role) updatePayload.role = 'coursier';
+      batch.update(kycRef, updatePayload);
     } else {
-      await setDoc(kycRef, {
+      batch.set(kycRef, {
         id: cleanCourierId,
         userId: cleanCourierId,
         courierId: cleanCourierId,
@@ -3685,17 +3827,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
 
-    const userRef = doc(db, 'users', cleanCourierId);
-    const userPatch = {
-      kycStatus: 'en_attente',
-      kycSubmittedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    const userSnap = await getDoc(userRef);
+    const userNowIso = new Date().toISOString();
     if (userSnap.exists()) {
-      await updateDoc(userRef, userPatch);
+      const existingUser = userSnap.data() || {};
+      const userPatch: Record<string, any> = {
+        kycStatus: 'en_attente',
+        kycSubmittedAt: userNowIso,
+        updatedAt: userNowIso,
+      };
+      if (!existingUser.uid) userPatch.uid = cleanCourierId;
+      if (typeof existingUser.phone !== 'string') userPatch.phone = cleanPhone;
+      if (typeof existingUser.fullName !== 'string' || existingUser.fullName.trim().length < 2) {
+        userPatch.fullName = safeFullName;
+      }
+      batch.update(userRef, userPatch);
     } else {
-      await setDoc(
+      batch.set(
         userRef,
         {
           uid: cleanCourierId,
@@ -3704,11 +3851,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           phone: newReq.phone,
           role: 'livreur',
           isKycVerified: false,
-          createdAt: new Date().toISOString(),
-          ...userPatch,
+          kycStatus: 'en_attente',
+          kycSubmittedAt: userNowIso,
+          createdAt: userNowIso,
+          updatedAt: userNowIso,
         },
         { merge: true }
       );
+    }
+
+    try {
+      await batch.commit();
+    } catch (fsErr: any) {
+      const code = String(fsErr?.code || '');
+      const friendlyMsg =
+        code === 'permission-denied' || /permission-denied|Missing or insufficient permissions/i.test(String(fsErr?.message || ''))
+          ? 'Enregistrement refusé par les règles de sécurité Firestore. Vérifiez que votre e-mail est vérifié et que votre dossier n’est pas déjà verrouillé.'
+          : fsErr?.message || 'Erreur lors de l’enregistrement du dossier KYC dans Firestore.';
+      const wrappedErr = new Error(friendlyMsg) as any;
+      if (uploadedAsset && newlyUploadedThisAttempt) {
+        wrappedErr.uploadedAsset = uploadedAsset;
+      }
+      // Do not automatically delete uploadedAsset if user wants to retry immediately; modal tracks it and cleans up if cancelled/replaced.
+      throw wrappedErr;
     }
 
     setKycRequests(prev => [
@@ -3722,7 +3887,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       kycStatus: 'en_attente',
     }));
 
-    if (userProfile?.role === 'livreur') {
+    if (userProfile?.role === 'livreur' || userProfile?.uid === cleanCourierId) {
       setUserProfile(prev => (prev ? { ...prev, isKycVerified: false, kycStatus: 'en_attente' } : null));
     }
 
@@ -3734,7 +3899,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       actionView: 'livreur_dashboard',
     });
 
-    const targetEmail = userProfile?.email || courierSettings.email || auth.currentUser.email || '';
+    const targetEmail = userProfile?.email || courierSettings.email || activeUser.email || '';
     if (targetEmail) {
       sendKycSubmissionEmail({
         email: targetEmail,
@@ -3749,10 +3914,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newReq;
   };
 
-  const approveKYC = async (requestId: string) => {
+  const approveKYC = async (requestId: string): Promise<boolean> => {
     if (!isAdminAuthenticated) {
       showToast('Action réservée au Super-Admin authentifié.', 'error');
-      return;
+      return false;
     }
 
     const targetReq = kycRequests.find(r => r.id === requestId || r.courierId === requestId);
@@ -3777,11 +3942,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.success) {
           showToast(data.error || 'Échec de validation KYC sur le serveur.', 'error');
-          return;
+          return false;
         }
       } catch (err: any) {
         showToast(err?.message || 'Erreur réseau lors de la validation KYC.', 'error');
-        return;
+        return false;
       }
     }
 
@@ -3810,12 +3975,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     addAuditLog('kyc', 'Validation KYC', `Dossier ${requestId} approuvé par l'administrateur (${approvedCourierName})`);
     showToast(`Dossier KYC (${approvedCourierName || requestId}) approuvé avec succès !`, 'success');
+    void refreshAdminData(true);
+    return true;
   };
 
-  const rejectKYC = async (requestId: string, reason?: string) => {
+  const rejectKYC = async (requestId: string, reason?: string): Promise<boolean> => {
     if (!isAdminAuthenticated) {
       showToast('Action réservée au Super-Admin authentifié.', 'error');
-      return;
+      return false;
     }
 
     const rejectionReason = reason || 'Documents d\'identité non conformes ou illisibles.';
@@ -3841,11 +4008,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.success) {
           showToast(data.error || 'Échec du rejet KYC sur le serveur.', 'error');
-          return;
+          return false;
         }
       } catch (err: any) {
         showToast(err?.message || 'Erreur réseau lors du rejet KYC.', 'error');
-        return;
+        return false;
       }
     }
 
@@ -3868,6 +4035,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     addAuditLog('kyc', 'Rejet KYC', `Dossier ${requestId} rejeté : ${rejectionReason}`);
     showToast(`Dossier KYC rejeté : ${rejectionReason}`, 'error');
+    void refreshAdminData(true);
+    return true;
   };
 
   const rateCourier = (

@@ -1088,6 +1088,150 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
     await assertFails(c1Db.doc('wallet_transactions/wtx_1').delete());
     await assertSucceeds(adminDb.doc('wallet_transactions/wtx_2').get());
   });
+
+  // 29. Atomic KYC submission (create /kyc/{uid} + update /users/{uid}.kycStatus) & cross-courier isolation
+  test('29. Courier can atomically submit /kyc/{uid} + /users/{uid}.kycStatus=en_attente while another courier is isolated', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/courier_kyc_a').set({
+        uid: 'courier_kyc_a',
+        email: 'ka@test.com',
+        fullName: 'Courier A',
+        phone: '+22997000051',
+        role: 'livreur',
+        isKycVerified: false,
+        kycStatus: 'non_soumis',
+      });
+      await context.firestore().doc('users/courier_kyc_b').set({
+        uid: 'courier_kyc_b',
+        email: 'kb@test.com',
+        fullName: 'Courier B',
+        phone: '+22997000052',
+        role: 'livreur',
+        isKycVerified: false,
+        kycStatus: 'non_soumis',
+      });
+    });
+
+    const courierACtx = testEnv.authenticatedContext('courier_kyc_a', {
+      email: 'ka@test.com',
+      email_verified: true,
+    });
+    const courierBCtx = testEnv.authenticatedContext('courier_kyc_b', {
+      email: 'kb@test.com',
+      email_verified: true,
+    });
+    const superAdminCtx = testEnv.authenticatedContext('super_admin_kyc', {
+      email: 'Pamphile.gbede@gmail.com',
+      email_verified: true,
+    });
+
+    const dbA = courierACtx.firestore();
+    const batch = dbA.batch();
+    batch.set(dbA.doc('kyc/courier_kyc_a'), {
+      id: 'courier_kyc_a',
+      userId: 'courier_kyc_a',
+      courierId: 'courier_kyc_a',
+      role: 'coursier',
+      lastName: 'DOSSOU',
+      firstName: 'Koffi',
+      fullName: 'DOSSOU Koffi',
+      phone: '+22997000051',
+      email: 'ka@test.com',
+      vehicleType: 'Moto Bajaj Boxer 100 / 125cc',
+      vehiclePlate: 'BJ-9901-RB',
+      idType: 'CIP',
+      idNumber: 'CIP-9901',
+      npi: '1234567890',
+      operatingZone: 'Cotonou',
+      documentStoragePath: 'kyc/courier_kyc_a/identity_photo_1700000000.pdf',
+      documentMimeType: 'application/pdf',
+      documentFileName: 'identity_photo_1700000000.pdf',
+      documents: { cni: true, permis: true, assurance: true },
+      status: 'en_attente',
+      isApproved: false,
+      verified: false,
+      submittedAt: new Date().toISOString(),
+    });
+    batch.update(dbA.doc('users/courier_kyc_a'), {
+      kycStatus: 'en_attente',
+      kycSubmittedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    await assertSucceeds(batch.commit());
+
+    // Once en_attente, Courier A cannot overwrite or modify /kyc/courier_kyc_a
+    await assertFails(
+      dbA.doc('kyc/courier_kyc_a').update({
+        idNumber: 'TAMPERED',
+      })
+    );
+
+    // Cross-courier isolation: Courier B cannot read Courier A's KYC dossier or list /kyc collection
+    const dbB = courierBCtx.firestore();
+    await assertFails(dbB.doc('kyc/courier_kyc_a').get());
+    await assertFails(dbB.collection('kyc').get());
+    await assertFails(
+      dbB.doc('kyc/courier_kyc_a').set({
+        id: 'courier_kyc_a',
+        userId: 'courier_kyc_b',
+        fullName: 'Hacker',
+        phone: '+22900000000',
+        status: 'en_attente',
+      })
+    );
+
+    // Admin CAN list and read /kyc
+    await assertSucceeds(superAdminCtx.firestore().collection('kyc').get());
+    await assertSucceeds(superAdminCtx.firestore().doc('kyc/courier_kyc_a').get());
+  });
+
+  // 30. Legacy /kyc doc in 'non_soumis' missing id/userId can be updated & backfilled safely by owner
+  test('30. Legacy non_soumis /kyc/{uid} doc allows safe backfill and resubmission while locking approved docs', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/courier_legacy').set({
+        uid: 'courier_legacy',
+        email: 'legacy_k@test.com',
+        fullName: 'Courier Legacy',
+        phone: '+22997000053',
+        role: 'livreur',
+        isKycVerified: false,
+      });
+      await context.firestore().doc('kyc/courier_legacy').set({
+        fullName: 'Courier Legacy',
+        phone: '+22997000053',
+        status: 'non_soumis',
+      });
+    });
+
+    const ctx = testEnv.authenticatedContext('courier_legacy', {
+      email: 'legacy_k@test.com',
+      email_verified: true,
+    });
+    const db = ctx.firestore();
+
+    await assertSucceeds(
+      db.doc('kyc/courier_legacy').update({
+        id: 'courier_legacy',
+        userId: 'courier_legacy',
+        courierId: 'courier_legacy',
+        status: 'en_attente',
+        documentStoragePath: 'kyc/courier_legacy/identity_photo_123.jpg',
+        documentMimeType: 'image/jpeg',
+        documentFileName: 'identity_photo_123.jpg',
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    // Once approved ('valide'), owner cannot alter /kyc doc
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('kyc/courier_legacy').update({ status: 'valide', isApproved: true });
+    });
+    await assertFails(
+      db.doc('kyc/courier_legacy').update({
+        status: 'en_attente',
+        documentStoragePath: 'kyc/courier_legacy/new.jpg',
+      })
+    );
+  });
 });
-
-

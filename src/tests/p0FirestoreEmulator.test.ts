@@ -1389,5 +1389,151 @@ describe('Real Firestore & Auth Emulator P0 Security + Multi-Instance Integratio
       await Promise.all([instanceA.stop(), instanceB.stop(), smtpSink.close()]);
     }
   });
-});
 
+  test('10. Real HTTP Emulator Full KYC Lifecycle: Submission visibility in Admin sync-overview, Rejection -> Notification -> Resubmission -> Approval', async () => {
+    const courierToken = await createVerifiedEmulatorUserAndToken({
+      uid: 'courier_kyc_e2e',
+      email: 'courier_kyc_e2e@livralink.bj',
+      password: 'CourierKycPassword#2026',
+    });
+    const adminToken = await createVerifiedEmulatorUserAndToken({
+      uid: 'admin_kyc_e2e',
+      email: 'Pamphile.gbede@gmail.com',
+      password: 'AdminKycPassword#2026',
+    });
+
+    // Simulate courier atomic submission state on Firestore (/users + /kyc)
+    await dbA.collection('users').doc('courier_kyc_e2e').set({
+      uid: 'courier_kyc_e2e',
+      email: 'courier_kyc_e2e@livralink.bj',
+      fullName: 'Sèna Mensah',
+      phone: '+22997112244',
+      role: 'livreur',
+      isKycVerified: false,
+      kycStatus: 'en_attente',
+    });
+    await dbA.collection('kyc').doc('courier_kyc_e2e').set({
+      id: 'courier_kyc_e2e',
+      userId: 'courier_kyc_e2e',
+      courierId: 'courier_kyc_e2e',
+      role: 'coursier',
+      lastName: 'MENSAH',
+      firstName: 'Sèna',
+      fullName: 'Sèna Mensah',
+      phone: '+22997112244',
+      email: 'courier_kyc_e2e@livralink.bj',
+      idType: 'CIP',
+      idNumber: 'CIP-889900',
+      documentStoragePath: 'kyc/courier_kyc_e2e/identity_photo_17000001.pdf',
+      documentMimeType: 'application/pdf',
+      documentFileName: 'identity_photo_17000001.pdf',
+      status: 'en_attente',
+      isApproved: false,
+      submittedAt: new Date().toISOString(),
+    });
+
+    const instanceA = await spawnServerInstance({
+      port: 34126,
+      envOverrides: { OTP_SECRET_SALT: SHARED_SECRET_32 },
+    });
+    const instanceB = await spawnServerInstance({
+      port: 34127,
+      envOverrides: { OTP_SECRET_SALT: SHARED_SECRET_32 },
+    });
+
+    try {
+      // 1. Non-admin cannot access sync-overview or kyc document proxy
+      const courierSyncBlocked = await fetch(`${instanceA.baseUrl}/api/admin/sync-overview`, {
+        headers: { Authorization: `Bearer ${courierToken}` },
+      });
+      assert.equal(courierSyncBlocked.status, 403);
+
+      // 2. Admin receives submitted KYC dossier via sync-overview on Instance B
+      const syncRes = await fetch(`${instanceB.baseUrl}/api/admin/sync-overview`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      assert.equal(syncRes.status, 200);
+      const syncBody = await syncRes.json();
+      assert.equal(syncBody.success, true);
+      const foundKyc = (syncBody.kycRequests || []).find((item: any) => item.id === 'courier_kyc_e2e');
+      assert.ok(foundKyc, 'Le dossier KYC soumis doit apparaître dans /api/admin/sync-overview');
+      assert.equal(foundKyc.status, 'en_attente');
+      assert.equal(foundKyc.documentStoragePath, 'kyc/courier_kyc_e2e/identity_photo_17000001.pdf');
+      assert.equal(foundKyc.documentMimeType, 'application/pdf');
+
+      // 3. Admin rejects KYC with motif -> Firestore + notification created
+      const rejectRes = await fetch(`${instanceA.baseUrl}/api/admin/kyc/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({
+          targetUid: 'courier_kyc_e2e',
+          requestId: 'courier_kyc_e2e',
+          decision: 'refuse',
+          reason: 'Document PDF tronqué sur le bord inférieur',
+        }),
+      });
+      assert.equal(rejectRes.status, 200);
+
+      const userAfterReject = (await dbB.collection('users').doc('courier_kyc_e2e').get()).data();
+      const kycAfterReject = (await dbB.collection('kyc').doc('courier_kyc_e2e').get()).data();
+      assert.equal(userAfterReject?.isKycVerified, false);
+      assert.equal(userAfterReject?.kycStatus, 'refuse');
+      assert.equal(kycAfterReject?.status, 'refuse');
+      assert.equal(kycAfterReject?.rejectionReason, 'Document PDF tronqué sur le bord inférieur');
+
+      const notifAfterReject = await dbB
+        .collection('notifications')
+        .where('recipientId', '==', 'courier_kyc_e2e')
+        .get();
+      assert.equal(notifAfterReject.empty, false);
+      assert.equal(
+        notifAfterReject.docs.some((d) => String(d.data()?.message || '').includes('tronqué')),
+        true
+      );
+
+      // 4. Courier resubmits corrected document -> status back to en_attente
+      await dbA.collection('kyc').doc('courier_kyc_e2e').update({
+        status: 'en_attente',
+        documentStoragePath: 'kyc/courier_kyc_e2e/identity_photo_17000002.jpg',
+        documentMimeType: 'image/jpeg',
+        documentFileName: 'identity_photo_17000002.jpg',
+      });
+      await dbA.collection('users').doc('courier_kyc_e2e').update({ kycStatus: 'en_attente' });
+
+      // 5. Admin approves on Instance B -> courier verified + notification sent
+      const approveRes = await fetch(`${instanceB.baseUrl}/api/admin/kyc/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({
+          targetUid: 'courier_kyc_e2e',
+          requestId: 'courier_kyc_e2e',
+          decision: 'valide',
+        }),
+      });
+      assert.equal(approveRes.status, 200);
+
+      const userAfterApprove = (await dbA.collection('users').doc('courier_kyc_e2e').get()).data();
+      const kycAfterApprove = (await dbA.collection('kyc').doc('courier_kyc_e2e').get()).data();
+      assert.equal(userAfterApprove?.isKycVerified, true);
+      assert.equal(userAfterApprove?.kycStatus, 'valide');
+      assert.equal(kycAfterApprove?.status, 'valide');
+      assert.equal(kycAfterApprove?.isApproved, true);
+
+      const notifAfterApprove = await dbA
+        .collection('notifications')
+        .where('recipientId', '==', 'courier_kyc_e2e')
+        .get();
+      assert.equal(notifAfterApprove.docs.length >= 2, true);
+      assert.equal(
+        notifAfterApprove.docs.some(
+          (d) =>
+            String(d.data()?.title || '').includes('accrédité') &&
+            String(d.data()?.message || '').includes('validé')
+        ),
+        true
+      );
+    } finally {
+      await Promise.all([instanceA.stop(), instanceB.stop()]);
+    }
+  });
+});

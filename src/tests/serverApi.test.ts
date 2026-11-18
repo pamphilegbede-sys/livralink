@@ -155,4 +155,123 @@ test('Express API security & health integration tests', async (t) => {
       serverMod.setTokenVerifierForTests(null);
     }
   });
+
+  await t.test('GET /api/kyc/document & POST /api/courier/kyc/cleanup-orphan enforce owner/admin auth, IDOR block, PDF MIME & active-dossier lock', async () => {
+    const serverMod = await import('../../server');
+    const storageFiles = new Map<string, { contentType: string; data: Buffer }>([
+      ['kyc/courier_a/identity_photo_1.pdf', { contentType: 'application/pdf', data: Buffer.from('%PDF-1.4\nKYC') }],
+      ['kyc/courier_a/orphan_2.jpg', { contentType: 'image/jpeg', data: Buffer.from('jpg-orphan') }],
+    ]);
+
+    let courierAKycStatus = 'en_attente';
+
+    serverMod.setTokenVerifierForTests(async (tok) => {
+      if (tok === 'admin-tok') {
+        return { uid: 'admin_uid', email: 'Pamphile.gbede@gmail.com', email_verified: true, admin: true };
+      }
+      if (tok === 'courier-a-tok') {
+        return { uid: 'courier_a', email: 'ca@livralink.bj', email_verified: true };
+      }
+      if (tok === 'courier-b-tok') {
+        return { uid: 'courier_b', email: 'cb@livralink.bj', email_verified: true };
+      }
+      throw new Error('Invalid token');
+    });
+
+    serverMod.setFirestoreAdminForTests({
+      collection: (name: string) => ({
+        doc: (id: string) => ({
+          get: async () => {
+            if (name === 'kyc' && id === 'courier_a') {
+              return {
+                exists: true,
+                data: () => ({
+                  id: 'courier_a',
+                  userId: 'courier_a',
+                  status: courierAKycStatus,
+                  documentStoragePath: 'kyc/courier_a/identity_photo_1.pdf',
+                }),
+              };
+            }
+            return { exists: false, data: () => undefined };
+          },
+        }),
+      }),
+    });
+
+    serverMod.setStorageBucketForTests({
+      file: (filePath: string) => ({
+        exists: async () => [storageFiles.has(filePath)],
+        getMetadata: async () => [{ contentType: storageFiles.get(filePath)?.contentType }],
+        download: async () => [storageFiles.get(filePath)?.data || Buffer.alloc(0)],
+        delete: async () => {
+          storageFiles.delete(filePath);
+        },
+      }),
+    });
+
+    try {
+      // 1. Owner courier_a can fetch own PDF document with private cache headers
+      const ownerRes = await fetch(
+        `${baseUrl}/api/kyc/document?path=${encodeURIComponent('kyc/courier_a/identity_photo_1.pdf')}`,
+        { headers: { Authorization: 'Bearer courier-a-tok' } }
+      );
+      assert.equal(ownerRes.status, 200);
+      assert.equal(ownerRes.headers.get('content-type')?.includes('application/pdf'), true);
+      assert.equal(ownerRes.headers.get('cache-control'), 'private, no-store, max-age=0');
+      assert.equal(Buffer.from(await ownerRes.arrayBuffer()).toString('utf8'), '%PDF-1.4\nKYC');
+
+      // 2. Super-Admin can fetch courier_a document
+      const adminRes = await fetch(
+        `${baseUrl}/api/kyc/document?path=${encodeURIComponent('kyc/courier_a/identity_photo_1.pdf')}`,
+        { headers: { Authorization: 'Bearer admin-tok' } }
+      );
+      assert.equal(adminRes.status, 200);
+
+      // 3. Courier B (IDOR) strictly rejected (403)
+      const idorRes = await fetch(
+        `${baseUrl}/api/kyc/document?path=${encodeURIComponent('kyc/courier_a/identity_photo_1.pdf')}`,
+        { headers: { Authorization: 'Bearer courier-b-tok' } }
+      );
+      assert.equal(idorRes.status, 403);
+
+      // 4. Invalid/traversal path rejected (400)
+      const badPathRes = await fetch(
+        `${baseUrl}/api/kyc/document?path=${encodeURIComponent('kyc/courier_a/../secret.txt')}`,
+        { headers: { Authorization: 'Bearer admin-tok' } }
+      );
+      assert.equal(badPathRes.status, 400);
+
+      // 5. Cleanup orphan blocked (409) when referenced by en_attente dossier
+      const lockedCleanup = await fetch(`${baseUrl}/api/courier/kyc/cleanup-orphan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-a-tok' },
+        body: JSON.stringify({ storagePath: 'kyc/courier_a/identity_photo_1.pdf' }),
+      });
+      assert.equal(lockedCleanup.status, 409);
+      assert.equal(storageFiles.has('kyc/courier_a/identity_photo_1.pdf'), true);
+
+      // 6. Cleanup orphan allowed (200) for unreferenced temporary file of courier_a
+      const orphanCleanup = await fetch(`${baseUrl}/api/courier/kyc/cleanup-orphan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-a-tok' },
+        body: JSON.stringify({ storagePath: 'kyc/courier_a/orphan_2.jpg' }),
+      });
+      assert.equal(orphanCleanup.status, 200);
+      assert.equal(storageFiles.has('kyc/courier_a/orphan_2.jpg'), false);
+
+      // 7. Cross-user orphan cleanup rejected (403)
+      const crossCleanup = await fetch(`${baseUrl}/api/courier/kyc/cleanup-orphan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-b-tok' },
+        body: JSON.stringify({ storagePath: 'kyc/courier_a/identity_photo_1.pdf' }),
+      });
+      assert.equal(crossCleanup.status, 403);
+    } finally {
+      serverMod.setStorageBucketForTests(null);
+      serverMod.setFirestoreAdminForTests(null);
+      serverMod.setTokenVerifierForTests(null);
+    }
+  });
 });
+

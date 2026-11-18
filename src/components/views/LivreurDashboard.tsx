@@ -69,12 +69,15 @@ export const LivreurDashboard: React.FC = () => {
       : false);
 
   const existingKyc = kycTargetId
-    ? kycRequests.find((k) => k.courierId === kycTargetId)
+    ? kycRequests.find((k) => k.courierId === kycTargetId || k.id === kycTargetId)
     : undefined;
 
   const kycStatus: 'valide' | 'en_attente' | 'refuse' | 'non_soumis' = isKycApproved
     ? 'valide'
-    : (existingKyc?.status as any) || 'non_soumis';
+    : ((existingKyc?.status ||
+        userProfile?.kycStatus ||
+        courierSettings.kycStatus ||
+        'non_soumis') as 'valide' | 'en_attente' | 'refuse' | 'non_soumis');
 
   // Désactiver immédiatement le voyant vert et le statut connecté si le livreur n'est pas accrédité KYC
   useEffect(() => {
@@ -249,12 +252,22 @@ export const LivreurDashboard: React.FC = () => {
                 type="button"
                 onClick={openKYCModal}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium border cursor-pointer ${
-                  isKycApproved
+                  kycStatus === 'valide'
                     ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                    : kycStatus === 'en_attente'
+                    ? 'bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800'
+                    : kycStatus === 'refuse'
+                    ? 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800'
                     : 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
                 }`}
               >
-                {isKycApproved ? 'KYC Validé' : 'Vérification KYC'}
+                {kycStatus === 'valide'
+                  ? 'KYC Validé'
+                  : kycStatus === 'en_attente'
+                  ? 'KYC En examen'
+                  : kycStatus === 'refuse'
+                  ? 'KYC Refusé'
+                  : 'Vérification KYC'}
               </button>
               <button
                 type="button"
@@ -268,16 +281,50 @@ export const LivreurDashboard: React.FC = () => {
 
           {/* KYC Alert if not approved */}
           {!isKycApproved && (
-            <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div
+              className={`p-3.5 rounded-xl border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                kycStatus === 'en_attente'
+                  ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200'
+                  : kycStatus === 'refuse'
+                  ? 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800 text-red-900 dark:text-red-200'
+                  : 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200'
+              }`}
+            >
               <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-lg text-amber-600 shrink-0">verified_user</span>
-                <span>Votre dossier KYC est en attente ou non soumis. Veuillez déposer votre pièce pour débloquer toutes vos missions.</span>
+                <span
+                  className={`material-symbols-outlined text-lg shrink-0 ${
+                    kycStatus === 'en_attente'
+                      ? 'text-blue-600'
+                      : kycStatus === 'refuse'
+                      ? 'text-red-600'
+                      : 'text-amber-600'
+                  }`}
+                >
+                  {kycStatus === 'en_attente' ? 'hourglass_top' : kycStatus === 'refuse' ? 'error' : 'verified_user'}
+                </span>
+                <span>
+                  {kycStatus === 'en_attente'
+                    ? 'Votre dossier KYC a bien été transmis et est en cours d’examen par l’administrateur.'
+                    : kycStatus === 'refuse'
+                    ? `Votre dossier KYC a été refusé : ${existingKyc?.rejectionReason || userProfile?.kycRejectionReason || courierSettings.kycRejectionReason || 'Veuillez corriger vos pièces et soumettre à nouveau.'}`
+                    : 'Votre dossier KYC est non soumis. Veuillez déposer votre pièce d’identité pour débloquer toutes vos missions.'}
+                </span>
               </div>
               <button
                 onClick={openKYCModal}
-                className="px-3 py-1.5 rounded-lg bg-amber-600 text-white font-medium text-xs hover:bg-amber-700 shrink-0"
+                className={`px-3 py-1.5 rounded-lg text-white font-medium text-xs shrink-0 cursor-pointer ${
+                  kycStatus === 'en_attente'
+                    ? 'bg-blue-600 hover:bg-blue-700'
+                    : kycStatus === 'refuse'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-amber-600 hover:bg-amber-700'
+                }`}
               >
-                Déposer pièce
+                {kycStatus === 'en_attente'
+                  ? 'Consulter mon dossier'
+                  : kycStatus === 'refuse'
+                  ? 'Corriger & Re-soumettre'
+                  : 'Déposer pièce'}
               </button>
             </div>
           )}

@@ -213,9 +213,10 @@ service cloud.firestore {
         (
           isOwner(userId) &&
           isValidUserTypes(incoming()) &&
-          incoming().uid == existing().uid &&
-          incoming().email == existing().email &&
-          incoming().role == existing().role &&
+          (!('uid' in existing()) || incoming().uid == existing().uid) &&
+          incoming().uid == userId &&
+          (!('email' in existing()) || incoming().email == existing().email) &&
+          (!('role' in existing()) || incoming().role == existing().role) &&
           (!('status' in incoming()) || ('status' in existing() && incoming().status == existing().status)) &&
           (!('isKycVerified' in incoming()) || ('isKycVerified' in existing() && incoming().isKycVerified == existing().isKycVerified) || (!('isKycVerified' in existing()) && incoming().isKycVerified == false)) &&
           (!('preferredRateDiscountPercent' in incoming()) || ('preferredRateDiscountPercent' in existing() && incoming().preferredRateDiscountPercent == existing().preferredRateDiscountPercent) || (!('preferredRateDiscountPercent' in existing()) && incoming().preferredRateDiscountPercent == 0)) &&
@@ -225,7 +226,7 @@ service cloud.firestore {
             (incoming().kycStatus == 'en_attente' && (!('kycStatus' in existing()) || existing().kycStatus in ['non_soumis', 'refuse']))
           ) &&
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'fullName', 'phone', 'channel', 'avatarUrl',
+            'uid', 'fullName', 'phone', 'channel', 'avatarUrl',
             'storeName', 'storeCommune', 'storeAddress', 'storeCoordinates',
             'vehicleType', 'gpsCoordinates', 'locationCommune', 'locationAddress',
             'locationLat', 'locationLng', 'locationUpdatedAt',
@@ -415,7 +416,9 @@ service cloud.firestore {
                     hasVerifiedEmail() &&
                     isOwner(userId) &&
                     isValidKYCDossier(incoming()) &&
+                    incoming().id == userId &&
                     incoming().userId == request.auth.uid &&
+                    (!('courierId' in incoming()) || incoming().courierId == request.auth.uid) &&
                     incoming().status == 'en_attente';
       allow update: if isValidId(userId) && (
         isAdmin() ||
@@ -423,15 +426,22 @@ service cloud.firestore {
           hasVerifiedEmail() &&
           isOwner(userId) &&
           isValidKYCDossier(incoming()) &&
-          existing().status == 'refuse' &&
-          incoming().id == existing().id &&
-          incoming().userId == existing().userId &&
+          (!('status' in existing()) || existing().status in ['refuse', 'non_soumis']) &&
+          (!('id' in existing()) || incoming().id == existing().id) &&
+          incoming().id == userId &&
+          (!('userId' in existing()) || incoming().userId == existing().userId) &&
           incoming().userId == request.auth.uid &&
+          (!('courierId' in existing()) || incoming().courierId == existing().courierId) &&
+          (!('courierId' in incoming()) || incoming().courierId == request.auth.uid) &&
+          (!('role' in existing()) || !('role' in incoming()) || incoming().role == existing().role) &&
           incoming().status == 'en_attente' &&
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'fullName', 'phone', 'email', 'vehicleType', 'vehiclePlate',
+            'id', 'userId', 'courierId', 'role',
+            'lastName', 'firstName', 'fullName', 'phone', 'email',
+            'vehicleType', 'vehiclePlate',
             'idType', 'idNumber', 'ifuNumber', 'npi', 'operatingZone',
-            'documentPhotoUrl', 'documents', 'status', 'isApproved',
+            'documentPhotoUrl', 'documentStoragePath', 'documentMimeType', 'documentFileName',
+            'documents', 'status', 'isApproved',
             'verified', 'submittedAt', 'updatedAt'
           ])
         )

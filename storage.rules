@@ -99,7 +99,7 @@ service firebase.storage {
                       (
                         request.auth.uid == userId && (
                           !firestore.exists(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/kyc/$(userId)) ||
-                          firestore.get(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/kyc/$(userId)).data.status == 'refuse'
+                          firestore.get(/databases/ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6/documents/kyc/$(userId)).data.status in ['refuse', 'non_soumis']
                         )
                       ) ||
                       isAdmin()

@@ -215,6 +215,12 @@ export const LivreurSettings: React.FC = () => {
     (kycTargetId
       ? kycRequests.some((k) => k.courierId === kycTargetId && k.status === 'valide')
       : false);
+  const existingKyc = kycTargetId
+    ? kycRequests.find((k) => k.courierId === kycTargetId || k.id === kycTargetId)
+    : undefined;
+  const effectiveKycStatus = isKycApproved
+    ? 'valide'
+    : (existingKyc?.status || userProfile?.kycStatus || courierSettings.kycStatus || 'non_soumis');
   const matchedCourier =
     (activeUid ? couriers.find((c) => c.id === activeUid) : undefined) ||
     (isSupervisory ? selectedCourier : undefined);
@@ -245,11 +251,21 @@ export const LivreurSettings: React.FC = () => {
                     Paramètres Livreur
                   </h1>
                   <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                    isKycApproved
+                    effectiveKycStatus === 'valide'
                       ? 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                      : effectiveKycStatus === 'en_attente'
+                      ? 'bg-blue-100 dark:bg-blue-950/80 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800'
+                      : effectiveKycStatus === 'refuse'
+                      ? 'bg-red-100 dark:bg-red-950/80 text-red-800 dark:text-red-300 border-red-200 dark:border-red-800'
                       : 'bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800'
                   }`}>
-                    {isKycApproved ? 'KYC Valide ✓' : 'KYC Requis'}
+                    {effectiveKycStatus === 'valide'
+                      ? 'KYC Valide ✓'
+                      : effectiveKycStatus === 'en_attente'
+                      ? 'KYC En examen'
+                      : effectiveKycStatus === 'refuse'
+                      ? 'KYC Refusé'
+                      : 'KYC Requis'}
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">

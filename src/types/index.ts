@@ -148,6 +148,10 @@ export interface KYCUserRequest {
   status: 'en_attente' | 'valide' | 'refuse';
   rejectionReason?: string;
   documentPhotoUrl?: string;
+  documentStoragePath?: string;
+  documentMimeType?: string;
+  documentFileName?: string;
+  documentFile?: File | Blob;
   documents: {
     cni: boolean;
     permis: boolean;

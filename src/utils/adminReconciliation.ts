@@ -416,7 +416,7 @@ export const mapFirestoreKycToRequest = (data: any, docId: string): KYCUserReque
     ifuNumber: data.ifuNumber || '',
     operatingZone: data.operatingZone || data.zone || 'Cotonou',
     documents: data.documents || {
-      cni: Boolean(data.cniUrl || data.documentPhotoUrl),
+      cni: Boolean(data.cniUrl || data.documentPhotoUrl || data.documentStoragePath),
       permis: Boolean(data.permisUrl),
       assurance: Boolean(data.assuranceUrl),
     },
@@ -424,5 +424,8 @@ export const mapFirestoreKycToRequest = (data: any, docId: string): KYCUserReque
     submittedAt: normalizeDateString(data.submittedAt || data.createdAt),
     rejectionReason: data.rejectionReason,
     documentPhotoUrl: data.documentPhotoUrl || data.cniUrl,
+    documentStoragePath: data.documentStoragePath || '',
+    documentMimeType: data.documentMimeType || '',
+    documentFileName: data.documentFileName || '',
   };
 };

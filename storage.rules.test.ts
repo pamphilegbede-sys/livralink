@@ -113,9 +113,12 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
     );
   });
 
-  test('3. KYC docs: owner can upload when dossier absent/refused, blocked when en_attente/valide, outsider denied', async () => {
+  test('3. KYC docs: supports JPG/PNG/WebP/PDF, enforces email_verified, uploadedBy, <10MB, status gating & cross-courier isolation', async () => {
     const courierStorage = testEnv
       .authenticatedContext('courier_kyc_1', { email: 'ck@test.com', email_verified: true })
+      .storage();
+    const unverifiedCourierStorage = testEnv
+      .authenticatedContext('courier_unverified', { email: 'unv@test.com', email_verified: false })
       .storage();
     const outsiderStorage = testEnv
       .authenticatedContext('outsider_1', { email: 'out@test.com', email_verified: true })
@@ -127,15 +130,68 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
       .storage();
 
-    // Owner uploads initial KYC doc
+    // Test 1, 2, 3: Owner uploads JPG, PNG, WebP, and PDF with valid uploadedBy metadata
     await assertSucceeds(
       courierStorage.ref('kyc/courier_kyc_1/cni.jpg').put(Buffer.from('jpg-bytes'), {
         contentType: 'image/jpeg',
         customMetadata: { uploadedBy: 'courier_kyc_1' },
       })
     );
+    await assertSucceeds(
+      courierStorage.ref('kyc/courier_kyc_1/cni.png').put(Buffer.from('png-bytes'), {
+        contentType: 'image/png',
+        customMetadata: { uploadedBy: 'courier_kyc_1' },
+      })
+    );
+    await assertSucceeds(
+      courierStorage.ref('kyc/courier_kyc_1/cni.webp').put(Buffer.from('webp-bytes'), {
+        contentType: 'image/webp',
+        customMetadata: { uploadedBy: 'courier_kyc_1' },
+      })
+    );
+    await assertSucceeds(
+      courierStorage.ref('kyc/courier_kyc_1/cni.pdf').put(Buffer.from('%PDF-1.4\n1 0 obj'), {
+        contentType: 'application/pdf',
+        customMetadata: { uploadedBy: 'courier_kyc_1' },
+      })
+    );
 
-    // Outsider cannot upload into another user's KYC folder
+    // Test 5: Unverified email cannot upload KYC documents
+    await assertFails(
+      unverifiedCourierStorage.ref('kyc/courier_unverified/cni.jpg').put(Buffer.from('jpg-bytes'), {
+        contentType: 'image/jpeg',
+        customMetadata: { uploadedBy: 'courier_unverified' },
+      })
+    );
+
+    // Test 6: Invalid MIME type (text/plain) and oversized (>=10MB) rejected
+    await assertFails(
+      courierStorage.ref('kyc/courier_kyc_1/script.txt').put(Buffer.from('hello'), {
+        contentType: 'text/plain',
+        customMetadata: { uploadedBy: 'courier_kyc_1' },
+      })
+    );
+    await assertFails(
+      courierStorage.ref('kyc/courier_kyc_1/too_big.jpg').put(Buffer.alloc(10 * 1024 * 1024 + 1), {
+        contentType: 'image/jpeg',
+        customMetadata: { uploadedBy: 'courier_kyc_1' },
+      })
+    );
+
+    // Test 7: Forged or missing uploadedBy metadata rejected
+    await assertFails(
+      courierStorage.ref('kyc/courier_kyc_1/forged.jpg').put(Buffer.from('jpg-bytes'), {
+        contentType: 'image/jpeg',
+        customMetadata: { uploadedBy: 'another_uid' },
+      })
+    );
+    await assertFails(
+      courierStorage.ref('kyc/courier_kyc_1/missing_meta.jpg').put(Buffer.from('jpg-bytes'), {
+        contentType: 'image/jpeg',
+      })
+    );
+
+    // Test 16: Outsider cannot upload into another user's KYC folder
     await assertFails(
       outsiderStorage.ref('kyc/courier_kyc_1/hack.jpg').put(Buffer.from('jpg-bytes'), {
         contentType: 'image/jpeg',
@@ -143,16 +199,25 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
     );
 
-    // Set KYC dossier to en_attente in named Firestore DB
+    // When dossier is 'non_soumis', owner can still upload
     await adminNamedDb.doc('kyc/courier_kyc_1').set({
       id: 'courier_kyc_1',
       userId: 'courier_kyc_1',
       fullName: 'Courier KYC',
       phone: '+22997000010',
-      status: 'en_attente',
+      status: 'non_soumis',
     });
+    await assertSucceeds(
+      courierStorage.ref('kyc/courier_kyc_1/cni_draft.pdf').put(Buffer.from('%PDF-1.4'), {
+        contentType: 'application/pdf',
+        customMetadata: { uploadedBy: 'courier_kyc_1' },
+      })
+    );
 
-    // Once en_attente, owner cannot upload another doc or delete it
+    // Set KYC dossier to en_attente in named Firestore DB
+    await adminNamedDb.doc('kyc/courier_kyc_1').update({ status: 'en_attente' });
+
+    // Once en_attente, owner cannot upload another doc or delete existing ones
     await assertFails(
       courierStorage.ref('kyc/courier_kyc_1/cni_new.jpg').put(Buffer.from('jpg-bytes'), {
         contentType: 'image/jpeg',
@@ -161,10 +226,29 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
     );
     await assertFails(courierStorage.ref('kyc/courier_kyc_1/cni.jpg').delete());
 
-    // Super-Admin can inspect/read
-    await assertSucceeds(superAdminStorage.ref('kyc/courier_kyc_1/cni.jpg').getMetadata());
-    // Outsider cannot read
-    await assertFails(outsiderStorage.ref('kyc/courier_kyc_1/cni.jpg').getMetadata());
+    // Once 'valide', owner is also blocked from uploading new files
+    await adminNamedDb.doc('kyc/courier_kyc_1').update({ status: 'valide' });
+    await assertFails(
+      courierStorage.ref('kyc/courier_kyc_1/cni_after_valide.jpg').put(Buffer.from('jpg-bytes'), {
+        contentType: 'image/jpeg',
+        customMetadata: { uploadedBy: 'courier_kyc_1' },
+      })
+    );
+
+    // Test 15: After rejection ('refuse'), owner CAN upload new justification document
+    await adminNamedDb.doc('kyc/courier_kyc_1').update({ status: 'refuse' });
+    await assertSucceeds(
+      courierStorage.ref('kyc/courier_kyc_1/cni_resubmit.pdf').put(Buffer.from('%PDF-1.4\nresub'), {
+        contentType: 'application/pdf',
+        customMetadata: { uploadedBy: 'courier_kyc_1' },
+      })
+    );
+
+    // Owner and Super-Admin can read/inspect; other courier/outsider strictly denied
+    await assertSucceeds(courierStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
+    await assertSucceeds(superAdminStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
+    await assertFails(outsiderStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
+    await assertFails(outsiderStorage.ref('kyc/courier_kyc_1/cni.jpg').getDownloadURL());
   });
 
   test('4. POD proofs: only KYC-verified assigned courier during active transit can create; participants can read; non-participants blocked', async () => {

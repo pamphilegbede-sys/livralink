@@ -57,6 +57,10 @@ try {
 
 export const db: Firestore = firestoreDb;
 export const storage: FirebaseStorage = getStorage(app);
+try {
+  storage.maxUploadRetryTime = 30000;
+  storage.maxOperationRetryTime = 30000;
+} catch {}
 
 // Validate Connection to Firestore asynchronously without blocking app render
 async function testFirestoreConnection() {

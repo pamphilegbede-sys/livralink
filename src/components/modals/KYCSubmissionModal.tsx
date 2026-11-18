@@ -1,8 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { sendEmailVerification } from 'firebase/auth';
 import { auth } from '../../firebase/config';
 import { useApp } from '../../context/AppContext';
 import { KYCUserRequest } from '../../types';
+import {
+  UploadedKYCDocumentResult,
+  cleanupOrphanKYCDocument,
+  fetchAuthorizedKYCDocumentBlob,
+  isAllowedKycMimeType,
+  normalizeMimeType,
+} from '../../firebase/storageService';
 
 export const BENIN_VEHICLE_OPTIONS = [
   'Moto Haujue 115 / 125cc',
@@ -82,10 +89,32 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
   const [vehiclePlate, setVehiclePlate] = useState(existingKyc?.vehiclePlate || '');
   const [hasInsurance, setHasInsurance] = useState(true);
   const [hasAgreedTerms, setHasAgreedTerms] = useState(true);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(
-    existingKyc?.documentPhotoUrl || null
-  );
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [previewMimeType, setPreviewMimeType] = useState<string>(existingKyc?.documentMimeType || '');
+  const [previewFileName, setPreviewFileName] = useState<string>(existingKyc?.documentFileName || '');
+  const [isLoadingExistingDoc, setIsLoadingExistingDoc] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [pendingUploadedAsset, setPendingUploadedAsset] = useState<UploadedKYCDocumentResult | null>(null);
+
+  const objectUrlRef = useRef<string | null>(null);
+
+  const revokeObjectPreview = () => {
+    if (objectUrlRef.current && objectUrlRef.current.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(objectUrlRef.current);
+      } catch {}
+      objectUrlRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      revokeObjectPreview();
+    };
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -103,10 +132,57 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     setVehicleSelect(vType ? (known ? vType : 'Autre engin (préciser)') : BENIN_VEHICLE_OPTIONS[0]);
     setCustomVehicle(vType && !known ? vType : '');
     setVehiclePlate(existingKyc?.vehiclePlate || '');
-    setPhotoPreview(existingKyc?.documentPhotoUrl || null);
-  }, [isOpen, existingKyc, firebaseUser?.emailVerified]);
+    setSelectedFile(null);
+    setSubmitError(null);
+    setUploadProgress(null);
+    setPendingUploadedAsset(null);
+    setPreviewMimeType(existingKyc?.documentMimeType || '');
+    setPreviewFileName(existingKyc?.documentFileName || '');
+
+    revokeObjectPreview();
+    setPhotoPreview(null);
+
+    if (existingKyc?.documentStoragePath || existingKyc?.documentPhotoUrl) {
+      let cancelled = false;
+      setIsLoadingExistingDoc(true);
+      fetchAuthorizedKYCDocumentBlob({
+        storagePath: existingKyc.documentStoragePath,
+        legacyUrl: existingKyc.documentPhotoUrl,
+      })
+        .then(({ blob, mimeType, fileName }) => {
+          if (cancelled) return;
+          const objUrl = URL.createObjectURL(blob);
+          objectUrlRef.current = objUrl;
+          setPhotoPreview(objUrl);
+          setPreviewMimeType(mimeType);
+          setPreviewFileName(fileName);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          if (existingKyc?.documentPhotoUrl && existingKyc.documentPhotoUrl.startsWith('http')) {
+            setPhotoPreview(existingKyc.documentPhotoUrl);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setIsLoadingExistingDoc(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+  }, [isOpen, existingKyc?.id, existingKyc?.status, existingKyc?.documentStoragePath, existingKyc?.documentPhotoUrl, firebaseUser?.emailVerified]);
 
   if (!isOpen) return null;
+
+  const handleCloseModal = () => {
+    if (pendingUploadedAsset) {
+      void cleanupOrphanKYCDocument(pendingUploadedAsset.storagePath);
+      setPendingUploadedAsset(null);
+    }
+    setSubmitError(null);
+    setUploadProgress(null);
+    onClose();
+  };
 
   const handleResendVerificationEmail = async () => {
     if (!auth.currentUser) {
@@ -136,6 +212,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       const verified = Boolean(auth.currentUser.emailVerified);
       setEmailVerified(verified);
       if (verified) {
+        setSubmitError(null);
         showToast('Adresse e-mail vérifiée ! Vous pouvez maintenant soumettre votre dossier KYC.', 'success');
       } else {
         showToast('E-mail pas encore confirmé. Cliquez sur le lien reçu dans votre boîte mail.', 'info');
@@ -151,68 +228,96 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const isAllowedType = file.type.startsWith('image/') || file.type === 'application/pdf';
-    if (!isAllowedType) {
-      showToast('Format non supporté. Importez une image (JPG, PNG, WebP) ou un document PDF.', 'error');
+    const resolvedMime = normalizeMimeType(file.type, file.name);
+    if (!isAllowedKycMimeType(resolvedMime)) {
+      const msg = 'Format non supporté. Importez une image (JPG, JPEG, PNG, WebP) ou un document PDF.';
+      setSubmitError(msg);
+      showToast(msg, 'error');
       e.target.value = '';
       return;
     }
 
     const maxBytes = 10 * 1024 * 1024;
-    if (file.size > maxBytes) {
-      showToast('Le fichier dépasse la taille maximale autorisée de 10 Mo.', 'error');
+    if (file.size >= maxBytes) {
+      const msg = 'Le fichier dépasse la taille maximale autorisée de 10 Mo.';
+      setSubmitError(msg);
+      showToast(msg, 'error');
       e.target.value = '';
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setPhotoPreview(reader.result as string);
-      showToast('Document d\'identité importé avec succès !', 'success');
-    };
-    reader.readAsDataURL(file);
+    if (pendingUploadedAsset) {
+      void cleanupOrphanKYCDocument(pendingUploadedAsset.storagePath);
+      setPendingUploadedAsset(null);
+    }
+
+    revokeObjectPreview();
+    const localObjectUrl = URL.createObjectURL(file);
+    objectUrlRef.current = localObjectUrl;
+    setSelectedFile(file);
+    setPhotoPreview(localObjectUrl);
+    setPreviewMimeType(resolvedMime);
+    setPreviewFileName(file.name);
+    setSubmitError(null);
+    showToast('Document d\'identité sélectionné !', 'success');
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const performSubmit = async () => {
+    setSubmitError(null);
 
-    if (!activeCourierId) {
-      showToast('Authentification requise pour soumettre votre dossier KYC.', 'error');
+    if (!activeCourierId || !auth.currentUser) {
+      const msg = 'Authentification requise pour soumettre votre dossier KYC.';
+      setSubmitError(msg);
+      showToast(msg, 'error');
       return;
     }
 
     if (!emailVerified) {
-      showToast('Veuillez vérifier votre adresse e-mail avant de soumettre votre dossier KYC.', 'error');
+      const msg = 'Veuillez vérifier votre adresse e-mail avant de soumettre votre dossier KYC.';
+      setSubmitError(msg);
+      showToast(msg, 'error');
       return;
     }
 
     if (currentStatus === 'en_attente') {
-      showToast('Votre dossier est déjà en cours d\'examen par l\'administrateur.', 'info');
+      const msg = 'Votre dossier est déjà en cours d\'examen par l\'administrateur.';
+      setSubmitError(msg);
+      showToast(msg, 'info');
       return;
     }
 
     if (currentStatus === 'valide') {
-      showToast('Votre dossier KYC est déjà validé.', 'info');
+      const msg = 'Votre dossier KYC est déjà validé.';
+      setSubmitError(msg);
+      showToast(msg, 'info');
       return;
     }
 
     if (!lastName.trim() || !firstName.trim()) {
-      showToast('Veuillez renseigner votre Nom et vos Prénoms séparément.', 'error');
+      const msg = 'Veuillez renseigner votre Nom et vos Prénoms séparément.';
+      setSubmitError(msg);
+      showToast(msg, 'error');
       return;
     }
 
     if (!phone.trim()) {
-      showToast('Veuillez renseigner votre numéro de téléphone.', 'error');
+      const msg = 'Veuillez renseigner votre numéro de téléphone.';
+      setSubmitError(msg);
+      showToast(msg, 'error');
       return;
     }
 
     if (!operatingZone.trim()) {
-      showToast('Veuillez préciser votre zone d\'activité.', 'error');
+      const msg = 'Veuillez préciser votre zone d\'activité.';
+      setSubmitError(msg);
+      showToast(msg, 'error');
       return;
     }
 
     if (!idNumber.trim()) {
-      showToast('Veuillez renseigner le numéro de votre pièce d\'identité.', 'error');
+      const msg = 'Veuillez renseigner le numéro de votre pièce d\'identité.';
+      setSubmitError(msg);
+      showToast(msg, 'error');
       return;
     }
 
@@ -222,21 +327,29 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
         : vehicleSelect;
 
     if (!finalVehicleType.trim()) {
-      showToast('Veuillez préciser votre type d\'engin ou véhicule.', 'error');
+      const msg = 'Veuillez préciser votre type d\'engin ou véhicule.';
+      setSubmitError(msg);
+      showToast(msg, 'error');
       return;
     }
 
-    if (!photoPreview) {
-      showToast('La photo de votre pièce d\'identité est obligatoire.', 'error');
+    const hasExistingDoc = Boolean(existingKyc?.documentStoragePath || existingKyc?.documentPhotoUrl);
+    if (!selectedFile && !pendingUploadedAsset && !hasExistingDoc) {
+      const msg = 'La photo ou le PDF de votre pièce d\'identité est obligatoire.';
+      setSubmitError(msg);
+      showToast(msg, 'error');
       return;
     }
 
     if (!hasAgreedTerms) {
-      showToast('Veuillez accepter les conditions de vérification KYC.', 'error');
+      const msg = 'Veuillez accepter les conditions de vérification KYC.';
+      setSubmitError(msg);
+      showToast(msg, 'error');
       return;
     }
 
     setIsSubmitting(true);
+    setUploadProgress(selectedFile && !pendingUploadedAsset ? 5 : null);
 
     const fullFormattedName = `${lastName.trim()} ${firstName.trim()}`.trim();
 
@@ -254,7 +367,10 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       idNumber: idNumber.trim(),
       ifuNumber: ifuNumber.trim() || undefined,
       operatingZone: operatingZone.trim(),
-      documentPhotoUrl: photoPreview,
+      documentFile: selectedFile || undefined,
+      documentStoragePath: pendingUploadedAsset?.storagePath || existingKyc?.documentStoragePath,
+      documentMimeType: pendingUploadedAsset?.contentType || previewMimeType || existingKyc?.documentMimeType,
+      documentFileName: pendingUploadedAsset?.fileName || previewFileName || existingKyc?.documentFileName,
       documents: {
         cni: true,
         permis: true,
@@ -264,19 +380,35 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     };
 
     try {
-      await submitKYCRequest(newKycData);
+      await submitKYCRequest(newKycData, {
+        onProgress: (pct) => setUploadProgress(pct),
+        reuseUploadedAsset: pendingUploadedAsset,
+      });
+      setPendingUploadedAsset(null);
+      setSubmitError(null);
       onClose();
     } catch (err: any) {
-      showToast(err?.message || 'Erreur lors de la soumission du dossier KYC.', 'error');
+      if (err?.uploadedAsset) {
+        setPendingUploadedAsset(err.uploadedAsset);
+      }
+      const errMsg = err?.message || 'Erreur lors de la soumission du dossier KYC. Veuillez réessayer.';
+      setSubmitError(errMsg);
+      showToast(errMsg, 'error');
     } finally {
       setIsSubmitting(false);
+      setUploadProgress(null);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await performSubmit();
   };
 
   return (
     <div
       className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
-      onClick={onClose}
+      onClick={handleCloseModal}
     >
       <div
         className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-2xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 my-auto"
@@ -317,7 +449,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleCloseModal}
             className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center justify-center transition-colors shrink-0 cursor-pointer"
             title="Fermer"
           >
@@ -598,13 +730,26 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             </div>
 
             <div className="flex flex-col sm:flex-row items-center gap-4">
-              {photoPreview ? (
-                photoPreview.startsWith('data:application/pdf') ? (
-                  <div className="relative w-full sm:w-48 h-32 rounded-xl overflow-hidden border-2 border-emerald-500 shadow-xs shrink-0 bg-emerald-50 dark:bg-emerald-950/40 flex flex-col items-center justify-center p-3 text-center">
+              {isLoadingExistingDoc ? (
+                <div className="w-full sm:w-48 h-32 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center text-slate-400 shrink-0">
+                  <span className="material-symbols-outlined text-2xl animate-spin">sync</span>
+                  <span className="text-[10px] mt-1">Chargement sécurisé...</span>
+                </div>
+              ) : photoPreview ? (
+                previewMimeType === 'application/pdf' || photoPreview.startsWith('data:application/pdf') ? (
+                  <div className="relative w-full sm:w-48 h-32 rounded-xl overflow-hidden border-2 border-emerald-500 shadow-xs shrink-0 bg-emerald-50 dark:bg-emerald-950/40 flex flex-col items-center justify-center p-3 text-center gap-1">
                     <span className="material-symbols-outlined text-3xl text-emerald-600">picture_as_pdf</span>
-                    <span className="text-[11px] font-bold text-emerald-900 dark:text-emerald-200 mt-1">
-                      Document PDF chargé
+                    <span className="text-[11px] font-bold text-emerald-900 dark:text-emerald-200 truncate max-w-full px-1">
+                      {previewFileName || 'Document PDF chargé'}
                     </span>
+                    <a
+                      href={photoPreview}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 underline"
+                    >
+                      Aperçu PDF
+                    </a>
                     <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/70 text-white text-[9px] font-bold">
                       ✓ Chargé
                     </span>
@@ -630,17 +775,17 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
               <div className="space-y-2 flex-1 w-full">
                 <p className="text-slate-500 dark:text-slate-400 text-[11px] leading-relaxed">
-                  Importez une photo nette et lisible de votre pièce d'identité (CIP, CNI ou passeport) ou un PDF (max 10 Mo). Les 4 coins du document doivent être visibles.
+                  Importez une photo nette et lisible de votre pièce d'identité (JPG, JPEG, PNG, WebP) ou un document PDF (max 10 Mo). Les 4 coins doivent être visibles.
                 </p>
 
                 <div className="flex items-center gap-2 flex-wrap">
-                  <label className={`px-3 py-1.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 hover:bg-slate-100 rounded-xl text-slate-700 dark:text-slate-200 font-bold text-xs shadow-2xs transition-colors inline-flex items-center gap-1.5 ${isSubmissionLocked ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}>
+                  <label className={`px-3 py-1.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 hover:bg-slate-100 rounded-xl text-slate-700 dark:text-slate-200 font-bold text-xs shadow-2xs transition-colors inline-flex items-center gap-1.5 ${isSubmissionLocked || isSubmitting ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}>
                     <span className="material-symbols-outlined text-sm">upload_file</span>
                     <span>Prendre / Télécharger le document</span>
                     <input
                       type="file"
-                      accept="image/*,application/pdf"
-                      disabled={isSubmissionLocked}
+                      accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf"
+                      disabled={isSubmissionLocked || isSubmitting}
                       onChange={handleDocumentPhotoUpload}
                       className="hidden"
                     />
@@ -679,12 +824,60 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             </label>
           </div>
 
+          {/* Inline Upload Progress & Error Alert */}
+          {isSubmitting && (
+            <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 space-y-2">
+              <div className="flex items-center justify-between text-[11px] font-bold text-emerald-900 dark:text-emerald-200">
+                <span className="flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-sm animate-spin">sync</span>
+                  <span>
+                    {uploadProgress !== null && uploadProgress < 100
+                      ? `Téléversement sécurisé du justificatif (${uploadProgress}%)...`
+                      : 'Enregistrement du dossier KYC dans Firestore...'}
+                  </span>
+                </span>
+                {uploadProgress !== null && <span className="font-mono">{uploadProgress}%</span>}
+              </div>
+              <div className="w-full h-2 rounded-full bg-emerald-200/70 dark:bg-emerald-900 overflow-hidden">
+                <div
+                  className="h-full bg-emerald-600 transition-all duration-200"
+                  style={{ width: `${uploadProgress !== null ? Math.max(8, uploadProgress) : 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {submitError && (
+            <div
+              role="alert"
+              className="p-3.5 rounded-2xl bg-red-50 dark:bg-red-950/60 border border-red-300 dark:border-red-800 text-red-950 dark:text-red-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+            >
+              <div className="flex items-start gap-2.5">
+                <span className="material-symbols-outlined text-red-600 text-xl shrink-0">error</span>
+                <div>
+                  <p className="font-bold text-xs">Échec de la soumission du dossier KYC</p>
+                  <p className="text-[11px] mt-0.5 leading-relaxed">{submitError}</p>
+                </div>
+              </div>
+              {!isSubmissionLocked && (
+                <button
+                  type="button"
+                  onClick={() => void performSubmit()}
+                  disabled={isSubmitting}
+                  className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-[11px] font-bold shrink-0 cursor-pointer disabled:opacity-50"
+                >
+                  Réessayer l&apos;envoi
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Modal Actions (POINT 2: Seul l'administrateur peut valider) */}
           <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={onClose}
-              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-bold transition-all"
+              onClick={handleCloseModal}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-bold transition-all cursor-pointer"
             >
               {isSubmissionLocked ? 'Fermer' : 'Annuler'}
             </button>
@@ -694,10 +887,14 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                 disabled={isSubmitting || !emailVerified}
                 className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-bold shadow-md shadow-emerald-600/20 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
               >
-                <span className="material-symbols-outlined text-sm">send</span>
+                <span className="material-symbols-outlined text-sm">{isSubmitting ? 'sync' : 'send'}</span>
                 <span>
                   {isSubmitting
-                    ? 'Envoi en cours...'
+                    ? uploadProgress !== null && uploadProgress < 100
+                      ? `Téléversement (${uploadProgress}%)...`
+                      : 'Enregistrement...'
+                    : submitError
+                    ? 'Réessayer l\'envoi'
                     : currentStatus === 'refuse'
                     ? 'Re-soumettre mon dossier KYC'
                     : 'Soumettre mon dossier KYC'}

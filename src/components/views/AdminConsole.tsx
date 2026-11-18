@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp, AdminTestResultItem } from '../../context/AppContext';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
@@ -7,6 +7,7 @@ import { DisputeResolutionModal } from '../modals/DisputeResolutionModal';
 import { Courier, Merchant, DeliveryOrder, DeliveryStatus, KYCUserRequest } from '../../types';
 import { loginWithGoogle, getFirebaseAuthErrorMessage } from '../../firebase/authService';
 import { auth } from '../../firebase/config';
+import { fetchAuthorizedKYCDocumentBlob, normalizeMimeType } from '../../firebase/storageService';
 import { downloadCsvFile } from '../../utils/csvExport';
 import { AdminOverviewDashboard } from './AdminOverviewDashboard';
 import { AdminCommunicationsSection } from '../admin/AdminCommunicationsSection';
@@ -283,6 +284,14 @@ export const AdminConsole: React.FC = () => {
   const [reviewingKycItem, setReviewingKycItem] = useState<KYCUserRequest | null>(null);
   const [kycRejectionMotifInput, setKycRejectionMotifInput] = useState('');
   const [isZoomingKycPhoto, setIsZoomingKycPhoto] = useState(false);
+  const [resolvedKycDocUrl, setResolvedKycDocUrl] = useState<string | null>(null);
+  const [resolvedKycDocMime, setResolvedKycDocMime] = useState<string>('');
+  const [resolvedKycDocName, setResolvedKycDocName] = useState<string>('justificatif_kyc');
+  const [isLoadingKycDoc, setIsLoadingKycDoc] = useState(false);
+  const [kycDocLoadError, setKycDocLoadError] = useState<string | null>(null);
+  const [kycDocReloadTick, setKycDocReloadTick] = useState(0);
+  const [isSubmittingKycDecision, setIsSubmittingKycDecision] = useState(false);
+  const kycDocObjectUrlRef = useRef<string | null>(null);
   const [selectedDisputeOrder, setSelectedDisputeOrder] = useState<string | null>(null);
   const [isAddCourierModalOpen, setIsAddCourierModalOpen] = useState(false);
   const [editingCourier, setEditingCourier] = useState<Courier | null>(null);
@@ -493,7 +502,84 @@ export const AdminConsole: React.FC = () => {
     if (activeViewTab === 'couriers' && isAdminAuthenticated) {
       void loadPendingPayouts();
     }
+    if (activeViewTab === 'kyc' && isAdminAuthenticated) {
+      void refreshAdminData(true);
+    }
   }, [activeViewTab, isAdminAuthenticated]);
+
+  useEffect(() => {
+    const revokeDocUrl = () => {
+      if (kycDocObjectUrlRef.current && kycDocObjectUrlRef.current.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(kycDocObjectUrlRef.current);
+        } catch {}
+        kycDocObjectUrlRef.current = null;
+      }
+    };
+
+    revokeDocUrl();
+    setResolvedKycDocUrl(null);
+    setResolvedKycDocMime('');
+    setResolvedKycDocName('justificatif_kyc');
+    setKycDocLoadError(null);
+    setIsZoomingKycPhoto(false);
+
+    if (!reviewingKycItem) {
+      setIsLoadingKycDoc(false);
+      return;
+    }
+
+    const storagePath = reviewingKycItem.documentStoragePath;
+    const legacyUrl = reviewingKycItem.documentPhotoUrl;
+    if (!storagePath && !legacyUrl) {
+      setIsLoadingKycDoc(false);
+      return;
+    }
+
+    if (
+      !storagePath &&
+      legacyUrl &&
+      /^https?:\/\//i.test(legacyUrl) &&
+      !legacyUrl.includes('/o/') &&
+      !legacyUrl.includes('firebasestorage')
+    ) {
+      setResolvedKycDocUrl(legacyUrl);
+      setResolvedKycDocMime(normalizeMimeType(reviewingKycItem.documentMimeType, legacyUrl) || 'image/jpeg');
+      setResolvedKycDocName(reviewingKycItem.documentFileName || 'justificatif_kyc.jpg');
+      setIsLoadingKycDoc(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingKycDoc(true);
+    fetchAuthorizedKYCDocumentBlob({ storagePath, legacyUrl })
+      .then(({ blob, mimeType, fileName }) => {
+        if (cancelled) return;
+        const objUrl = URL.createObjectURL(blob);
+        kycDocObjectUrlRef.current = objUrl;
+        setResolvedKycDocUrl(objUrl);
+        setResolvedKycDocMime(
+          normalizeMimeType(mimeType || reviewingKycItem.documentMimeType, fileName) || 'image/jpeg'
+        );
+        setResolvedKycDocName(reviewingKycItem.documentFileName || fileName || 'justificatif_kyc');
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setKycDocLoadError(
+          err?.message || 'Impossible de charger la pièce justificative depuis le stockage sécurisé.'
+        );
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingKycDoc(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      revokeDocUrl();
+    };
+  }, [reviewingKycItem, kycDocReloadTick]);
 
   useEffect(() => {
     if (activeViewTab === 'email_settings') {
@@ -1947,6 +2033,24 @@ export const AdminConsole: React.FC = () => {
               </div>
 
               {/* KYC Requests Grid */}
+              {kycRequests.filter(k => kycStatusFilter === 'all' || k.status === kycStatusFilter).length === 0 ? (
+                <div className="p-8 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 text-center space-y-2">
+                  <span className="material-symbols-outlined text-3xl text-slate-400">verified_user</span>
+                  <p className="text-sm font-bold text-slate-700">Aucun dossier KYC dans cette catégorie</p>
+                  <p className="text-xs text-slate-500">
+                    Les dossiers soumis par les livreurs apparaissent ici automatiquement en temps réel.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void refreshAdminData(true)}
+                    disabled={isSyncingAdminData}
+                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+                  >
+                    <span className={`material-symbols-outlined text-sm ${isSyncingAdminData ? 'animate-spin' : ''}`}>sync</span>
+                    <span>Actualiser les dossiers</span>
+                  </button>
+                </div>
+              ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {kycRequests
                   .filter(k => kycStatusFilter === 'all' || k.status === kycStatusFilter)
@@ -1960,20 +2064,23 @@ export const AdminConsole: React.FC = () => {
                       }`}
                     >
                       <div className="flex items-start justify-between gap-3 mb-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-700 font-bold flex items-center justify-center border border-amber-300/40">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-700 font-bold flex items-center justify-center border border-amber-300/40 shrink-0">
                             <span className="material-symbols-outlined text-xl">badge</span>
                           </div>
-                          <div>
-                            <h3 className="font-bold text-sm text-slate-900 flex items-center gap-1.5">
-                              <span>{kyc.fullName}</span>
-                              <span className="text-[10px] font-mono text-slate-400 font-normal">({kyc.idNumber || 'CNI-CI-2024'})</span>
+                          <div className="min-w-0">
+                            <h3 className="font-bold text-sm text-slate-900 flex items-center gap-1.5 flex-wrap">
+                              <span className="truncate">{kyc.fullName}</span>
+                              <span className="text-[10px] font-mono text-slate-400 font-normal">({kyc.idNumber || 'Non renseigné'})</span>
                             </h3>
-                            <p className="text-xs text-slate-500">📱 {kyc.phone} • 🛵 {kyc.vehicleType || 'Moto 125cc'}</p>
+                            <p className="text-xs text-slate-500 truncate">📱 {kyc.phone} • 🛵 {kyc.vehicleType || 'Moto 125cc'}</p>
+                            {kyc.email && (
+                              <p className="text-[11px] text-slate-400 truncate">✉️ {kyc.email}</p>
+                            )}
                           </div>
                         </div>
 
-                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
                           kyc.status === 'en_attente' ? 'bg-amber-100 text-amber-800' :
                           kyc.status === 'valide' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
                         }`}>
@@ -2009,15 +2116,17 @@ export const AdminConsole: React.FC = () => {
                         {kyc.status === 'en_attente' ? (
                           <>
                             <button
+                              disabled={isSubmittingKycDecision}
                               onClick={() => void approveKYC(kyc.id)}
-                              className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer"
+                              className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-50"
                               title="Valider directement"
                             >
                               <span className="material-symbols-outlined text-sm">check</span>
                             </button>
                             <button
+                              disabled={isSubmittingKycDecision}
                               onClick={() => void rejectKYC(kyc.id)}
-                              className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                              className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
                               title="Refuser directement"
                             >
                               <span className="material-symbols-outlined text-sm">close</span>
@@ -2032,6 +2141,7 @@ export const AdminConsole: React.FC = () => {
                     </div>
                   ))}
               </div>
+              )}
             </div>
           )}
 
@@ -6145,34 +6255,80 @@ export const AdminConsole: React.FC = () => {
                 </div>
               </div>
 
-              {/* Photo Document Preview */}
+              {/* Document Preview (Image ou PDF sécurisé via Storage/Backend) */}
               <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2 flex-wrap">
                   <h4 className="font-extrabold text-xs uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
                     <span className="material-symbols-outlined text-blue-600 text-sm">badge</span>
-                    <span>3. Photo du Document d'Identité Transmis</span>
+                    <span>3. Justificatif d&apos;Identité Transmis</span>
                   </h4>
-                  <span className="text-[10px] text-slate-400 font-bold">Vérifiez la lisibilité des 4 coins</span>
+                  <div className="flex items-center gap-2">
+                    {resolvedKycDocUrl && (
+                      <a
+                        href={resolvedKycDocUrl}
+                        download={resolvedKycDocName || 'justificatif_kyc'}
+                        className="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-bold inline-flex items-center gap-1"
+                      >
+                        <span className="material-symbols-outlined text-xs">download</span>
+                        <span>Télécharger</span>
+                      </a>
+                    )}
+                    <span className="text-[10px] text-slate-400 font-bold">Vérifiez la lisibilité des 4 coins</span>
+                  </div>
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-center gap-4">
                   <div className="relative w-full sm:w-64 h-40 rounded-2xl overflow-hidden border-2 border-slate-300 bg-slate-900 group shrink-0 flex items-center justify-center">
-                    {reviewingKycItem.documentPhotoUrl ? (
-                      <>
-                        <img
-                          src={reviewingKycItem.documentPhotoUrl}
-                          alt="Photo document KYC"
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        />
+                    {isLoadingKycDoc ? (
+                      <div className="text-center p-4 space-y-2 text-slate-200">
+                        <span className="material-symbols-outlined text-2xl animate-spin text-blue-400">progress_activity</span>
+                        <p className="text-[11px] font-bold">Chargement sécurisé du document...</p>
+                      </div>
+                    ) : kycDocLoadError ? (
+                      <div className="text-center p-3 space-y-2">
+                        <span className="material-symbols-outlined text-2xl text-red-400">error</span>
+                        <p className="text-[10px] font-bold text-red-200 line-clamp-2">{kycDocLoadError}</p>
                         <button
                           type="button"
-                          onClick={() => setIsZoomingKycPhoto(!isZoomingKycPhoto)}
-                          className="absolute bottom-2 right-2 px-2.5 py-1 bg-black/75 hover:bg-black text-white text-[10px] font-bold rounded-lg backdrop-blur-xs flex items-center gap-1 cursor-pointer"
+                          onClick={() => setKycDocReloadTick((n) => n + 1)}
+                          className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white text-[10px] font-bold cursor-pointer"
                         >
-                          <span className="material-symbols-outlined text-xs">zoom_in</span>
-                          <span>Agrandir</span>
+                          Réessayer
                         </button>
-                      </>
+                      </div>
+                    ) : resolvedKycDocUrl ? (
+                      resolvedKycDocMime === 'application/pdf' ? (
+                        <div className="w-full h-full flex flex-col items-center justify-center bg-slate-800 text-white p-3 text-center">
+                          <span className="material-symbols-outlined text-4xl text-red-400">picture_as_pdf</span>
+                          <p className="text-[11px] font-bold mt-1 truncate max-w-full px-2">
+                            {resolvedKycDocName || 'justificatif_kyc.pdf'}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setIsZoomingKycPhoto(!isZoomingKycPhoto)}
+                            className="mt-2 px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold rounded-lg inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-xs">visibility</span>
+                            <span>{isZoomingKycPhoto ? 'Masquer PDF' : 'Afficher le PDF'}</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <img
+                            src={resolvedKycDocUrl}
+                            alt="Document d'identité KYC"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setIsZoomingKycPhoto(!isZoomingKycPhoto)}
+                            className="absolute bottom-2 right-2 px-2.5 py-1 bg-black/75 hover:bg-black text-white text-[10px] font-bold rounded-lg backdrop-blur-xs flex items-center gap-1 cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-xs">zoom_in</span>
+                            <span>Agrandir</span>
+                          </button>
+                        </>
+                      )
                     ) : (
                       <div className="text-center p-4 space-y-1.5">
                         <span className="material-symbols-outlined text-3xl text-slate-400">image_not_supported</span>
@@ -6182,26 +6338,49 @@ export const AdminConsole: React.FC = () => {
                   </div>
 
                   <div className="space-y-2 text-xs text-slate-600 flex-1">
-                    <p className="font-bold text-slate-800">Directives de contrôle pour l'administrateur :</p>
+                    <p className="font-bold text-slate-800">Directives de contrôle pour l&apos;administrateur :</p>
                     <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-500 leading-relaxed">
-                      <li>S'assurer que le nom <strong>{reviewingKycItem.fullName}</strong> correspond parfaitement au document.</li>
-                      <li>Vérifier la validité du numéro <strong>{reviewingKycItem.idNumber || '—'}</strong>.</li>
-                      <li>S'assurer que le document n'est ni flou, ni altéré, ni tronqué.</li>
+                      <li>S&apos;assurer que le nom <strong>{reviewingKycItem.fullName}</strong> correspond parfaitement au document.</li>
+                      <li>Vérifier la validité du numéro <strong>{reviewingKycItem.idNumber || '—'}</strong>{reviewingKycItem.npi ? ` (NPI: ${reviewingKycItem.npi})` : ''}.</li>
+                      <li>S&apos;assurer que le document n&apos;est ni flou, ni altéré, ni tronqué.</li>
+                      {reviewingKycItem.documentStoragePath && (
+                        <li className="font-mono text-[10px] text-slate-400 break-all">
+                          Chemin sécurisé : {reviewingKycItem.documentStoragePath}
+                        </li>
+                      )}
                     </ul>
                   </div>
                 </div>
 
-                {isZoomingKycPhoto && reviewingKycItem.documentPhotoUrl && (
+                {isZoomingKycPhoto && resolvedKycDocUrl && (
                   <div className="p-3 bg-slate-900 rounded-2xl animate-in fade-in duration-200">
                     <p className="text-[10px] text-slate-400 mb-2 flex items-center justify-between">
-                      <span>Vue Haute Résolution Agrandie</span>
-                      <button onClick={() => setIsZoomingKycPhoto(false)} className="text-white hover:underline cursor-pointer">Réduire</button>
+                      <span>
+                        {resolvedKycDocMime === 'application/pdf'
+                          ? 'Lecteur PDF Sécurisé'
+                          : 'Vue Haute Résolution Agrandie'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsZoomingKycPhoto(false)}
+                        className="text-white hover:underline cursor-pointer"
+                      >
+                        Réduire
+                      </button>
                     </p>
-                    <img
-                      src={reviewingKycItem.documentPhotoUrl}
-                      alt="Photo document KYC zoom"
-                      className="w-full h-auto max-h-[60vh] object-contain rounded-xl mx-auto"
-                    />
+                    {resolvedKycDocMime === 'application/pdf' ? (
+                      <iframe
+                        src={resolvedKycDocUrl}
+                        title="Document KYC PDF"
+                        className="w-full h-[65vh] rounded-xl bg-white"
+                      />
+                    ) : (
+                      <img
+                        src={resolvedKycDocUrl}
+                        alt="Photo document KYC zoom"
+                        className="w-full h-auto max-h-[60vh] object-contain rounded-xl mx-auto"
+                      />
+                    )}
                   </div>
                 )}
               </div>
@@ -6209,7 +6388,7 @@ export const AdminConsole: React.FC = () => {
               {/* Rejection motif input if admin chooses to reject */}
               <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200 space-y-2">
                 <label className="block text-xs font-bold text-amber-950">
-                  Motif en cas de refus (transmis par notification &amp; e-mail à l'utilisateur) :
+                  Motif en cas de refus (transmis par notification &amp; e-mail à l&apos;utilisateur) :
                 </label>
                 <input
                   type="text"
@@ -6225,8 +6404,9 @@ export const AdminConsole: React.FC = () => {
             <div className="p-4 sm:p-5 border-t border-slate-100 bg-slate-50 flex items-center justify-between gap-3 shrink-0 flex-wrap">
               <button
                 type="button"
+                disabled={isSubmittingKycDecision}
                 onClick={() => setReviewingKycItem(null)}
-                className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
+                className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl cursor-pointer disabled:opacity-50"
               >
                 Fermer
               </button>
@@ -6234,27 +6414,47 @@ export const AdminConsole: React.FC = () => {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    rejectKYC(reviewingKycItem.id, kycRejectionMotifInput || undefined);
-                    setReviewingKycItem(null);
-                    setKycRejectionMotifInput('');
+                  disabled={isSubmittingKycDecision}
+                  onClick={async () => {
+                    setIsSubmittingKycDecision(true);
+                    try {
+                      const ok = await rejectKYC(
+                        reviewingKycItem.id,
+                        kycRejectionMotifInput.trim() || undefined
+                      );
+                      if (ok !== false) {
+                        setReviewingKycItem(null);
+                        setKycRejectionMotifInput('');
+                      }
+                    } finally {
+                      setIsSubmittingKycDecision(false);
+                    }
                   }}
-                  className="px-4 py-2.5 bg-red-100 hover:bg-red-200 text-red-800 font-bold text-xs rounded-xl border border-red-300 flex items-center gap-1.5 transition-all cursor-pointer"
+                  className="px-4 py-2.5 bg-red-100 hover:bg-red-200 text-red-800 font-bold text-xs rounded-xl border border-red-300 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
                 >
                   <span className="material-symbols-outlined text-sm">block</span>
-                  <span>Refuser le dossier</span>
+                  <span>{isSubmittingKycDecision ? 'Traitement...' : 'Refuser le dossier'}</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => {
-                    approveKYC(reviewingKycItem.id);
-                    setReviewingKycItem(null);
+                  disabled={isSubmittingKycDecision}
+                  onClick={async () => {
+                    setIsSubmittingKycDecision(true);
+                    try {
+                      const ok = await approveKYC(reviewingKycItem.id);
+                      if (ok !== false) {
+                        setReviewingKycItem(null);
+                        setKycRejectionMotifInput('');
+                      }
+                    } finally {
+                      setIsSubmittingKycDecision(false);
+                    }
                   }}
-                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-emerald-600/20 flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-emerald-600/20 flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
                 >
                   <span className="material-symbols-outlined text-sm">verified</span>
-                  <span>Accréditation &amp; Validation</span>
+                  <span>{isSubmittingKycDecision ? 'Validation...' : 'Accréditation & Validation'}</span>
                 </button>
               </div>
             </div>

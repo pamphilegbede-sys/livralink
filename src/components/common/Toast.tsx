@@ -19,7 +19,7 @@ export const Toast: React.FC = () => {
   };
 
   return (
-    <div className="fixed top-16 right-4 sm:right-6 z-50 animate-bounce transition-all duration-300">
+    <div className="fixed top-16 right-4 sm:right-6 z-[100] animate-bounce transition-all duration-300 pointer-events-none">
       <div
         className={`flex items-center gap-2.5 px-4 py-3 rounded-xl shadow-xl border text-sm font-semibold ${
           bgColors[toastMessage.type]
