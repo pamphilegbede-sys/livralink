@@ -349,6 +349,40 @@ test('P0-B Multi-Instance Delivery POD OTP & Single-Use POD Token', async (t) =>
 
     const updatedDelivery = await sharedDb.collection('deliveries').doc('LL-101').get();
     assert.equal(updatedDelivery.data()?.status, 'livree');
+
+    // Cross-order /api/pod/media proof URL must be rejected
+    await seedDelivery('LL-101B', 'en_cours', 'courier_1');
+    const vResB = await instanceA.verifyDeliveryPodOtp({
+      cleanDocId: 'LL-101B',
+      callerUid: 'courier_1',
+      isAdmin: false,
+      rawCode: '4829',
+    });
+    assert.equal(vResB.ok, true);
+    if (!vResB.ok) return;
+
+    const crossOrderRes = await instanceA.completeDeliveryPod({
+      cleanDocId: 'LL-101B',
+      callerUid: 'courier_1',
+      isAdmin: false,
+      podOtpToken: vResB.podOtpToken,
+      photoUrl: `/api/pod/media?path=${encodeURIComponent('pod/LL-101/photo_1.jpg')}`,
+      signatureDataUrl: `/api/pod/media?path=${encodeURIComponent('pod/LL-101B/sig_1.png')}`,
+      signedByName: 'Client Test',
+    });
+    assert.equal(crossOrderRes.ok, false);
+    if (!crossOrderRes.ok) assert.equal(crossOrderRes.status, 400);
+
+    const ownOrderRes = await instanceA.completeDeliveryPod({
+      cleanDocId: 'LL-101B',
+      callerUid: 'courier_1',
+      isAdmin: false,
+      podOtpToken: vResB.podOtpToken,
+      photoUrl: `/api/pod/media?path=${encodeURIComponent('pod/LL-101B/photo_1.jpg')}`,
+      signatureDataUrl: `/api/pod/media?path=${encodeURIComponent('pod/LL-101B/sig_1.png')}`,
+      signedByName: 'Client Test',
+    });
+    assert.equal(ownOrderRes.ok, true);
   });
 
   await t.test('2. Unassigned courier, ineligible status, and 5 failed attempts across instances are blocked', async () => {

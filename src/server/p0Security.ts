@@ -145,10 +145,24 @@ export function getAssignedCourierIdFromOrder(data: Record<string, any> | undefi
   return '';
 }
 
-export function isTrustedFirebaseStorageUrl(url: unknown): url is string {
+export function isTrustedFirebaseStorageUrl(url: unknown, expectedOrderId?: string): url is string {
   if (typeof url !== 'string') return false;
   const trimmed = url.trim();
   if (!trimmed || trimmed.length > 2000) return false;
+  if (trimmed.startsWith('/api/pod/media?')) {
+    try {
+      const parsed = new URL(trimmed, 'https://livralink.local');
+      if (parsed.pathname !== '/api/pod/media') return false;
+      const rawPath = (parsed.searchParams.get('path') || '').trim();
+      if (!rawPath || rawPath.includes('..')) return false;
+      const match = rawPath.match(/^pod\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)$/);
+      if (!match) return false;
+      if (expectedOrderId && match[1] !== expectedOrderId) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
   return (
     trimmed.startsWith('https://firebasestorage.googleapis.com/') ||
     trimmed.startsWith('https://storage.googleapis.com/')
@@ -684,7 +698,10 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
             error: 'Statut invalide : le colis doit être récupéré ou en transit avant certification POD.',
           };
         }
-        if (!isTrustedFirebaseStorageUrl(photoUrl) || !isTrustedFirebaseStorageUrl(signatureDataUrl)) {
+        if (
+          !isTrustedFirebaseStorageUrl(photoUrl, cleanDocId) ||
+          !isTrustedFirebaseStorageUrl(signatureDataUrl, cleanDocId)
+        ) {
           return {
             ok: false as const,
             status: 400,
@@ -777,8 +794,8 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
         type: isAdmin && !otpVerified ? 'admin_override' : 'complete_tri_factor',
         otpVerified,
         otpCode: otpVerified ? '••••' : 'ADMIN',
-        photoUrl: isTrustedFirebaseStorageUrl(photoUrl) ? photoUrl.trim() : '',
-        signatureDataUrl: isTrustedFirebaseStorageUrl(signatureDataUrl) ? signatureDataUrl.trim() : '',
+        photoUrl: isTrustedFirebaseStorageUrl(photoUrl, cleanDocId) ? photoUrl.trim() : '',
+        signatureDataUrl: isTrustedFirebaseStorageUrl(signatureDataUrl, cleanDocId) ? signatureDataUrl.trim() : '',
         signedByName: cleanSigner,
         validatedAt: nowTime,
         validatedTimestamp: now,

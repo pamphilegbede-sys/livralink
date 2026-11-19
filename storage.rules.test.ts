@@ -234,15 +234,15 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
     await assertFails(outsiderStorage.ref('kyc/courier_kyc_1/cni.jpg').getDownloadURL());
   });
 
-  test('4. POD proofs: verified user can create image with uploadedBy; unverified/bad MIME/forged/delete blocked', async () => {
+  test('4. POD proofs: direct client read/write strictly restricted to Admin (blocking non-admin verified users); MIME/uploadedBy enforced', async () => {
     const verifiedCourierStorage = testEnv
       .authenticatedContext('courier_verified', { email: 'cv@test.com', email_verified: true })
       .storage();
     const unverifiedStorage = testEnv
       .authenticatedContext('courier_unverified', { email: 'cu@test.com', email_verified: false })
       .storage();
-    const vendorStorage = testEnv
-      .authenticatedContext('vendor_pod_1', { email: 'vp@test.com', email_verified: true })
+    const outsiderStorage = testEnv
+      .authenticatedContext('outsider_pod_1', { email: 'op@test.com', email_verified: true })
       .storage();
     const superAdminStorage = testEnv
       .authenticatedContext('super_admin', {
@@ -251,74 +251,116 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
       .storage();
 
-    // Unverified email cannot upload or read POD
+    // Non-admin verified or unverified users cannot directly upload POD files
     await assertFails(
       unverifiedStorage.ref('pod/order_pod_1/photo.jpg').put(Buffer.from('jpg'), {
         contentType: 'image/jpeg',
         customMetadata: { uploadedBy: 'courier_unverified' },
       })
     );
-
-    // Verified user with forged uploadedBy or invalid MIME rejected
     await assertFails(
-      verifiedCourierStorage.ref('pod/order_pod_1/forged.jpg').put(Buffer.from('jpg'), {
-        contentType: 'image/jpeg',
-        customMetadata: { uploadedBy: 'someone_else' },
-      })
-    );
-    await assertFails(
-      verifiedCourierStorage.ref('pod/order_pod_1/doc.pdf').put(Buffer.from('%PDF-1.4'), {
-        contentType: 'application/pdf',
-        customMetadata: { uploadedBy: 'courier_verified' },
-      })
-    );
-
-    // Verified user can upload valid POD image with uploadedBy == uid
-    await assertSucceeds(
       verifiedCourierStorage.ref('pod/order_pod_1/photo.jpg').put(Buffer.from('jpg'), {
         contentType: 'image/jpeg',
         customMetadata: { uploadedBy: 'courier_verified' },
       })
     );
+    await assertFails(
+      outsiderStorage.ref('pod/order_pod_1/photo.jpg').put(Buffer.from('jpg'), {
+        contentType: 'image/jpeg',
+        customMetadata: { uploadedBy: 'outsider_pod_1' },
+      })
+    );
 
-    // Verified participant can read POD photo; unverified cannot
-    await assertSucceeds(vendorStorage.ref('pod/order_pod_1/photo.jpg').getMetadata());
+    // Admin with invalid MIME or forged uploadedBy is also blocked by rules
+    await assertFails(
+      superAdminStorage.ref('pod/order_pod_1/doc.pdf').put(Buffer.from('%PDF-1.4'), {
+        contentType: 'application/pdf',
+        customMetadata: { uploadedBy: 'super_admin' },
+      })
+    );
+    await assertFails(
+      superAdminStorage.ref('pod/order_pod_1/forged.jpg').put(Buffer.from('jpg'), {
+        contentType: 'image/jpeg',
+        customMetadata: { uploadedBy: 'someone_else' },
+      })
+    );
+
+    // Super-Admin (backend Admin SDK proxy) can store POD proof with valid MIME + uploadedBy
+    await assertSucceeds(
+      superAdminStorage.ref('pod/order_pod_1/photo.jpg').put(Buffer.from('jpg'), {
+        contentType: 'image/jpeg',
+        customMetadata: { uploadedBy: 'super_admin' },
+      })
+    );
+
+    // Direct Storage SDK read by ANY non-admin (even verified users) is strictly denied (participant check happens in backend /api/pod/media)
+    await assertFails(outsiderStorage.ref('pod/order_pod_1/photo.jpg').getMetadata());
+    await assertFails(outsiderStorage.ref('pod/order_pod_1/photo.jpg').getDownloadURL());
+    await assertFails(verifiedCourierStorage.ref('pod/order_pod_1/photo.jpg').getMetadata());
     await assertFails(unverifiedStorage.ref('pod/order_pod_1/photo.jpg').getMetadata());
+    await assertSucceeds(superAdminStorage.ref('pod/order_pod_1/photo.jpg').getMetadata());
 
-    // Non-admin cannot delete uploaded POD proof, Admin can
+    // Non-admin cannot delete POD proof; Admin can
     await assertFails(verifiedCourierStorage.ref('pod/order_pod_1/photo.jpg').delete());
     await assertSucceeds(superAdminStorage.ref('pod/order_pod_1/photo.jpg').delete());
   });
 
-  test('5. Chat media: verified users can upload/read valid media; unverified/bad MIME/forged/delete blocked', async () => {
-    const vendorStorage = testEnv
+  test('5. Chat media: direct client read/write strictly restricted to Admin (blocking non-admin verified users); MIME/uploadedBy enforced', async () => {
+    const verifiedUserStorage = testEnv
       .authenticatedContext('vendor_chat_1', { email: 'vc@test.com', email_verified: true })
+      .storage();
+    const outsiderChatStorage = testEnv
+      .authenticatedContext('outsider_chat_2', { email: 'oc@test.com', email_verified: true })
       .storage();
     const unverifiedStorage = testEnv
       .authenticatedContext('unverified_chat', { email: 'uc@test.com', email_verified: false })
       .storage();
+    const superAdminStorage = testEnv
+      .authenticatedContext('super_admin', {
+        email: 'Pamphile.gbede@gmail.com',
+        email_verified: true,
+      })
+      .storage();
 
-    await assertSucceeds(
-      vendorStorage.ref('chat/conv_media_1/receipt.pdf').put(Buffer.from('%PDF-1.4'), {
+    // Verified non-admins and unverified users cannot directly upload chat media
+    await assertFails(
+      verifiedUserStorage.ref('chat/conv_media_1/receipt.pdf').put(Buffer.from('%PDF-1.4'), {
         contentType: 'application/pdf',
         customMetadata: { uploadedBy: 'vendor_chat_1' },
       })
     );
-    await assertSucceeds(vendorStorage.ref('chat/conv_media_1/receipt.pdf').getMetadata());
-
     await assertFails(
       unverifiedStorage.ref('chat/conv_media_1/spam.jpg').put(Buffer.from('jpg'), {
         contentType: 'image/jpeg',
         customMetadata: { uploadedBy: 'unverified_chat' },
       })
     );
-    await assertFails(unverifiedStorage.ref('chat/conv_media_1/receipt.pdf').getMetadata());
+
+    // Bad MIME blocked even for admin
     await assertFails(
-      vendorStorage.ref('chat/conv_media_1/bad.exe').put(Buffer.from('exe'), {
+      superAdminStorage.ref('chat/conv_media_1/bad.exe').put(Buffer.from('exe'), {
         contentType: 'application/x-msdownload',
-        customMetadata: { uploadedBy: 'vendor_chat_1' },
+        customMetadata: { uploadedBy: 'super_admin' },
       })
     );
-    await assertFails(vendorStorage.ref('chat/conv_media_1/receipt.pdf').delete());
+
+    // Super-Admin can store valid chat media
+    await assertSucceeds(
+      superAdminStorage.ref('chat/conv_media_1/receipt.pdf').put(Buffer.from('%PDF-1.4'), {
+        contentType: 'application/pdf',
+        customMetadata: { uploadedBy: 'super_admin' },
+      })
+    );
+
+    // Direct Storage SDK read by ANY non-admin verified user or outsider is strictly denied
+    await assertFails(outsiderChatStorage.ref('chat/conv_media_1/receipt.pdf').getMetadata());
+    await assertFails(outsiderChatStorage.ref('chat/conv_media_1/receipt.pdf').getDownloadURL());
+    await assertFails(verifiedUserStorage.ref('chat/conv_media_1/receipt.pdf').getMetadata());
+    await assertFails(unverifiedStorage.ref('chat/conv_media_1/receipt.pdf').getMetadata());
+    await assertSucceeds(superAdminStorage.ref('chat/conv_media_1/receipt.pdf').getMetadata());
+
+    // Non-admin cannot delete chat media; Admin can
+    await assertFails(verifiedUserStorage.ref('chat/conv_media_1/receipt.pdf').delete());
+    await assertSucceeds(superAdminStorage.ref('chat/conv_media_1/receipt.pdf').delete());
   });
 });

@@ -502,5 +502,196 @@ test('Express API security & health integration tests', async (t) => {
       serverMod.setTokenVerifierForTests(null);
     }
   });
+
+  await t.test('POD & Chat media routes (/api/pod/upload, /api/pod/media, /api/chat/upload, /api/chat/media) enforce strict participant isolation', async () => {
+    const serverMod = await import('../../server');
+    const storageFiles = new Map<string, { contentType: string; data: Buffer; metadata?: Record<string, any> }>();
+
+    const deliveriesMap = new Map<string, Record<string, any>>([
+      [
+        'LL-POD-900',
+        {
+          id: 'LL-POD-900',
+          merchantId: 'vendor_owner',
+          courierId: 'courier_assigned',
+          clientId: 'client_owner',
+          status: 'en_cours',
+        },
+      ],
+    ]);
+
+    const conversationsMap = new Map<string, Record<string, any>>([
+      [
+        'conv_900',
+        {
+          id: 'conv_900',
+          participantIds: ['vendor_owner', 'courier_assigned'],
+        },
+      ],
+    ]);
+
+    serverMod.setTokenVerifierForTests(async (tok) => {
+      if (tok === 'admin-tok') return { uid: 'admin_uid', email: 'Pamphile.gbede@gmail.com', email_verified: true, admin: true };
+      if (tok === 'courier-tok') return { uid: 'courier_assigned', email: 'courier@livralink.bj', email_verified: true };
+      if (tok === 'vendor-tok') return { uid: 'vendor_owner', email: 'vendor@livralink.bj', email_verified: true };
+      if (tok === 'client-tok') return { uid: 'client_owner', email: 'client@livralink.bj', email_verified: true };
+      if (tok === 'outsider-tok') return { uid: 'outsider_uid', email: 'outsider@livralink.bj', email_verified: true };
+      if (tok === 'unverified-tok') return { uid: 'unv_uid', email: 'unv@livralink.bj', email_verified: false };
+      throw new Error('Invalid token');
+    });
+
+    serverMod.setFirestoreAdminForTests({
+      collection: (name: string) => ({
+        doc: (id: string) => ({
+          get: async () => {
+            const source =
+              name === 'deliveries'
+                ? deliveriesMap
+                : name === 'conversations'
+                ? conversationsMap
+                : new Map();
+            const d = source.get(id);
+            return { exists: Boolean(d), data: () => d };
+          },
+        }),
+      }),
+    });
+
+    serverMod.setStorageBucketForTests({
+      file: (filePath: string) => ({
+        save: async (buffer: Buffer, opts?: any) => {
+          storageFiles.set(filePath, {
+            contentType: opts?.metadata?.contentType || 'application/octet-stream',
+            data: Buffer.from(buffer),
+            metadata: opts?.metadata?.metadata || {},
+          });
+        },
+        exists: async () => [storageFiles.has(filePath)],
+        getMetadata: async () => [{ contentType: storageFiles.get(filePath)?.contentType }],
+        download: async () => [storageFiles.get(filePath)?.data || Buffer.alloc(0)],
+      }),
+    });
+
+    const samplePngBase64 = Buffer.from('fake-png-image-bytes').toString('base64');
+    const samplePdfBase64 = Buffer.from('%PDF-1.4\nchat-attachment').toString('base64');
+
+    try {
+      // 1. Unauthenticated / unverified / non-assigned courier cannot upload POD
+      const unauthPodUp = await fetch(`${baseUrl}/api/pod/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: 'LL-POD-900', kind: 'photo', dataBase64: samplePngBase64, contentType: 'image/jpeg' }),
+      });
+      assert.equal(unauthPodUp.status, 401);
+
+      const unverifiedPodUp = await fetch(`${baseUrl}/api/pod/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer unverified-tok' },
+        body: JSON.stringify({ orderId: 'LL-POD-900', kind: 'photo', dataBase64: samplePngBase64, contentType: 'image/jpeg' }),
+      });
+      assert.equal(unverifiedPodUp.status, 403);
+
+      const outsiderPodUp = await fetch(`${baseUrl}/api/pod/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer outsider-tok' },
+        body: JSON.stringify({ orderId: 'LL-POD-900', kind: 'photo', dataBase64: samplePngBase64, contentType: 'image/jpeg' }),
+      });
+      assert.equal(outsiderPodUp.status, 403);
+
+      // Bad MIME rejected on POD upload
+      const badMimePodUp = await fetch(`${baseUrl}/api/pod/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-tok' },
+        body: JSON.stringify({ orderId: 'LL-POD-900', kind: 'photo', dataBase64: samplePdfBase64, contentType: 'application/pdf' }),
+      });
+      assert.equal(badMimePodUp.status, 400);
+
+      // 2. Assigned courier uploads POD photo & signature via Admin SDK proxy
+      const courierPodUp = await fetch(`${baseUrl}/api/pod/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-tok' },
+        body: JSON.stringify({ orderId: 'LL-POD-900', kind: 'photo', dataBase64: samplePngBase64, contentType: 'image/jpeg' }),
+      });
+      assert.equal(courierPodUp.status, 200);
+      const podUpBody = await courierPodUp.json();
+      assert.equal(podUpBody.success, true);
+      assert.equal(podUpBody.storagePath.startsWith('pod/LL-POD-900/photo_'), true);
+      assert.equal(podUpBody.mediaUrl.startsWith('/api/pod/media?path='), true);
+      assert.equal(podUpBody.mediaUrl.includes('token='), false);
+      assert.equal(storageFiles.get(podUpBody.storagePath)?.metadata?.uploadedBy, 'courier_assigned');
+
+      // 3. Assigned courier, owning vendor, recipient client & Super-Admin can read POD; outsider strictly denied (403)
+      for (const tok of ['courier-tok', 'vendor-tok', 'client-tok', 'admin-tok']) {
+        const readRes = await fetch(`${baseUrl}${podUpBody.mediaUrl}`, {
+          headers: { Authorization: `Bearer ${tok}` },
+        });
+        assert.equal(readRes.status, 200);
+        assert.equal(readRes.headers.get('cache-control'), 'private, no-store, max-age=0');
+        assert.equal(readRes.headers.get('x-content-type-options'), 'nosniff');
+      }
+
+      const outsiderPodRead = await fetch(`${baseUrl}${podUpBody.mediaUrl}`, {
+        headers: { Authorization: 'Bearer outsider-tok' },
+      });
+      assert.equal(outsiderPodRead.status, 403);
+
+      const traversalPodRead = await fetch(
+        `${baseUrl}/api/pod/media?path=${encodeURIComponent('pod/LL-POD-900/../secret.jpg')}`,
+        { headers: { Authorization: 'Bearer admin-tok' } }
+      );
+      assert.equal(traversalPodRead.status, 400);
+
+      // 4. Non-participant cannot upload chat attachment; bad MIME rejected
+      const outsiderChatUp = await fetch(`${baseUrl}/api/chat/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer outsider-tok' },
+        body: JSON.stringify({ conversationId: 'conv_900', fileName: 'spy.pdf', dataBase64: samplePdfBase64, contentType: 'application/pdf' }),
+      });
+      assert.equal(outsiderChatUp.status, 403);
+
+      const badMimeChatUp = await fetch(`${baseUrl}/api/chat/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer vendor-tok' },
+        body: JSON.stringify({ conversationId: 'conv_900', fileName: 'virus.exe', dataBase64: samplePngBase64, contentType: 'application/x-msdownload' }),
+      });
+      assert.equal(badMimeChatUp.status, 400);
+
+      // 5. Participant uploads PDF attachment -> participants & Admin can read, outsider strictly blocked (403)
+      const vendorChatUp = await fetch(`${baseUrl}/api/chat/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer vendor-tok' },
+        body: JSON.stringify({ conversationId: 'conv_900', fileName: 'facture.pdf', dataBase64: samplePdfBase64, contentType: 'application/pdf' }),
+      });
+      assert.equal(vendorChatUp.status, 200);
+      const chatUpBody = await vendorChatUp.json();
+      assert.equal(chatUpBody.success, true);
+      assert.equal(chatUpBody.storagePath.startsWith('chat/conv_900/'), true);
+      assert.equal(chatUpBody.mediaUrl.startsWith('/api/chat/media?path='), true);
+      assert.equal(storageFiles.get(chatUpBody.storagePath)?.metadata?.uploadedBy, 'vendor_owner');
+
+      for (const tok of ['vendor-tok', 'courier-tok', 'admin-tok']) {
+        const readChatRes = await fetch(`${baseUrl}${chatUpBody.mediaUrl}`, {
+          headers: { Authorization: `Bearer ${tok}` },
+        });
+        assert.equal(readChatRes.status, 200);
+        assert.equal(readChatRes.headers.get('cache-control'), 'private, no-store, max-age=0');
+      }
+
+      const outsiderChatRead = await fetch(`${baseUrl}${chatUpBody.mediaUrl}`, {
+        headers: { Authorization: 'Bearer outsider-tok' },
+      });
+      assert.equal(outsiderChatRead.status, 403);
+
+      const traversalChatRead = await fetch(
+        `${baseUrl}/api/chat/media?path=${encodeURIComponent('chat/conv_900/../secret.pdf')}`,
+        { headers: { Authorization: 'Bearer admin-tok' } }
+      );
+      assert.equal(traversalChatRead.status, 400);
+    } finally {
+      serverMod.setStorageBucketForTests(null);
+      serverMod.setFirestoreAdminForTests(null);
+      serverMod.setTokenVerifierForTests(null);
+    }
+  });
 });
 

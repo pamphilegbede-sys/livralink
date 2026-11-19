@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
+import { AuthorizedMediaImage } from '../common/AuthorizedMediaImage';
 import { DeliveryOrder } from '../../types';
 import { downloadCsvFile } from '../../utils/csvExport';
 
@@ -552,7 +553,7 @@ export const LivreurDeliveryHistory: React.FC<{
               <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 space-y-1.5">
                 <p className="text-[10px] font-bold text-slate-400 uppercase">Photo Horodatée du Colis Remis</p>
                 {inspectPodOrder.podData?.photoUrl ? (
-                  <img
+                  <AuthorizedMediaImage
                     src={inspectPodOrder.podData.photoUrl}
                     alt="Preuve photo colis"
                     className="w-full h-40 object-cover rounded-xl border border-slate-200 dark:border-slate-700"
@@ -570,7 +571,7 @@ export const LivreurDeliveryHistory: React.FC<{
                   Signature Tactile de {inspectPodOrder.podData?.signedByName || inspectPodOrder.clientName}
                 </p>
                 {inspectPodOrder.podData?.signatureDataUrl ? (
-                  <img
+                  <AuthorizedMediaImage
                     src={inspectPodOrder.podData.signatureDataUrl}
                     alt="Signature client"
                     className="w-full h-20 object-contain bg-white rounded-xl border border-slate-200 p-2"

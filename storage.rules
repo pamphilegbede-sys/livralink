@@ -106,11 +106,14 @@ service firebase.storage {
     }
 
     // 3. Proof of Delivery (POD) Photos & Signatures: /pod/{orderId}/{fileName}
-    //    - Private to verified authenticated users / admins (no public read)
-    //    - Create only (immutable proofs): verified user, < 10 MB, JPG/PNG/WebP, uploadedBy == uid
+    //    - Strict participant isolation cannot be verified in Storage Rules because LivraLink uses
+    //      a named Firestore database (cross-service firestore.get() only supports (default)).
+    //    - Direct client Storage read/write is restricted strictly to Admins; verified couriers,
+    //      vendors, and recipients upload and read POD proofs through server-verified Admin SDK
+    //      routes (/api/pod/upload & /api/pod/media).
     match /pod/{orderId}/{fileName} {
-      allow read: if isVerifiedUser();
-      allow create: if isVerifiedUser()
+      allow read: if isAdmin();
+      allow create: if isAdmin()
                     && isSafeFileName(orderId)
                     && isSafeFileName(fileName)
                     && request.resource != null
@@ -127,11 +130,12 @@ service firebase.storage {
     }
 
     // 4. Chat attachments / Media: /chat/{conversationId}/{fileName}
-    //    - Private to verified authenticated users / admins
-    //    - Create only: verified user, < 15 MB, image/PDF/audio, uploadedBy == uid
+    //    - Strict conversation participant isolation enforced server-side against named Firestore DB.
+    //    - Direct client Storage read/write is restricted strictly to Admins; conversation members
+    //      upload and read media through server-verified Admin SDK routes (/api/chat/upload & /api/chat/media).
     match /chat/{conversationId}/{fileName} {
-      allow read: if isVerifiedUser();
-      allow create: if isVerifiedUser()
+      allow read: if isAdmin();
+      allow create: if isAdmin()
                     && isSafeFileName(conversationId)
                     && isSafeFileName(fileName)
                     && request.resource != null

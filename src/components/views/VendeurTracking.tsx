@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { AuthorizedMediaImage } from '../common/AuthorizedMediaImage';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
@@ -460,7 +461,7 @@ export const VendeurTracking: React.FC = () => {
                       </div>
                       <div className="h-24 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 relative group">
                         {currentOrder.podData.photoUrl ? (
-                          <img
+                          <AuthorizedMediaImage
                             src={currentOrder.podData.photoUrl}
                             alt="Photo certifiée du colis en direct"
                             className="w-full h-full object-cover"
@@ -488,7 +489,7 @@ export const VendeurTracking: React.FC = () => {
                       </div>
                       <div className="h-24 rounded-xl bg-slate-50 border border-slate-200 flex flex-col items-center justify-center p-2">
                         {currentOrder.podData.signatureDataUrl ? (
-                          <img
+                          <AuthorizedMediaImage
                             src={currentOrder.podData.signatureDataUrl}
                             alt="Signature tactile"
                             className="max-h-14 object-contain"

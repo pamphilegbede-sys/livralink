@@ -71,8 +71,16 @@ app.use((req, res, next) => {
   next();
 });
 
-// Defense against large payload DOS: enforce strict 10kb limit on JSON bodies
-app.use(express.json({ limit: '10kb' }));
+// Defense against large payload DOS: enforce strict 10kb limit on standard JSON bodies
+// and permit up to 22mb solely on authenticated, participant-checked media upload routes.
+const standardJsonParser = express.json({ limit: '10kb' });
+const mediaUploadJsonParser = express.json({ limit: '22mb' });
+app.use((req, res, next) => {
+  if (req.method === 'POST' && (req.path === '/api/pod/upload' || req.path === '/api/chat/upload')) {
+    return mediaUploadJsonParser(req, res, next);
+  }
+  return standardJsonParser(req, res, next);
+});
 
 // =========================================================================
 // POINT 01: RATE LIMITING PAR VISITEUR (SLIDING WINDOW PAR IP)
@@ -439,13 +447,14 @@ const checkCallerIsAdmin = async (user?: AuthenticatedRequest['user']): Promise<
   if (emailLower === 'pamphile.gbede@gmail.com' || Boolean(user.isAdmin)) {
     return true;
   }
-  if (firestoreAdmin) {
+  const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+  if (activeDb) {
     try {
-      const adminDoc = await firestoreAdmin.collection('admins').doc(user.uid).get();
+      const adminDoc = await activeDb.collection('admins').doc(user.uid).get();
       if (adminDoc.exists) {
         return true;
       }
-      const userDoc = await firestoreAdmin.collection('users').doc(user.uid).get();
+      const userDoc = await activeDb.collection('users').doc(user.uid).get();
       if (userDoc.exists && userDoc.data()?.role === 'admin') {
         return true;
       }
@@ -3840,6 +3849,477 @@ app.post('/api/courier/kyc/cleanup-orphan', requireVerifiedUser as any, async (r
   } catch (err: any) {
     console.error('[KYC ORPHAN CLEANUP ERROR]:', err?.message || err);
     return res.status(500).json({ success: false, error: 'Erreur lors du nettoyage du fichier KYC orphelin.' });
+  }
+});
+
+// =========================================================================
+// ISOLATION STRICTE DES FICHIERS POD (/pod/{orderId}/*) & CHAT (/chat/{conversationId}/*)
+// =========================================================================
+const MAX_POD_MEDIA_BYTES = 10 * 1024 * 1024;
+const MAX_CHAT_MEDIA_BYTES = 15 * 1024 * 1024;
+const ALLOWED_POD_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const ALLOWED_CHAT_STATIC_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'application/pdf',
+]);
+
+const normalizeUploadedMime = (rawMime: unknown): string => {
+  const lower = String(rawMime || '').trim().toLowerCase().split(';')[0];
+  if (lower === 'image/jpg' || lower === 'image/pjpeg') return 'image/jpeg';
+  return lower;
+};
+
+const isAllowedChatMimeType = (mime: string): boolean =>
+  ALLOWED_CHAT_STATIC_MIME_TYPES.has(mime) || /^audio\/[a-z0-9.+-]+$/i.test(mime);
+
+const extensionForUploadedMime = (mime: string, fallbackExt = 'bin'): string => {
+  if (mime === 'image/jpeg') return 'jpg';
+  if (mime === 'image/png') return 'png';
+  if (mime === 'image/webp') return 'webp';
+  if (mime === 'application/pdf') return 'pdf';
+  if (mime.startsWith('audio/')) {
+    const sub = mime.slice('audio/'.length).replace(/[^a-z0-9]/gi, '').toLowerCase();
+    return sub || 'audio';
+  }
+  return fallbackExt;
+};
+
+const decodeUploadedBase64Media = (
+  rawDataBase64: unknown,
+  rawDataUrl: unknown,
+  rawContentType: unknown
+): { buffer: Buffer; contentType: string } | { error: string } => {
+  let contentType = normalizeUploadedMime(rawContentType);
+  let base64Body = typeof rawDataBase64 === 'string' ? rawDataBase64.trim() : '';
+
+  if (!base64Body && typeof rawDataUrl === 'string' && rawDataUrl.trim()) {
+    const dataUrlMatch = rawDataUrl.trim().match(/^data:([^;]+);base64,(.+)$/);
+    if (!dataUrlMatch) {
+      return { error: 'Format data URL Base64 invalide.' };
+    }
+    if (!contentType) {
+      contentType = normalizeUploadedMime(dataUrlMatch[1]);
+    }
+    base64Body = dataUrlMatch[2].trim();
+  }
+
+  if (!base64Body) {
+    return { error: 'Contenu binaire du fichier manquant.' };
+  }
+  const cleanB64 = base64Body.replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9+/=]+$/.test(cleanB64)) {
+    return { error: 'Encodage Base64 invalide.' };
+  }
+
+  const buffer = Buffer.from(cleanB64, 'base64');
+  if (!buffer || buffer.length <= 0) {
+    return { error: 'Le fichier envoyé est vide.' };
+  }
+  return { buffer, contentType };
+};
+
+const canUserReadDeliveryMedia = (
+  deliveryData: Record<string, any> | undefined,
+  callerUid: string
+): boolean => {
+  if (!deliveryData || !callerUid) return false;
+  const assignedCourierId = getAssignedCourierIdFromOrder(deliveryData);
+  const merchantId = typeof deliveryData.merchantId === 'string' ? deliveryData.merchantId.trim() : '';
+  const clientId = typeof deliveryData.clientId === 'string' ? deliveryData.clientId.trim() : '';
+  return (
+    callerUid === merchantId ||
+    callerUid === assignedCourierId ||
+    callerUid === clientId
+  );
+};
+
+const canUserAccessConversationMedia = (
+  convData: Record<string, any> | undefined,
+  callerUid: string
+): boolean => {
+  if (!convData || !callerUid) return false;
+  return Array.isArray(convData.participantIds) && convData.participantIds.includes(callerUid);
+};
+
+app.post('/api/pod/upload', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+    const activeBucket =
+      process.env.NODE_ENV === 'test' && testStorageBucketOverride
+        ? testStorageBucketOverride
+        : firebaseAdminApp
+        ? getStorage(firebaseAdminApp).bucket(configuredStorageBucket)
+        : null;
+
+    if (!activeDb) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    if (!activeBucket) {
+      return res.status(503).json({ success: false, error: 'Firebase Storage Admin indisponible.' });
+    }
+
+    const cleanOrderId = String(req.body?.orderId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    const kind = req.body?.kind === 'signature' ? 'signature' : req.body?.kind === 'photo' ? 'photo' : '';
+    if (!cleanOrderId || !kind) {
+      return res.status(400).json({ success: false, error: 'Paramètres orderId et kind (photo/signature) invalides.' });
+    }
+
+    const callerUid = req.user!.uid;
+    const isAdminCaller = await checkCallerIsAdmin(req.user);
+
+    const deliverySnap = await activeDb.collection('deliveries').doc(cleanOrderId).get();
+    if (!deliverySnap.exists) {
+      return res.status(404).json({ success: false, error: 'Commande / livraison introuvable.' });
+    }
+
+    const deliveryData = deliverySnap.data() || {};
+    const assignedCourierId = getAssignedCourierIdFromOrder(deliveryData);
+
+    if (!isAdminCaller) {
+      if (!assignedCourierId || assignedCourierId !== callerUid) {
+        recordSecurityAnomaly(
+          getClientIp(req),
+          'POD_UPLOAD_IDOR_ATTEMPT',
+          `Tentative d'upload POD non autorisé sur ${cleanOrderId} par ${callerUid}`
+        );
+        return res.status(403).json({
+          success: false,
+          error: 'Accès refusé. Seul le livreur assigné à cette livraison peut déposer une preuve POD.',
+        });
+      }
+      if (deliveryData.status === 'livree' || deliveryData.status === 'echec') {
+        return res.status(409).json({ success: false, error: 'Cette livraison est déjà clôturée.' });
+      }
+      if (!['colis_recupere', 'en_cours'].includes(deliveryData.status)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Statut invalide : le colis doit être récupéré ou en cours de livraison.',
+        });
+      }
+    }
+
+    const decoded = decodeUploadedBase64Media(req.body?.dataBase64, req.body?.dataUrl, req.body?.contentType);
+    if ('error' in decoded) {
+      return res.status(400).json({ success: false, error: decoded.error });
+    }
+
+    if (!ALLOWED_POD_MIME_TYPES.has(decoded.contentType)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Type MIME POD non autorisé. Formats acceptés : JPG, PNG ou WebP.',
+      });
+    }
+    if (decoded.buffer.length >= MAX_POD_MEDIA_BYTES) {
+      return res.status(400).json({
+        success: false,
+        error: 'La preuve POD dépasse la taille maximale autorisée de 10 Mo.',
+      });
+    }
+
+    const ext = extensionForUploadedMime(decoded.contentType, kind === 'signature' ? 'png' : 'jpg');
+    const storagePath = `pod/${cleanOrderId}/${kind}_${Date.now()}.${ext}`;
+    await activeBucket.file(storagePath).save(decoded.buffer, {
+      resumable: false,
+      metadata: {
+        contentType: decoded.contentType,
+        metadata: {
+          uploadedBy: callerUid,
+          uploadedAt: new Date().toISOString(),
+          orderId: cleanOrderId,
+        },
+      },
+    });
+
+    const mediaUrl = `/api/pod/media?path=${encodeURIComponent(storagePath)}`;
+    return res.json({
+      success: true,
+      storagePath,
+      mediaUrl,
+      contentType: decoded.contentType,
+      size: decoded.buffer.length,
+    });
+  } catch (err: any) {
+    console.error('[POD MEDIA UPLOAD ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Échec du téléversement sécurisé de la preuve POD.' });
+  }
+});
+
+app.get('/api/pod/media', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const rawPath = String(req.query?.path || '').trim();
+    const match = rawPath.match(/^pod\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)$/);
+    if (!match || rawPath.includes('..')) {
+      return res.status(400).json({ success: false, error: 'Chemin de preuve POD invalide.' });
+    }
+
+    const orderId = match[1];
+    const fileName = match[2];
+    const callerUid = req.user!.uid;
+    const isAdminCaller = await checkCallerIsAdmin(req.user);
+
+    const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+    if (!activeDb) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+
+    const deliverySnap = await activeDb.collection('deliveries').doc(orderId).get();
+    if (!deliverySnap.exists) {
+      if (!isAdminCaller) {
+        recordSecurityAnomaly(
+          getClientIp(req),
+          'POD_MEDIA_IDOR_ATTEMPT',
+          `Tentative d'accès POD sur commande inexistante/non autorisée ${rawPath} par ${callerUid}`
+        );
+        return res.status(403).json({
+          success: false,
+          error: 'Accès refusé. Vous ne participez pas à cette livraison.',
+        });
+      }
+      return res.status(404).json({ success: false, error: 'Livraison introuvable pour cette preuve POD.' });
+    }
+
+    if (!isAdminCaller && !canUserReadDeliveryMedia(deliverySnap.data(), callerUid)) {
+      recordSecurityAnomaly(
+        getClientIp(req),
+        'POD_MEDIA_IDOR_ATTEMPT',
+        `Tentative de lecture non autorisée de la preuve POD ${rawPath} par ${callerUid}`
+      );
+      return res.status(403).json({
+        success: false,
+        error: 'Accès refusé. Seuls le vendeur, le livreur assigné, le client ou un administrateur peuvent consulter cette preuve POD.',
+      });
+    }
+
+    const activeBucket =
+      process.env.NODE_ENV === 'test' && testStorageBucketOverride
+        ? testStorageBucketOverride
+        : firebaseAdminApp
+        ? getStorage(firebaseAdminApp).bucket(configuredStorageBucket)
+        : null;
+
+    if (!activeBucket) {
+      return res.status(503).json({ success: false, error: 'Firebase Storage Admin indisponible.' });
+    }
+
+    const fileRef = activeBucket.file(rawPath);
+    const [exists] = await fileRef.exists();
+    if (!exists) {
+      return res.status(404).json({ success: false, error: 'Fichier POD introuvable dans le stockage.' });
+    }
+
+    const [metadata] = await fileRef.getMetadata().catch(() => [{} as any]);
+    const [buffer] = await fileRef.download();
+    const lowerName = fileName.toLowerCase();
+    const contentType =
+      metadata?.contentType ||
+      (lowerName.endsWith('.png')
+        ? 'image/png'
+        : lowerName.endsWith('.webp')
+        ? 'image/webp'
+        : 'image/jpeg');
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `inline; filename="${fileName.replace(/[^a-zA-Z0-9_.-]/g, '_')}"`);
+    res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.status(200).send(buffer);
+  } catch (err: any) {
+    console.error('[POD MEDIA PROXY ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Impossible de récupérer la preuve POD.' });
+  }
+});
+
+app.post('/api/chat/upload', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+    const activeBucket =
+      process.env.NODE_ENV === 'test' && testStorageBucketOverride
+        ? testStorageBucketOverride
+        : firebaseAdminApp
+        ? getStorage(firebaseAdminApp).bucket(configuredStorageBucket)
+        : null;
+
+    if (!activeDb) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    if (!activeBucket) {
+      return res.status(503).json({ success: false, error: 'Firebase Storage Admin indisponible.' });
+    }
+
+    const cleanConvId = String(req.body?.conversationId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    const rawFileName = String(req.body?.fileName || 'piece_jointe').trim().replace(/[^a-zA-Z0-9_.-]/g, '');
+    const safeFileName = rawFileName.slice(0, 120) || 'piece_jointe';
+    if (!cleanConvId || safeFileName.includes('..')) {
+      return res.status(400).json({ success: false, error: 'Paramètres de conversation ou de nom de fichier invalides.' });
+    }
+
+    const callerUid = req.user!.uid;
+    const isAdminCaller = await checkCallerIsAdmin(req.user);
+
+    const convSnap = await activeDb.collection('conversations').doc(cleanConvId).get();
+    if (!convSnap.exists) {
+      if (!isAdminCaller) {
+        recordSecurityAnomaly(
+          getClientIp(req),
+          'CHAT_UPLOAD_IDOR_ATTEMPT',
+          `Tentative d'upload chat sur conversation inexistante ${cleanConvId} par ${callerUid}`
+        );
+        return res.status(403).json({
+          success: false,
+          error: 'Accès refusé. Conversation introuvable ou non autorisée.',
+        });
+      }
+      return res.status(404).json({ success: false, error: 'Conversation introuvable.' });
+    }
+
+    if (!isAdminCaller && !canUserAccessConversationMedia(convSnap.data(), callerUid)) {
+      recordSecurityAnomaly(
+        getClientIp(req),
+        'CHAT_UPLOAD_IDOR_ATTEMPT',
+        `Tentative d'upload chat non autorisé sur ${cleanConvId} par ${callerUid}`
+      );
+      return res.status(403).json({
+        success: false,
+        error: 'Accès refusé. Vous ne participez pas à cette conversation.',
+      });
+    }
+
+    const decoded = decodeUploadedBase64Media(req.body?.dataBase64, req.body?.dataUrl, req.body?.contentType);
+    if ('error' in decoded) {
+      return res.status(400).json({ success: false, error: decoded.error });
+    }
+
+    if (!isAllowedChatMimeType(decoded.contentType)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Type de fichier chat non autorisé. Formats acceptés : JPG, PNG, WebP, PDF ou audio.',
+      });
+    }
+    if (decoded.buffer.length >= MAX_CHAT_MEDIA_BYTES) {
+      return res.status(400).json({
+        success: false,
+        error: 'La pièce jointe dépasse la taille maximale autorisée de 15 Mo.',
+      });
+    }
+
+    const ext = extensionForUploadedMime(decoded.contentType);
+    const hasDotExt = /\.[a-z0-9]{2,6}$/i.test(safeFileName);
+    const finalFileName = hasDotExt ? safeFileName : `${safeFileName}.${ext}`;
+    const storagePath = `chat/${cleanConvId}/${Date.now()}_${finalFileName}`.slice(0, 220);
+
+    await activeBucket.file(storagePath).save(decoded.buffer, {
+      resumable: false,
+      metadata: {
+        contentType: decoded.contentType,
+        metadata: {
+          uploadedBy: callerUid,
+          uploadedAt: new Date().toISOString(),
+          conversationId: cleanConvId,
+        },
+      },
+    });
+
+    const mediaUrl = `/api/chat/media?path=${encodeURIComponent(storagePath)}`;
+    return res.json({
+      success: true,
+      storagePath,
+      mediaUrl,
+      contentType: decoded.contentType,
+      size: decoded.buffer.length,
+    });
+  } catch (err: any) {
+    console.error('[CHAT MEDIA UPLOAD ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Échec du téléversement sécurisé de la pièce jointe.' });
+  }
+});
+
+app.get('/api/chat/media', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const rawPath = String(req.query?.path || '').trim();
+    const match = rawPath.match(/^chat\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)$/);
+    if (!match || rawPath.includes('..')) {
+      return res.status(400).json({ success: false, error: 'Chemin de pièce jointe chat invalide.' });
+    }
+
+    const conversationId = match[1];
+    const fileName = match[2];
+    const callerUid = req.user!.uid;
+    const isAdminCaller = await checkCallerIsAdmin(req.user);
+
+    const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+    if (!activeDb) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+
+    const convSnap = await activeDb.collection('conversations').doc(conversationId).get();
+    if (!convSnap.exists) {
+      if (!isAdminCaller) {
+        recordSecurityAnomaly(
+          getClientIp(req),
+          'CHAT_MEDIA_IDOR_ATTEMPT',
+          `Tentative de lecture chat sur conversation inexistante/non autorisée ${rawPath} par ${callerUid}`
+        );
+        return res.status(403).json({
+          success: false,
+          error: 'Accès refusé. Vous ne participez pas à cette conversation.',
+        });
+      }
+      return res.status(404).json({ success: false, error: 'Conversation introuvable pour cette pièce jointe.' });
+    }
+
+    if (!isAdminCaller && !canUserAccessConversationMedia(convSnap.data(), callerUid)) {
+      recordSecurityAnomaly(
+        getClientIp(req),
+        'CHAT_MEDIA_IDOR_ATTEMPT',
+        `Tentative de lecture non autorisée de la pièce jointe ${rawPath} par ${callerUid}`
+      );
+      return res.status(403).json({
+        success: false,
+        error: 'Accès refusé. Seuls les participants de cette conversation ou un administrateur peuvent consulter ce fichier.',
+      });
+    }
+
+    const activeBucket =
+      process.env.NODE_ENV === 'test' && testStorageBucketOverride
+        ? testStorageBucketOverride
+        : firebaseAdminApp
+        ? getStorage(firebaseAdminApp).bucket(configuredStorageBucket)
+        : null;
+
+    if (!activeBucket) {
+      return res.status(503).json({ success: false, error: 'Firebase Storage Admin indisponible.' });
+    }
+
+    const fileRef = activeBucket.file(rawPath);
+    const [exists] = await fileRef.exists();
+    if (!exists) {
+      return res.status(404).json({ success: false, error: 'Pièce jointe introuvable dans le stockage.' });
+    }
+
+    const [metadata] = await fileRef.getMetadata().catch(() => [{} as any]);
+    const [buffer] = await fileRef.download();
+    const lowerName = fileName.toLowerCase();
+    const contentType =
+      metadata?.contentType ||
+      (lowerName.endsWith('.pdf')
+        ? 'application/pdf'
+        : lowerName.endsWith('.png')
+        ? 'image/png'
+        : lowerName.endsWith('.webp')
+        ? 'image/webp'
+        : 'image/jpeg');
+
+    const disposition = req.query?.download === '1' ? 'attachment' : 'inline';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${fileName.replace(/[^a-zA-Z0-9_.-]/g, '_')}"`);
+    res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.status(200).send(buffer);
+  } catch (err: any) {
+    console.error('[CHAT MEDIA PROXY ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Impossible de récupérer la pièce jointe.' });
   }
 });
 

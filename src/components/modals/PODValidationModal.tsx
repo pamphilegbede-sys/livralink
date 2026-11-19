@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { auth } from '../../firebase/config';
+import { AuthorizedMediaImage } from '../common/AuthorizedMediaImage';
 
 export const PODValidationModal: React.FC = () => {
   const {
@@ -560,7 +561,7 @@ export const PODValidationModal: React.FC = () => {
 
               {photoUrl ? (
                 <div className="relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 max-h-48 bg-slate-900 flex items-center justify-center">
-                  <img src={photoUrl} alt="Photo preuve colis" className="w-full max-h-48 object-cover" />
+                  <AuthorizedMediaImage src={photoUrl} alt="Photo preuve colis" className="w-full max-h-48 object-cover" />
                   <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 via-black/40 to-transparent text-[10px] text-white font-mono flex items-center justify-between">
                     <span>LIVRALINK POD • {selectedDelivery.id}</span>
                     <span>CERTIFIÉ EN DIRECT</span>
@@ -602,7 +603,7 @@ export const PODValidationModal: React.FC = () => {
 
               {signatureUrl ? (
                 <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
-                  <img src={signatureUrl} alt="Signature client" className="w-full h-20 object-contain bg-slate-50 dark:bg-slate-800 rounded-lg p-2 border border-slate-100 dark:border-slate-800" />
+                  <AuthorizedMediaImage src={signatureUrl} alt="Signature client" className="w-full h-20 object-contain bg-slate-50 dark:bg-slate-800 rounded-lg p-2 border border-slate-100 dark:border-slate-800" />
                   <div className="flex items-center justify-between text-[11px] text-slate-600 dark:text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800">
                     <span>Signataire : <strong className="text-slate-900 dark:text-white">{signedByName}</strong></span>
                     <span className="font-mono text-[10px] text-emerald-700 dark:text-emerald-400 font-bold">✅ Certifiée tactile</span>
