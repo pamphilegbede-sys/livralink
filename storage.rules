@@ -58,12 +58,19 @@ service firebase.storage {
     match /avatars/{userId}/{fileName} {
       allow read: if isSignedIn();
       allow create, update: if isSignedIn()
+                            && isSafeFileName(userId)
                             && isSafeFileName(fileName)
                             && (request.auth.uid == userId || isAdmin())
                             && request.resource != null
                             && request.resource.size > 0
                             && request.resource.size < 5 * 1024 * 1024
-                            && request.resource.contentType.matches('image/.*')
+                            && request.resource.contentType is string
+                            && request.resource.contentType in [
+                              'image/jpeg',
+                              'image/png',
+                              'image/webp',
+                              'image/gif'
+                            ]
                             && hasValidUploaderMetadata();
       allow delete: if isSignedIn() && (request.auth.uid == userId || isAdmin());
     }
@@ -75,10 +82,12 @@ service firebase.storage {
     match /kyc/{userId}/{fileName} {
       allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow create: if isVerifiedUser()
+                    && isSafeFileName(userId)
                     && isSafeFileName(fileName)
                     && request.resource != null
                     && request.resource.size > 0
                     && request.resource.size < 10 * 1024 * 1024
+                    && request.resource.contentType is string
                     && request.resource.contentType in [
                       'image/jpeg',
                       'image/png',
@@ -102,10 +111,12 @@ service firebase.storage {
     match /pod/{orderId}/{fileName} {
       allow read: if isVerifiedUser();
       allow create: if isVerifiedUser()
+                    && isSafeFileName(orderId)
                     && isSafeFileName(fileName)
                     && request.resource != null
                     && request.resource.size > 0
                     && request.resource.size < 10 * 1024 * 1024
+                    && request.resource.contentType is string
                     && request.resource.contentType in [
                       'image/jpeg',
                       'image/png',
@@ -121,10 +132,12 @@ service firebase.storage {
     match /chat/{conversationId}/{fileName} {
       allow read: if isVerifiedUser();
       allow create: if isVerifiedUser()
+                    && isSafeFileName(conversationId)
                     && isSafeFileName(fileName)
                     && request.resource != null
                     && request.resource.size > 0
                     && request.resource.size < 15 * 1024 * 1024
+                    && request.resource.contentType is string
                     && (
                       request.resource.contentType in [
                         'image/jpeg',

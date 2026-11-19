@@ -91,6 +91,14 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
         contentType: 'image/png',
       })
     );
+
+    // SVG avatars are blocked to prevent stored XSS
+    await assertFails(
+      ownerStorage.ref('avatars/user_1/xss.svg').put(Buffer.from('<svg></svg>'), {
+        contentType: 'image/svg+xml',
+        customMetadata: { uploadedBy: 'user_1' },
+      })
+    );
   });
 
   test('3. KYC docs: supports JPG/PNG/WebP/PDF, enforces email_verified, uploadedBy, <10MB, kycLocked, immutability & private isolation', async () => {
