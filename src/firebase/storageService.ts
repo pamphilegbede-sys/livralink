@@ -276,13 +276,20 @@ export async function uploadFileToStorage(
     throw new Error('Authentification Firebase requise pour téléverser un fichier vers le stockage sécurisé.');
   }
 
+  const normalizedPath = String(storagePath || '').trim().replace(/^\/+/, '');
+  if (!/^avatars\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/.test(normalizedPath) || normalizedPath.includes('..')) {
+    throw new Error(
+      'Chemin de stockage non autorisé pour un téléversement public. Utilisez les services sécurisés dédiés pour KYC, POD ou Chat.'
+    );
+  }
+
   const baseCustomMetadata = {
     uploadedBy: currentUser.uid,
     uploadedAt: new Date().toISOString(),
   };
 
   try {
-    const storageRef = ref(storage, storagePath);
+    const storageRef = ref(storage, normalizedPath);
 
     if (typeof fileOrDataUrl === 'string') {
       if (fileOrDataUrl.startsWith('https://firebasestorage.googleapis.com/') || fileOrDataUrl.includes('.firebasestorage.app/')) {

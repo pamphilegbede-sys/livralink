@@ -1447,4 +1447,86 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
     const allKyc = await assertSucceeds(adminDb.collection('kyc').get());
     assert.equal(allKyc.docs.length >= 3, true);
   });
+
+  // 34. Messagerie client (sendChatMessage): création/mise à jour conversation + message conforme aux champs autorisés
+  test('34. Chat participants can create/update conversations and send messages matching sendChatMessage payload', async () => {
+    const vendorDb = testEnv.authenticatedContext('vendor_chat_34', {
+      email: 'vendor34@test.com',
+      email_verified: true,
+    }).firestore();
+    const courierDb = testEnv.authenticatedContext('courier_chat_34', {
+      email: 'courier34@test.com',
+      email_verified: true,
+    }).firestore();
+    const outsiderDb = testEnv.authenticatedContext('outsider_34', {
+      email: 'outsider34@test.com',
+      email_verified: true,
+    }).firestore();
+
+    const participants = ['courier_chat_34', 'vendor_chat_34'].sort();
+
+    // 1. Création de la conversation par le vendeur
+    await assertSucceeds(
+      vendorDb.doc('conversations/order_LL-3400').set({
+        id: 'order_LL-3400',
+        participantIds: participants,
+        orderId: '#LL-3400',
+        lastMessage: 'Colis prêt pour enlèvement',
+        lastMessageAt: new Date().toISOString(),
+        updatedAt: Date.now(),
+      })
+    );
+
+    // 2. Envoi d'un message conforme à sendChatMessage (sans recipientId/orderId interdits) -> AUTORISÉ
+    await assertSucceeds(
+      vendorDb.doc('conversations/order_LL-3400/messages/chat_msg_1').set({
+        id: 'chat_msg_1',
+        senderId: 'vendor_chat_34',
+        senderName: 'Boutique 34',
+        senderRole: 'vendeur',
+        text: 'Colis prêt pour enlèvement',
+        createdAt: Date.now(),
+        timestamp: new Date().toISOString(),
+        isRead: false,
+        read: false,
+      })
+    );
+
+    // 3. Réponse du livreur + mise à jour des métadonnées de conversation -> AUTORISÉ
+    await assertSucceeds(
+      courierDb.doc('conversations/order_LL-3400').set(
+        {
+          lastMessage: 'Bien reçu, j’arrive dans 5 min',
+          lastMessageAt: new Date().toISOString(),
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      )
+    );
+    await assertSucceeds(
+      courierDb.doc('conversations/order_LL-3400/messages/chat_msg_2').set({
+        id: 'chat_msg_2',
+        senderId: 'courier_chat_34',
+        senderName: 'Livreur 34',
+        senderRole: 'livreur',
+        text: 'Bien reçu, j’arrive dans 5 min',
+        createdAt: Date.now(),
+        timestamp: new Date().toISOString(),
+        isRead: false,
+        read: false,
+      })
+    );
+
+    // 4. Champs hors liste blanche (ex: recipientId) ou utilisateur tiers -> REFUSÉ
+    await assertFails(
+      vendorDb.doc('conversations/order_LL-3400/messages/chat_msg_bad').set({
+        id: 'chat_msg_bad',
+        senderId: 'vendor_chat_34',
+        recipientId: 'courier_chat_34',
+        text: 'Champ interdit',
+      })
+    );
+    await assertFails(outsiderDb.doc('conversations/order_LL-3400/messages/chat_msg_1').get());
+  });
 });
+

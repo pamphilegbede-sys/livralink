@@ -57,7 +57,7 @@ import {
   INITIAL_NOTIFICATIONS
 } from '../data/mockData';
 import { calculateDeliveryPrice, calculateDistanceKm, DetectedUserLocation } from '../config/maps';
-import { collection, doc, getDoc, getDocs, onSnapshot, setDoc, updateDoc, deleteDoc, query, where, runTransaction, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, onSnapshot, setDoc, updateDoc, deleteDoc, query, where, orderBy, limit, runTransaction, writeBatch } from 'firebase/firestore';
 import {
   mergeRemoteUsersIntoAdminLists,
   enrichMerchantsWithDeliveries,
@@ -881,6 +881,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ? `order_${params.orderId.replace(/[^a-zA-Z0-9_-]/g, '')}`
         : `direct_${participants.join('_')}`;
       const msgCleanId = newMsg.id.replace(/[^a-zA-Z0-9_-]/g, '');
+      const nowMs = Date.now();
 
       try {
         const convRef = doc(db, 'conversations', convId);
@@ -889,26 +890,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const convPayload: Record<string, any> = {
             id: convId,
             participantIds: participants,
-            updatedAt: Date.now(),
+            lastMessage: cleanText.slice(0, 200),
+            lastMessageAt: newMsg.timestamp,
+            updatedAt: nowMs,
           };
           if (params.orderId) convPayload.orderId = params.orderId;
           await setDoc(convRef, convPayload);
+        } else {
+          const convPatch: Record<string, any> = {
+            lastMessage: cleanText.slice(0, 200),
+            lastMessageAt: newMsg.timestamp,
+            updatedAt: nowMs,
+          };
+          if (params.orderId && !convSnap.data()?.orderId) {
+            convPatch.orderId = params.orderId;
+          }
+          await setDoc(convRef, convPatch, { merge: true });
         }
 
+        // Strictly match firestore.rules /conversations/{id}/messages/{msgId} allowed keys
         const msgPayload: Record<string, any> = {
           id: msgCleanId,
           senderId: cleanSender,
           senderName: newMsg.senderName,
           senderRole: newMsg.senderRole,
-          recipientId: params.recipientId,
-          recipientName: newMsg.recipientName,
-          recipientRole: newMsg.recipientRole,
           text: cleanText.slice(0, 4000),
-          createdAt: Date.now(),
+          createdAt: nowMs,
           timestamp: newMsg.timestamp,
+          isRead: false,
           read: false,
         };
-        if (newMsg.orderId) msgPayload.orderId = newMsg.orderId;
 
         await setDoc(doc(db, 'conversations', convId, 'messages', msgCleanId), msgPayload);
       } catch (err) {
@@ -916,6 +927,128 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
   };
+
+  // Real-time Firestore listener for verified user conversations & messages
+  useEffect(() => {
+    const currentUid = firebaseUser?.uid;
+    if (!currentUid || !firebaseUser?.emailVerified) {
+      return;
+    }
+
+    const msgUnsubs = new Map<string, () => void>();
+    const convQuery = query(
+      collection(db, 'conversations'),
+      where('participantIds', 'array-contains', currentUid)
+    );
+
+    const unsubConvs = onSnapshot(
+      convQuery,
+      (convSnap) => {
+        const activeConvIds = new Set<string>();
+        convSnap.docs.forEach((convDoc) => {
+          const convId = convDoc.id;
+          const convData = convDoc.data() || {};
+          activeConvIds.add(convId);
+
+          if (!msgUnsubs.has(convId)) {
+            const participants: string[] = Array.isArray(convData.participantIds) ? convData.participantIds : [];
+            const orderIdStr = typeof convData.orderId === 'string' && convData.orderId.trim()
+              ? convData.orderId.trim()
+              : convId.startsWith('order_')
+              ? `#${convId.slice('order_'.length)}`
+              : undefined;
+
+            const msgsQuery = query(
+              collection(db, 'conversations', convId, 'messages'),
+              orderBy('createdAt', 'asc'),
+              limit(100)
+            );
+            const unsubMsgs = onSnapshot(
+              msgsQuery,
+              (msgSnap) => {
+                const linkedOrder = orderIdStr
+                  ? deliveriesRef.current.find(
+                      (d) =>
+                        d.id === orderIdStr ||
+                        d.id.replace('#', '') === orderIdStr.replace('#', '')
+                    )
+                  : undefined;
+
+                const remoteMessages: ChatMessage[] = msgSnap.docs.map((mDoc) => {
+                  const m = mDoc.data() || {};
+                  const senderId = String(m.senderId || '');
+                  const senderRole: UserRole =
+                    m.senderRole === 'livreur' || m.senderRole === 'admin' || m.senderRole === 'client'
+                      ? m.senderRole
+                      : 'vendeur';
+                  const otherUid = participants.find((p) => p !== senderId) || '';
+                  const recipientRole: UserRole = senderRole === 'vendeur' ? 'livreur' : 'vendeur';
+                  const recipientName =
+                    senderRole === 'vendeur'
+                      ? linkedOrder?.courier?.name || 'Livreur Partenaire'
+                      : linkedOrder?.merchantStoreName || linkedOrder?.pickupLocation?.name || 'Boutique Vendeur';
+
+                  return {
+                    id: String(m.id || mDoc.id),
+                    orderId: linkedOrder?.id || orderIdStr,
+                    senderId,
+                    senderName: String(m.senderName || 'Utilisateur LivraLink'),
+                    senderRole,
+                    recipientId: otherUid,
+                    recipientName,
+                    recipientRole,
+                    text: String(m.text || ''),
+                    timestamp:
+                      typeof m.timestamp === 'string' && m.timestamp
+                        ? m.timestamp
+                        : typeof m.createdAt === 'number'
+                        ? new Date(m.createdAt).toISOString()
+                        : new Date().toISOString(),
+                    isRead: Boolean(m.isRead ?? m.read ?? false),
+                  };
+                });
+
+                setChatMessages((prev) => {
+                  const byId = new Map<string, ChatMessage>();
+                  prev.forEach((existing) => byId.set(existing.id, existing));
+                  remoteMessages.forEach((rm) => {
+                    const existing = byId.get(rm.id);
+                    byId.set(rm.id, existing ? { ...existing, ...rm, recipientName: existing.recipientName || rm.recipientName } : rm);
+                  });
+                  return Array.from(byId.values()).sort(
+                    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+                  );
+                });
+              },
+              (err) => {
+                console.warn(`Notice écoute messages (${convId}):`, err?.message || err);
+              }
+            );
+            msgUnsubs.set(convId, unsubMsgs);
+          }
+        });
+
+        // Clean listeners for removed conversations
+        for (const [cid, unsub] of msgUnsubs.entries()) {
+          if (!activeConvIds.has(cid)) {
+            unsub();
+            msgUnsubs.delete(cid);
+          }
+        }
+      },
+      (err) => {
+        console.warn('Notice écoute conversations Firestore:', err?.message || err);
+      }
+    );
+
+    return () => {
+      unsubConvs();
+      for (const unsub of msgUnsubs.values()) {
+        unsub();
+      }
+      msgUnsubs.clear();
+    };
+  }, [firebaseUser?.uid, firebaseUser?.emailVerified]);
 
   const markChatAsRead = React.useCallback((conversationKey: string) => {
     setChatMessages((prev) => {

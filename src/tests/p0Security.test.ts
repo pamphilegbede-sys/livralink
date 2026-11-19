@@ -826,3 +826,34 @@ test('P0 HTTP Route Integration against Express server.ts with injected Firestor
     await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
   }
 });
+
+test('isTrustedFirebaseStorageUrl rejects non-POD paths and traversal', async () => {
+  const { isTrustedFirebaseStorageUrl } = await import('../server/p0Security');
+
+  assert.equal(
+    isTrustedFirebaseStorageUrl('/api/pod/media?path=pod%2FLL-101%2Fphoto_1.jpg', 'LL-101'),
+    true
+  );
+  assert.equal(
+    isTrustedFirebaseStorageUrl('/api/pod/media?path=pod%2FLL-OTHER%2Fphoto_1.jpg', 'LL-101'),
+    false
+  );
+  assert.equal(
+    isTrustedFirebaseStorageUrl('/api/pod/media?path=avatars%2Fu1%2Fpic.jpg', 'LL-101'),
+    false
+  );
+  assert.equal(
+    isTrustedFirebaseStorageUrl('https://firebasestorage.googleapis.com/v0/b/test/o/pod%2FLL-101%2Fp.jpg', 'LL-101'),
+    true
+  );
+  assert.equal(
+    isTrustedFirebaseStorageUrl('https://firebasestorage.googleapis.com/v0/b/test/o/avatars%2Fu1%2Fp.jpg', 'LL-101'),
+    false
+  );
+  assert.equal(
+    isTrustedFirebaseStorageUrl('https://firebasestorage.googleapis.com/v0/b/test/o/pod%2F..%2Fkyc%2Fsecret.jpg', 'LL-101'),
+    false
+  );
+  assert.equal(isTrustedFirebaseStorageUrl('https://evil.example.com/pod/LL-101/photo.jpg', 'LL-101'), false);
+});
+

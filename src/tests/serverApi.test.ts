@@ -572,8 +572,12 @@ test('Express API security & health integration tests', async (t) => {
       }),
     });
 
-    const samplePngBase64 = Buffer.from('fake-png-image-bytes').toString('base64');
+    const samplePngBase64 = Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]),
+      Buffer.from('fake-jpeg-image-bytes'),
+    ]).toString('base64');
     const samplePdfBase64 = Buffer.from('%PDF-1.4\nchat-attachment').toString('base64');
+    const spoofedHtmlBase64 = Buffer.from('<html><script>alert(1)</script></html>').toString('base64');
 
     try {
       // 1. Unauthenticated / unverified / non-assigned courier cannot upload POD
@@ -687,11 +691,149 @@ test('Express API security & health integration tests', async (t) => {
         { headers: { Authorization: 'Bearer admin-tok' } }
       );
       assert.equal(traversalChatRead.status, 400);
+
+      // 6. Spoofed MIME (HTML payload claiming image/jpeg or application/pdf) must be rejected (400)
+      const spoofedPodMime = await fetch(`${baseUrl}/api/pod/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-tok' },
+        body: JSON.stringify({ orderId: 'LL-POD-900', kind: 'photo', dataBase64: spoofedHtmlBase64, contentType: 'image/jpeg' }),
+      });
+      assert.equal(spoofedPodMime.status, 400);
+
+      const spoofedChatMime = await fetch(`${baseUrl}/api/chat/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer vendor-tok' },
+        body: JSON.stringify({ conversationId: 'conv_900', fileName: 'fake.pdf', dataBase64: spoofedHtmlBase64, contentType: 'application/pdf' }),
+      });
+      assert.equal(spoofedChatMime.status, 400);
     } finally {
       serverMod.setStorageBucketForTests(null);
       serverMod.setFirestoreAdminForTests(null);
       serverMod.setTokenVerifierForTests(null);
     }
+  });
+
+  await t.test('POST /api/users/sync-profile blocks body.email admin spoofing, role escalation, and unsafe avatarUrl XSS', async () => {
+    const serverMod = await import('../../server');
+    const userDocs = new Map<string, Record<string, any>>();
+
+    serverMod.setTokenVerifierForTests(async (token: string) => {
+      if (token === 'ordinary-tok') {
+        return { uid: 'ordinary_u1', email: 'ordinary@livralink.bj', email_verified: true };
+      }
+      throw new Error('Invalid token');
+    });
+
+    serverMod.setFirestoreAdminForTests({
+      collection: () => ({
+        doc: (id: string) => ({
+          get: async () => ({ exists: userDocs.has(id), data: () => userDocs.get(id) }),
+          set: async (payload: Record<string, any>) => {
+            userDocs.set(id, { ...(userDocs.get(id) || {}), ...payload });
+          },
+        }),
+      }),
+    });
+
+    try {
+      // 1. Spoofing body.email to super-admin + role: 'admin' must NEVER escalate privileges
+      const spoofRes = await fetch(`${baseUrl}/api/users/sync-profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ordinary-tok' },
+        body: JSON.stringify({
+          email: 'pamphile.gbede@gmail.com',
+          role: 'admin',
+          fullName: 'Attacker',
+        }),
+      });
+      assert.equal(spoofRes.status, 200);
+      const spoofBody = await spoofRes.json();
+      assert.equal(spoofBody.role, 'vendeur');
+      assert.equal(userDocs.get('ordinary_u1')?.email, 'ordinary@livralink.bj');
+      assert.equal(userDocs.get('ordinary_u1')?.role, 'vendeur');
+
+      // 2. Unsafe avatarUrl schemes (javascript:, data:text/html) must be rejected with 400
+      for (const badAvatar of ['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'http://insecure.local/a.png']) {
+        const xssRes = await fetch(`${baseUrl}/api/users/sync-profile`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ordinary-tok' },
+          body: JSON.stringify({
+            fullName: 'Normal Name',
+            avatarUrl: badAvatar,
+          }),
+        });
+        assert.equal(xssRes.status, 400);
+      }
+
+      // 3. Valid https avatarUrl succeeds
+      const okAvatarRes = await fetch(`${baseUrl}/api/users/sync-profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ordinary-tok' },
+        body: JSON.stringify({
+          fullName: 'Normal Name',
+          avatarUrl: 'https://cdn.example.com/avatar.png',
+        }),
+      });
+      assert.equal(okAvatarRes.status, 200);
+      assert.equal(userDocs.get('ordinary_u1')?.avatarUrl, 'https://cdn.example.com/avatar.png');
+    } finally {
+      serverMod.setFirestoreAdminForTests(null);
+      serverMod.setTokenVerifierForTests(null);
+    }
+  });
+
+  await t.test('Legacy Storage Media Migration helpers rewrite tokenized URLs to authenticated proxies idempotently', async () => {
+    const {
+      extractStoragePathFromLegacyUrl,
+      planDeliveryPodMediaMigration,
+      planChatMessageMediaMigration,
+      planKycMediaMigration,
+    } = await import('../server/legacyMediaMigration');
+
+    const legacyPodPhoto =
+      'https://firebasestorage.googleapis.com/v0/b/gen-lang-client-0654978401.firebasestorage.app/o/pod%2FLL-777%2Fphoto_123.jpg?alt=media&token=secret-tok';
+    const parsedPod = extractStoragePathFromLegacyUrl(legacyPodPhoto);
+    assert.equal(parsedPod?.storagePath, 'pod/LL-777/photo_123.jpg');
+    assert.equal(parsedPod?.prefix, 'pod');
+    assert.equal(parsedPod?.hadDownloadToken, true);
+
+    const podPlan = planDeliveryPodMediaMigration('LL-777', {
+      podData: {
+        photoUrl: legacyPodPhoto,
+        signatureDataUrl: '/api/pod/media?path=pod%2FLL-777%2Fsig_1.png',
+      },
+    });
+    assert.ok(podPlan);
+    assert.equal(podPlan.patch['podData.photoUrl'], '/api/pod/media?path=pod%2FLL-777%2Fphoto_123.jpg');
+    assert.equal(podPlan.patch['podData.signatureDataUrl'], undefined);
+
+    // Already migrated delivery returns null (idempotent)
+    assert.equal(
+      planDeliveryPodMediaMigration('LL-777', {
+        podData: {
+          photoUrl: '/api/pod/media?path=pod%2FLL-777%2Fphoto_123.jpg',
+          signatureDataUrl: '/api/pod/media?path=pod%2FLL-777%2Fsig_1.png',
+        },
+      }),
+      null
+    );
+
+    const legacyChatUrl =
+      'https://firebasestorage.googleapis.com/v0/b/gen-lang-client-0654978401.firebasestorage.app/o/chat%2Forder_LL-777%2Finvoice.pdf?alt=media&token=chat-tok';
+    const chatPlan = planChatMessageMediaMigration('order_LL-777', 'msg_1', {
+      attachmentUrl: legacyChatUrl,
+    });
+    assert.ok(chatPlan);
+    assert.equal(chatPlan.patch.attachmentUrl, '/api/chat/media?path=chat%2Forder_LL-777%2Finvoice.pdf');
+
+    const legacyKycUrl =
+      'https://firebasestorage.googleapis.com/v0/b/gen-lang-client-0654978401.firebasestorage.app/o/kyc%2Fcourier_99%2Fcni.jpg?alt=media&token=kyc-tok';
+    const kycPlan = planKycMediaMigration('courier_99', {
+      documentPhotoUrl: legacyKycUrl,
+    });
+    assert.ok(kycPlan);
+    assert.equal(kycPlan.patch.documentStoragePath, 'kyc/courier_99/cni.jpg');
+    assert.equal(kycPlan.patch.documentPhotoUrl, '');
   });
 });
 

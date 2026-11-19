@@ -163,10 +163,23 @@ export function isTrustedFirebaseStorageUrl(url: unknown, expectedOrderId?: stri
       return false;
     }
   }
-  return (
+  if (
     trimmed.startsWith('https://firebasestorage.googleapis.com/') ||
     trimmed.startsWith('https://storage.googleapis.com/')
-  );
+  ) {
+    try {
+      const parsed = new URL(trimmed);
+      const decodedPath = decodeURIComponent(parsed.pathname || '');
+      if (decodedPath.includes('..') || decodedPath.includes('\\')) {
+        return false;
+      }
+      // Legacy tokenized URLs are only accepted if they point explicitly to /pod/ objects
+      return /(?:^|\/)pod\/[^/]+/.test(decodedPath);
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 export function signPodOtpToken(

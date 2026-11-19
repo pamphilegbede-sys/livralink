@@ -1025,8 +1025,9 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response): Promis
         await auth.updateUser(userRecord.uid, {
           password: newPassword,
         });
+        await auth.revokeRefreshTokens(userRecord.uid).catch(() => {});
         firebaseAuthUpdated = true;
-        console.log(`[FIREBASE-ADMIN] Mot de passe Firebase Authentication mis à jour pour l'UID: ${userRecord.uid}`);
+        console.log(`[FIREBASE-ADMIN] Mot de passe Firebase Authentication mis à jour et jetons révoqués pour l'UID: ${userRecord.uid}`);
       } catch (authErr: any) {
         if (authErr?.code === 'auth/user-not-found') {
           console.warn(`[FIREBASE-ADMIN] Utilisateur non trouvé dans Firebase Auth pour: ${cleanEmail}`);
@@ -1115,8 +1116,9 @@ app.post('/api/auth/admin-force-reset', requireAdminAuthorization as any, async 
     const adminAuth = getAuth(firebaseAdminApp);
     const userRecord = await adminAuth.getUserByEmail(cleanEmail);
     await adminAuth.updateUser(userRecord.uid, { password: newPassword });
+    await adminAuth.revokeRefreshTokens(userRecord.uid).catch(() => {});
 
-    console.log(`[ADMIN-FORCE-RESET] Mot de passe réinitialisé par ${req.user?.email || req.user?.uid} pour ${cleanEmail}`);
+    console.log(`[ADMIN-FORCE-RESET] Mot de passe réinitialisé et jetons révoqués par ${req.user?.email || req.user?.uid} pour ${cleanEmail}`);
     res.json({
       success: true,
       message: `Le mot de passe de ${cleanEmail} a été réinitialisé avec succès via Firebase Admin.`,
@@ -3227,7 +3229,7 @@ app.post('/api/users/sync-profile', async (req: AuthenticatedRequest, res: Respo
   try {
     const body = req.body || {};
     const uid = req.user.uid;
-    const email = (req.user.email || body.email || '').toString().trim().toLowerCase().slice(0, 128);
+    const email = (req.user.email || '').toString().trim().toLowerCase().slice(0, 128);
     const isSuperAdminEmail = email === 'pamphile.gbede@gmail.com' && Boolean(req.user.email_verified);
     const requestedRole = typeof body.role === 'string' ? body.role.trim().toLowerCase() : 'vendeur';
     const safeRole =
@@ -3238,6 +3240,10 @@ app.post('/api/users/sync-profile', async (req: AuthenticatedRequest, res: Respo
         : requestedRole === 'admin' && isSuperAdminEmail
         ? 'admin'
         : 'vendeur';
+
+    if (typeof body.avatarUrl === 'string' && body.avatarUrl.trim() && !isSafeAvatarUrl(body.avatarUrl)) {
+      return res.status(400).json({ success: false, error: 'URL d\'avatar invalide ou non autorisée.' });
+    }
 
     const userRef = activeDb.collection('users').doc(uid);
     const existingSnap = await userRef.get();
@@ -3886,6 +3892,63 @@ const extensionForUploadedMime = (mime: string, fallbackExt = 'bin'): string => 
   return fallbackExt;
 };
 
+const isSafeAvatarUrl = (rawUrl: unknown): boolean => {
+  if (typeof rawUrl !== 'string') return false;
+  const trimmed = rawUrl.trim();
+  if (!trimmed || trimmed.length > 1000) return false;
+  if (/^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
+    return true;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
+
+const verifyMagicBytesForMime = (buffer: Buffer, contentType: string): boolean => {
+  if (!buffer || buffer.length < 4) return false;
+  if (contentType === 'image/jpeg') {
+    return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  }
+  if (contentType === 'image/png') {
+    return (
+      buffer.length >= 8 &&
+      buffer[0] === 0x89 &&
+      buffer[1] === 0x50 &&
+      buffer[2] === 0x4e &&
+      buffer[3] === 0x47 &&
+      buffer[4] === 0x0d &&
+      buffer[5] === 0x0a &&
+      buffer[6] === 0x1a &&
+      buffer[7] === 0x0a
+    );
+  }
+  if (contentType === 'image/webp') {
+    return (
+      buffer.length >= 12 &&
+      buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+      buffer.subarray(8, 12).toString('ascii') === 'WEBP'
+    );
+  }
+  if (contentType === 'application/pdf') {
+    return buffer.subarray(0, 5).toString('ascii') === '%PDF-';
+  }
+  if (contentType.startsWith('audio/')) {
+    const headAscii = buffer.subarray(0, 4).toString('ascii');
+    const isOgg = headAscii === 'OggS';
+    const isRiffWav = buffer.length >= 12 && headAscii === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WAVE';
+    const isFlac = headAscii === 'fLaC';
+    const isId3 = buffer.subarray(0, 3).toString('ascii') === 'ID3';
+    const isMp3Sync = buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0;
+    const isWebm = buffer[0] === 0x1a && buffer[1] === 0x45 && buffer[2] === 0xdf && buffer[3] === 0xa3;
+    const isMp4Audio = buffer.length >= 8 && buffer.subarray(4, 8).toString('ascii') === 'ftyp';
+    return isOgg || isRiffWav || isFlac || isId3 || isMp3Sync || isWebm || isMp4Audio;
+  }
+  return false;
+};
+
 const decodeUploadedBase64Media = (
   rawDataBase64: unknown,
   rawDataUrl: unknown,
@@ -4009,6 +4072,12 @@ app.post('/api/pod/upload', requireVerifiedUser as any, async (req: Authenticate
       return res.status(400).json({
         success: false,
         error: 'Type MIME POD non autorisé. Formats acceptés : JPG, PNG ou WebP.',
+      });
+    }
+    if (!verifyMagicBytesForMime(decoded.buffer, decoded.contentType)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Signature binaire du fichier POD non conforme au type MIME déclaré.',
       });
     }
     if (decoded.buffer.length >= MAX_POD_MEDIA_BYTES) {
@@ -4195,6 +4264,12 @@ app.post('/api/chat/upload', requireVerifiedUser as any, async (req: Authenticat
       return res.status(400).json({
         success: false,
         error: 'Type de fichier chat non autorisé. Formats acceptés : JPG, PNG, WebP, PDF ou audio.',
+      });
+    }
+    if (!verifyMagicBytesForMime(decoded.buffer, decoded.contentType)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Contenu binaire du fichier chat non conforme au type MIME déclaré.',
       });
     }
     if (decoded.buffer.length >= MAX_CHAT_MEDIA_BYTES) {
