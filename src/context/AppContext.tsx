@@ -2025,11 +2025,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const ownKycRef = doc(db, 'kyc', uid);
     const ownUserRef = doc(db, 'users', uid);
 
+    let lastClaimRefreshStatus: string | null = null;
+
     const applyOwnKycStatusSync = (
       nextKycStatus: 'non_soumis' | 'en_attente' | 'valide' | 'refuse',
       rejectionReason?: string
     ) => {
       const isApproved = nextKycStatus === 'valide';
+      if (
+        (nextKycStatus === 'valide' || nextKycStatus === 'refuse') &&
+        lastClaimRefreshStatus !== nextKycStatus &&
+        auth.currentUser?.uid === uid &&
+        typeof auth.currentUser.getIdToken === 'function'
+      ) {
+        lastClaimRefreshStatus = nextKycStatus;
+        void auth.currentUser.getIdToken(true).catch(() => {});
+      } else if (nextKycStatus === 'en_attente') {
+        lastClaimRefreshStatus = 'en_attente';
+      }
+
       setUserProfile((prev) =>
         prev && prev.uid === uid
           ? {
@@ -2065,6 +2079,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               }
             : c
         )
+      );
+      setSelectedCourier((prev) =>
+        prev && prev.id === uid
+          ? {
+              ...prev,
+              isKycVerified: isApproved,
+              kycStatus: nextKycStatus,
+              kycRejectionReason: rejectionReason,
+              badge: isApproved ? 'Livreur Vérifié KYC ★' : prev.badge,
+            }
+          : prev
       );
     };
 
@@ -3737,11 +3762,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ): Promise<KYCUserRequest> => {
     // KYC-STEP-A : Authentification et fraîcheur des claims (email_verified)
     const activeUser = auth.currentUser;
-    const courierDocId = activeUser?.uid || data.courierId || userProfile?.uid || '';
-    const cleanCourierId = courierDocId.replace(/[^a-zA-Z0-9_-]/g, '');
+    const authUid = activeUser?.uid || '';
+    const cleanCourierId = authUid.replace(/[^a-zA-Z0-9_-]/g, '');
 
-    if (!cleanCourierId || !activeUser) {
-      throw createKYCStepError('KYC-STEP-A', 'Authentification Firebase requise pour transmettre un dossier KYC.');
+    if (!activeUser || !authUid || cleanCourierId !== authUid) {
+      throw createKYCStepError('KYC-STEP-A', 'Authentification Firebase valide requise pour transmettre un dossier KYC.');
+    }
+    if (data.courierId && data.courierId !== cleanCourierId) {
+      throw createKYCStepError('KYC-STEP-A', 'Identifiant du dossier KYC incohérent avec le compte connecté.');
     }
 
     let freshIdToken = '';
@@ -3766,11 +3794,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // KYC-STEP-C : Vérification du dossier existant (client Firestore + pré-contrôle serveur)
     const kycRef = doc(db, 'kyc', cleanCourierId);
     const userRef = doc(db, 'users', cleanCourierId);
-    let existingKycSnap;
-    let userSnap;
-    try {
-      [existingKycSnap, userSnap] = await Promise.all([getDoc(kycRef), getDoc(userRef)]);
-    } catch (readErr: any) {
+    const [kycReadResult, userReadResult] = await Promise.allSettled([getDoc(kycRef), getDoc(userRef)]);
+
+    if (kycReadResult.status === 'rejected') {
+      const readErr: any = kycReadResult.reason;
       throw createKYCStepError(
         'KYC-STEP-C',
         readErr?.code === 'permission-denied'
@@ -3779,6 +3806,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         { originalCode: String(readErr?.code || '') }
       );
     }
+
+    if (userReadResult.status === 'rejected') {
+      const readErr: any = userReadResult.reason;
+      throw createKYCStepError(
+        'KYC-STEP-C',
+        readErr?.code === 'permission-denied'
+          ? 'Lecture du profil utilisateur refusée par les règles Firestore.'
+          : 'Impossible de vérifier votre profil utilisateur avant soumission KYC.',
+        { originalCode: String(readErr?.code || '') }
+      );
+    }
+
+    const existingKycSnap = kycReadResult.value;
+    const userSnap = userReadResult.value;
 
     const existingKycData = existingKycSnap.exists() ? (existingKycSnap.data() || {}) : null;
     if (existingKycData) {
@@ -3791,6 +3832,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       if (existingStatus === 'valide') {
         throw createKYCStepError('KYC-STEP-C', 'Votre dossier KYC est déjà validé.');
+      }
+    }
+
+    const existingUserData = userSnap.exists() ? (userSnap.data() || {}) : null;
+    if (existingUserData) {
+      if (existingUserData.isKycVerified === true || existingUserData.kycStatus === 'valide') {
+        throw createKYCStepError('KYC-STEP-C', 'Votre dossier KYC est déjà validé.');
+      }
+      if (existingUserData.kycStatus === 'en_attente' && existingKycData?.status !== 'refuse') {
+        throw createKYCStepError(
+          'KYC-STEP-C',
+          'Votre dossier KYC est déjà en cours de vérification par l’administration.'
+        );
       }
     }
 

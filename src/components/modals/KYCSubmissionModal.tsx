@@ -45,7 +45,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
   // Strict UID matching only (never match by name or phone)
   const existingKyc = activeCourierId
-    ? kycRequests.find((k) => k.courierId === activeCourierId)
+    ? kycRequests.find((k) => k.courierId === activeCourierId || k.id === activeCourierId)
     : undefined;
 
   const isSelectedCourierSelf = Boolean(activeCourierId && selectedCourier?.id === activeCourierId);

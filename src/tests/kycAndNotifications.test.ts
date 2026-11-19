@@ -307,5 +307,72 @@ describe('Suite de tests — KYC, Notifications & Isolation (LivraLink)', () => 
     const { deleteApp } = await import('firebase/app');
     await deleteApp(app).catch(() => {});
   });
+
+  test('6. Synchronisation après actualisation : réhydratation stricte KYC + utilisateur sans fuite inter-livreurs', async () => {
+    const { mapFirestoreKycToRequest, mergeRemoteUsersIntoAdminLists } = await import('../utils/adminReconciliation');
+
+    const refusedKyc = mapFirestoreKycToRequest(
+      {
+        userId: 'courier_uid_refresh_1',
+        courierId: 'courier_uid_refresh_1',
+        fullName: 'Aïcha Moussa',
+        phone: '+22997005566',
+        status: 'refuse',
+        rejectionReason: 'Photo floue au verso',
+        documentStoragePath: 'kyc/courier_uid_refresh_1/cni_1700.jpg',
+        documentMimeType: 'image/jpeg',
+      },
+      'courier_uid_refresh_1'
+    );
+    assert.equal(refusedKyc.status, 'refuse');
+    assert.equal(refusedKyc.rejectionReason, 'Photo floue au verso');
+    assert.equal(refusedKyc.documentStoragePath, 'kyc/courier_uid_refresh_1/cni_1700.jpg');
+
+    const validatedKyc = mapFirestoreKycToRequest(
+      {
+        userId: 'courier_uid_refresh_2',
+        courierId: 'courier_uid_refresh_2',
+        fullName: 'Brice Zinsou',
+        phone: '+22997119988',
+        status: 'valide',
+        documentStoragePath: 'kyc/courier_uid_refresh_2/cni_1701.pdf',
+        documentMimeType: 'application/pdf',
+      },
+      'courier_uid_refresh_2'
+    );
+    assert.equal(validatedKyc.status, 'valide');
+    assert.equal(validatedKyc.documentMimeType, 'application/pdf');
+
+    const { couriers } = mergeRemoteUsersIntoAdminLists({
+      remoteUsers: [
+        {
+          uid: 'courier_uid_refresh_1',
+          email: 'aicha@livralink.bj',
+          fullName: 'Aïcha Moussa',
+          role: 'livreur',
+          isKycVerified: false,
+          kycStatus: 'refuse',
+        },
+        {
+          uid: 'courier_uid_refresh_2',
+          email: 'brice@livralink.bj',
+          fullName: 'Brice Zinsou',
+          role: 'livreur',
+          isKycVerified: true,
+          kycStatus: 'valide',
+        },
+      ],
+      existingMerchants: [],
+      existingCouriers: [],
+      deliveries: [],
+    });
+
+    const aicha = couriers.find((c) => c.id === 'courier_uid_refresh_1');
+    const brice = couriers.find((c) => c.id === 'courier_uid_refresh_2');
+    assert.equal(aicha?.isKycVerified, false);
+    assert.equal(aicha?.kycStatus, 'refuse');
+    assert.equal(brice?.isKycVerified, true);
+    assert.equal(brice?.kycStatus, 'valide');
+  });
 });
 

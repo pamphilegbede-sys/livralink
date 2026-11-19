@@ -3210,7 +3210,8 @@ app.post('/api/users/sync-profile', async (req: AuthenticatedRequest, res: Respo
   if (!req.user?.uid) {
     return res.status(401).json({ success: false, error: 'Jeton d\'authentification Firebase requis.' });
   }
-  if (!firestoreAdmin) {
+  const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+  if (!activeDb) {
     return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
   }
 
@@ -3229,7 +3230,7 @@ app.post('/api/users/sync-profile', async (req: AuthenticatedRequest, res: Respo
         ? 'admin'
         : 'vendeur';
 
-    const userRef = firestoreAdmin.collection('users').doc(uid);
+    const userRef = activeDb.collection('users').doc(uid);
     const existingSnap = await userRef.get();
     const existingData = existingSnap.exists ? existingSnap.data() || {} : {};
 
@@ -3302,11 +3303,13 @@ app.get('/api/admin/sync-overview', requireAdminAuthorization as any, async (_re
       }
     };
 
-    if (firestoreAdmin) {
+    const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+
+    if (activeDb) {
       // 1. Read Firestore users
       try {
-        const usersSnap = await firestoreAdmin.collection('users').get();
-        usersSnap.forEach((docSnap) => {
+        const usersSnap = await activeDb.collection('users').get();
+        usersSnap.forEach((docSnap: any) => {
           const data = docSnap.data() || {};
           usersById.set(docSnap.id, {
             id: docSnap.id,
@@ -3320,8 +3323,8 @@ app.get('/api/admin/sync-overview', requireAdminAuthorization as any, async (_re
 
       // 2. Read Firestore deliveries
       try {
-        const deliveriesSnap = await firestoreAdmin.collection('deliveries').get();
-        deliveriesSnap.forEach((docSnap) => {
+        const deliveriesSnap = await activeDb.collection('deliveries').get();
+        deliveriesSnap.forEach((docSnap: any) => {
           const data = docSnap.data() || {};
           deliveriesList.push({
             id: data.id || docSnap.id,
@@ -3334,8 +3337,8 @@ app.get('/api/admin/sync-overview', requireAdminAuthorization as any, async (_re
 
       // 3. Read Firestore priority_missions
       try {
-        const missionsSnap = await firestoreAdmin.collection('priority_missions').get();
-        missionsSnap.forEach((docSnap) => {
+        const missionsSnap = await activeDb.collection('priority_missions').get();
+        missionsSnap.forEach((docSnap: any) => {
           const data = docSnap.data() || {};
           priorityMissionsList.push({
             id: data.id || docSnap.id,
@@ -3348,8 +3351,8 @@ app.get('/api/admin/sync-overview', requireAdminAuthorization as any, async (_re
 
       // 4. Read Firestore kyc
       try {
-        const kycSnap = await firestoreAdmin.collection('kyc').get();
-        kycSnap.forEach((docSnap) => {
+        const kycSnap = await activeDb.collection('kyc').get();
+        kycSnap.forEach((docSnap: any) => {
           const data = docSnap.data() || {};
           kycList.push({
             id: data.id || docSnap.id,
@@ -3396,8 +3399,8 @@ app.get('/api/admin/sync-overview', requireAdminAuthorization as any, async (_re
 
             usersById.set(authUser.uid, backfilledUser);
 
-            if (firestoreAdmin) {
-              firestoreAdmin.collection('users').doc(authUser.uid).set(backfilledUser, { merge: true }).catch(() => {});
+            if (activeDb) {
+              activeDb.collection('users').doc(authUser.uid).set(backfilledUser, { merge: true }).catch(() => {});
             }
           } else {
             const existing = usersById.get(authUser.uid);
@@ -3484,7 +3487,8 @@ app.get('/api/admin/sync-overview', requireAdminAuthorization as any, async (_re
 // =========================================================================
 app.post('/api/admin/kyc/decision', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (!firestoreAdmin) {
+    const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+    if (!activeDb) {
       return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
     }
     const { targetUid, requestId, decision, reason } = req.body || {};
@@ -3509,7 +3513,7 @@ app.post('/api/admin/kyc/decision', requireAdminAuthorization as any, async (req
     let kycDocIdToUpdate = cleanTargetUid || cleanRequestId;
 
     for (const candidateId of kycCandidates) {
-      const snap = await firestoreAdmin.collection('kyc').doc(candidateId).get();
+      const snap = await activeDb.collection('kyc').doc(candidateId).get();
       if (snap.exists) {
         kycDocIdToUpdate = snap.id;
         kycDocData = snap.data() || {};
@@ -3522,15 +3526,15 @@ app.post('/api/admin/kyc/decision', requireAdminAuthorization as any, async (req
       }
     }
 
-    const userRef = firestoreAdmin.collection('users').doc(resolvedUid);
+    const userRef = activeDb.collection('users').doc(resolvedUid);
     const userSnap = await userRef.get();
     const userData = userSnap.exists ? userSnap.data() || {} : {};
     const userRole = String(userData.role || (kycDocData.role === 'marchand' ? 'vendeur' : 'livreur')).toLowerCase();
     const fullName = String(userData.fullName || kycDocData.fullName || 'Partenaire LivraLink').trim();
     const recipientEmail = String(userData.email || kycDocData.email || '').trim().toLowerCase();
 
-    const batch = firestoreAdmin.batch();
-    const kycRef = firestoreAdmin.collection('kyc').doc(kycDocIdToUpdate);
+    const batch = activeDb.batch();
+    const kycRef = activeDb.collection('kyc').doc(kycDocIdToUpdate);
     batch.set(
       kycRef,
       {
@@ -3560,7 +3564,7 @@ app.post('/api/admin/kyc/decision', requireAdminAuthorization as any, async (req
     batch.set(userRef, userPatch, { merge: true });
 
     const notifId = `notif_kyc_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-    batch.set(firestoreAdmin.collection('notifications').doc(notifId), {
+    batch.set(activeDb.collection('notifications').doc(notifId), {
       id: notifId,
       senderId: req.user!.uid,
       recipientId: resolvedUid,
@@ -3659,29 +3663,52 @@ app.post('/api/courier/kyc/authorize-upload', requireVerifiedUser as any, async 
 
   try {
     const kycSnap = await activeDb.collection('kyc').doc(callerUid).get();
-    if (kycSnap.exists) {
-      const status = String(kycSnap.data()?.status || 'non_soumis');
-      if (status === 'en_attente') {
-        return res.status(409).json({
-          success: false,
-          allowed: false,
-          stepCode: 'KYC-STEP-C',
-          status,
-          error: '[KYC-STEP-C] Votre dossier KYC est déjà en cours de vérification par l’administration.',
-        });
-      }
-      if (status === 'valide') {
-        return res.status(409).json({
-          success: false,
-          allowed: false,
-          stepCode: 'KYC-STEP-C',
-          status,
-          error: '[KYC-STEP-C] Votre dossier KYC est déjà validé.',
-        });
-      }
-      return res.json({ success: true, allowed: true, serverChecked: true, status });
+    let kycStatus = kycSnap.exists ? String(kycSnap.data()?.status || 'non_soumis') : 'non_soumis';
+    if (kycStatus === 'en_attente') {
+      return res.status(409).json({
+        success: false,
+        allowed: false,
+        stepCode: 'KYC-STEP-C',
+        status: kycStatus,
+        error: '[KYC-STEP-C] Votre dossier KYC est déjà en cours de vérification par l’administration.',
+      });
     }
-    return res.json({ success: true, allowed: true, serverChecked: true, status: 'non_soumis' });
+    if (kycStatus === 'valide') {
+      return res.status(409).json({
+        success: false,
+        allowed: false,
+        stepCode: 'KYC-STEP-C',
+        status: kycStatus,
+        error: '[KYC-STEP-C] Votre dossier KYC est déjà validé.',
+      });
+    }
+
+    if (kycStatus !== 'refuse') {
+      const userSnap = await activeDb.collection('users').doc(callerUid).get();
+      if (userSnap.exists) {
+        const userData = userSnap.data() || {};
+        if (userData.isKycVerified === true || userData.kycStatus === 'valide') {
+          return res.status(409).json({
+            success: false,
+            allowed: false,
+            stepCode: 'KYC-STEP-C',
+            status: 'valide',
+            error: '[KYC-STEP-C] Votre dossier KYC est déjà validé.',
+          });
+        }
+        if (userData.kycStatus === 'en_attente') {
+          return res.status(409).json({
+            success: false,
+            allowed: false,
+            stepCode: 'KYC-STEP-C',
+            status: 'en_attente',
+            error: '[KYC-STEP-C] Votre dossier KYC est déjà en cours de vérification par l’administration.',
+          });
+        }
+      }
+    }
+
+    return res.json({ success: true, allowed: true, serverChecked: true, status: kycStatus });
   } catch (err: any) {
     const msg = String(err?.message || err || '');
     const isIamDenied = msg.includes('PERMISSION_DENIED') || String(err?.code || '') === '7';

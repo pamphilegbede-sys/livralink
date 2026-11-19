@@ -19,6 +19,7 @@
  */
 
 import { describe, test, before, after, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
 import {
   assertFails,
   assertSucceeds,
@@ -1330,5 +1331,120 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
         preferredRateDiscountPercent: 50,
       })
     );
+  });
+
+  // 33. KYC-STEP-C Complete Read & Lock Matrix (absent, refuse, en_attente, valide, cross-user, admin)
+  test('33. KYC-STEP-C matrix: owner get on absent/refuse/en_attente/valide, cross-user blocked, admin get & list allowed', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const adminDb = context.firestore();
+      await adminDb.doc('users/c_no_kyc').set({
+        uid: 'c_no_kyc',
+        email: 'nokyc33@test.com',
+        fullName: 'Livreur Sans KYC',
+        phone: '+22997000101',
+        role: 'livreur',
+        isKycVerified: false,
+        kycStatus: 'non_soumis',
+      });
+      await adminDb.doc('users/c_refused').set({
+        uid: 'c_refused',
+        email: 'refused33@test.com',
+        fullName: 'Livreur Refuse',
+        phone: '+22997000102',
+        role: 'livreur',
+        isKycVerified: false,
+        kycStatus: 'refuse',
+      });
+      await adminDb.doc('kyc/c_refused').set({
+        id: 'c_refused',
+        userId: 'c_refused',
+        courierId: 'c_refused',
+        fullName: 'Livreur Refuse',
+        phone: '+22997000102',
+        status: 'refuse',
+        isApproved: false,
+      });
+      await adminDb.doc('users/c_pending').set({
+        uid: 'c_pending',
+        email: 'pending33@test.com',
+        fullName: 'Livreur En Attente',
+        phone: '+22997000103',
+        role: 'livreur',
+        isKycVerified: false,
+        kycStatus: 'en_attente',
+      });
+      await adminDb.doc('kyc/c_pending').set({
+        id: 'c_pending',
+        userId: 'c_pending',
+        courierId: 'c_pending',
+        fullName: 'Livreur En Attente',
+        phone: '+22997000103',
+        status: 'en_attente',
+        isApproved: false,
+      });
+      await adminDb.doc('users/c_valid').set({
+        uid: 'c_valid',
+        email: 'valid33@test.com',
+        fullName: 'Livreur Valide',
+        phone: '+22997000104',
+        role: 'livreur',
+        isKycVerified: true,
+        kycStatus: 'valide',
+      });
+      await adminDb.doc('kyc/c_valid').set({
+        id: 'c_valid',
+        userId: 'c_valid',
+        courierId: 'c_valid',
+        fullName: 'Livreur Valide',
+        phone: '+22997000104',
+        status: 'valide',
+        isApproved: true,
+      });
+    });
+
+    const noKycDb = testEnv.authenticatedContext('c_no_kyc', { email: 'nokyc33@test.com', email_verified: true }).firestore();
+    const refusedDb = testEnv.authenticatedContext('c_refused', { email: 'refused33@test.com', email_verified: true }).firestore();
+    const pendingDb = testEnv.authenticatedContext('c_pending', { email: 'pending33@test.com', email_verified: true }).firestore();
+    const validDb = testEnv.authenticatedContext('c_valid', { email: 'valid33@test.com', email_verified: true }).firestore();
+    const adminDb = testEnv.authenticatedContext('admin_kyc_33', { email: 'Pamphile.gbede@gmail.com', email_verified: true }).firestore();
+
+    // 1. Livreur authentifié sans dossier KYC : get(/kyc/{uid}) et get(/users/{uid}) réussissent
+    const noKycSnap = await assertSucceeds(noKycDb.doc('kyc/c_no_kyc').get());
+    assert.equal(noKycSnap.exists, false);
+    await assertSucceeds(noKycDb.doc('users/c_no_kyc').get());
+
+    // 2. Livreur avec dossier refusé : get réussit et resoumission vers en_attente autorisée
+    const refusedSnap = await assertSucceeds(refusedDb.doc('kyc/c_refused').get());
+    assert.equal(refusedSnap.data()?.status, 'refuse');
+    await assertSucceeds(refusedDb.doc('users/c_refused').get());
+    await assertSucceeds(
+      refusedDb.doc('kyc/c_refused').update({
+        status: 'en_attente',
+        documentStoragePath: 'kyc/c_refused/cni_retry.pdf',
+      })
+    );
+
+    // 3. Livreur avec dossier en attente : get réussit, mais toute modification est verrouillée
+    const pendingSnap = await assertSucceeds(pendingDb.doc('kyc/c_pending').get());
+    assert.equal(pendingSnap.data()?.status, 'en_attente');
+    await assertSucceeds(pendingDb.doc('users/c_pending').get());
+    await assertFails(pendingDb.doc('kyc/c_pending').update({ idNumber: 'MODIFIED' }));
+
+    // 4. Livreur avec dossier validé : get réussit, mais modification et auto-réouverture refusées
+    const validSnap = await assertSucceeds(validDb.doc('kyc/c_valid').get());
+    assert.equal(validSnap.data()?.status, 'valide');
+    await assertSucceeds(validDb.doc('users/c_valid').get());
+    await assertFails(validDb.doc('kyc/c_valid').update({ status: 'en_attente' }));
+
+    // 5. Utilisateur tentant de lire le dossier d'un autre utilisateur ou de lister /kyc -> REFUSÉ
+    await assertFails(noKycDb.doc('kyc/c_pending').get());
+    await assertFails(noKycDb.doc('kyc/c_valid').get());
+    await assertFails(noKycDb.collection('kyc').get());
+
+    // 6. Administrateur consultant individuellement (get) et en liste (list) -> AUTORISÉ
+    await assertSucceeds(adminDb.doc('kyc/c_pending').get());
+    await assertSucceeds(adminDb.doc('kyc/c_valid').get());
+    const allKyc = await assertSucceeds(adminDb.collection('kyc').get());
+    assert.equal(allKyc.docs.length >= 3, true);
   });
 });

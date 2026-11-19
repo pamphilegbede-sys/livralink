@@ -276,7 +276,8 @@ test('Express API security & health integration tests', async (t) => {
 
   await t.test('POST /api/courier/kyc/authorize-upload & POST /api/admin/kyc/decision enforce KYC-STEP-C/F gating & IAM fallback', async () => {
     const serverMod = await import('../../server');
-    let kycStatus = 'en_attente';
+    let kycStatus: string | null = null;
+    let userLockedStatus: string | null = null;
     let simulateIamDenied = false;
 
     serverMod.setTokenVerifierForTests(async (tok) => {
@@ -298,8 +299,18 @@ test('Express API security & health integration tests', async (t) => {
               err.code = 7;
               throw err;
             }
-            if (name === 'kyc' && id === 'courier_a') {
+            if (name === 'kyc' && id === 'courier_a' && kycStatus !== null) {
               return { exists: true, data: () => ({ id: 'courier_a', status: kycStatus }) };
+            }
+            if (name === 'users' && id === 'courier_a' && userLockedStatus !== null) {
+              return {
+                exists: true,
+                data: () => ({
+                  uid: 'courier_a',
+                  isKycVerified: userLockedStatus === 'valide',
+                  kycStatus: userLockedStatus,
+                }),
+              };
             }
             return { exists: false, data: () => undefined };
           },
@@ -308,7 +319,28 @@ test('Express API security & health integration tests', async (t) => {
     });
 
     try {
+      // 0. Aucun dossier KYC -> 200 allowed=true, status=non_soumis
+      const resAbsent = await fetch(`${baseUrl}/api/courier/kyc/authorize-upload`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer courier-a-tok' },
+      });
+      assert.equal(resAbsent.status, 200);
+      const absentBody = await resAbsent.json();
+      assert.equal(absentBody.allowed, true);
+      assert.equal(absentBody.status, 'non_soumis');
+
+      // 0b. /users verrouillé (valide) même sans /kyc -> 409 KYC-STEP-C
+      userLockedStatus = 'valide';
+      const resUserLocked = await fetch(`${baseUrl}/api/courier/kyc/authorize-upload`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer courier-a-tok' },
+      });
+      assert.equal(resUserLocked.status, 409);
+      assert.equal((await resUserLocked.json()).stepCode, 'KYC-STEP-C');
+      userLockedStatus = null;
+
       // 1. en_attente -> 409 KYC-STEP-C
+      kycStatus = 'en_attente';
       const resPending = await fetch(`${baseUrl}/api/courier/kyc/authorize-upload`, {
         method: 'POST',
         headers: { Authorization: 'Bearer courier-a-tok' },
@@ -351,6 +383,120 @@ test('Express API security & health integration tests', async (t) => {
       const decisionBody = await resDecision503.json();
       assert.equal(decisionBody.stepCode, 'KYC-STEP-F');
       assert.equal(decisionBody.code, 'IAM_PERMISSION_DENIED');
+    } finally {
+      serverMod.setFirestoreAdminForTests(null);
+      serverMod.setTokenVerifierForTests(null);
+    }
+  });
+
+  await t.test('GET /api/admin/sync-overview & POST /api/users/sync-profile handle normal sync and IAM 7 PERMISSION_DENIED cleanly', async () => {
+    const serverMod = await import('../../server');
+    let simulateIamDenied = false;
+
+    serverMod.setTokenVerifierForTests(async (tok) => {
+      if (tok === 'admin-tok') {
+        return { uid: 'admin_uid', email: 'Pamphile.gbede@gmail.com', email_verified: true, admin: true };
+      }
+      if (tok === 'courier-tok') {
+        return { uid: 'courier_sync_1', email: 'courier_sync@livralink.bj', email_verified: true };
+      }
+      throw new Error('Invalid token');
+    });
+
+    const userDocs = new Map<string, Record<string, any>>();
+    const kycDocs = new Map<string, Record<string, any>>([
+      [
+        'courier_sync_1',
+        {
+          id: 'courier_sync_1',
+          userId: 'courier_sync_1',
+          courierId: 'courier_sync_1',
+          fullName: 'Koffi Synchro',
+          status: 'en_attente',
+          documentStoragePath: 'kyc/courier_sync_1/cni_1.pdf',
+          documentMimeType: 'application/pdf',
+        },
+      ],
+    ]);
+
+    serverMod.setFirestoreAdminForTests({
+      collection: (name: string) => ({
+        get: async () => {
+          if (simulateIamDenied) {
+            const err: any = new Error('7 PERMISSION_DENIED: Missing or insufficient permissions.');
+            err.code = 7;
+            throw err;
+          }
+          const source = name === 'kyc' ? kycDocs : name === 'users' ? userDocs : new Map();
+          return {
+            forEach: (cb: (docSnap: any) => void) => {
+              for (const [id, data] of source.entries()) {
+                cb({ id, data: () => data });
+              }
+            },
+          };
+        },
+        doc: (id: string) => ({
+          get: async () => {
+            if (simulateIamDenied) {
+              const err: any = new Error('7 PERMISSION_DENIED: Missing or insufficient permissions.');
+              err.code = 7;
+              throw err;
+            }
+            const source = name === 'kyc' ? kycDocs : userDocs;
+            const d = source.get(id);
+            return { exists: Boolean(d), data: () => d };
+          },
+          set: async (payload: Record<string, any>) => {
+            if (simulateIamDenied) {
+              const err: any = new Error('7 PERMISSION_DENIED: Missing or insufficient permissions.');
+              err.code = 7;
+              throw err;
+            }
+            const source = name === 'kyc' ? kycDocs : userDocs;
+            source.set(id, { ...(source.get(id) || {}), ...payload });
+          },
+        }),
+      }),
+    });
+
+    try {
+      // 1. Normal user sync-profile persists profile cleanly
+      const syncProfileRes = await fetch(`${baseUrl}/api/users/sync-profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-tok' },
+        body: JSON.stringify({ fullName: 'Koffi Synchro', role: 'livreur', phone: '+22997001122' }),
+      });
+      assert.equal(syncProfileRes.status, 200);
+      assert.equal((await syncProfileRes.json()).role, 'livreur');
+
+      // 2. Normal admin sync-overview returns courier + KYC dossier
+      const overviewOkRes = await fetch(`${baseUrl}/api/admin/sync-overview`, {
+        headers: { Authorization: 'Bearer admin-tok' },
+      });
+      assert.equal(overviewOkRes.status, 200);
+      const overviewOk = await overviewOkRes.json();
+      assert.equal(overviewOk.success, true);
+      assert.equal(overviewOk.kycRequests.some((k: any) => k.id === 'courier_sync_1' && k.status === 'en_attente'), true);
+      assert.equal(overviewOk.users.some((u: any) => u.uid === 'courier_sync_1' && u.role === 'livreur'), true);
+
+      // 3. IAM 7 PERMISSION_DENIED surfaces explicit diagnostics on sync-overview and 503 on sync-profile
+      simulateIamDenied = true;
+      const overviewIamRes = await fetch(`${baseUrl}/api/admin/sync-overview`, {
+        headers: { Authorization: 'Bearer admin-tok' },
+      });
+      assert.equal(overviewIamRes.status, 200);
+      const overviewIam = await overviewIamRes.json();
+      assert.equal(overviewIam.iamDiagnostics.hasPermissionError, true);
+      assert.equal(overviewIam.iamDiagnostics.missingRoles.includes('roles/datastore.user'), true);
+
+      const syncProfileIamRes = await fetch(`${baseUrl}/api/users/sync-profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-tok' },
+        body: JSON.stringify({ fullName: 'Koffi Synchro', role: 'livreur' }),
+      });
+      assert.equal(syncProfileIamRes.status, 503);
+      assert.equal((await syncProfileIamRes.json()).code, 'IAM_PERMISSION_DENIED');
     } finally {
       serverMod.setFirestoreAdminForTests(null);
       serverMod.setTokenVerifierForTests(null);
