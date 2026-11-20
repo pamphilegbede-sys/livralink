@@ -92,6 +92,18 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
     );
 
+    // Owner can also upload JPEG/WebP, read, update, and delete own avatar; non-owner cannot delete
+    await assertSucceeds(
+      ownerStorage.ref('avatars/user_1/avatar_new.jpg').put(Buffer.from('fake-jpg-bytes'), {
+        contentType: 'image/jpeg',
+        customMetadata: { uploadedBy: 'user_1' },
+      })
+    );
+    await assertSucceeds(otherStorage.ref('avatars/user_1/avatar_new.jpg').getMetadata());
+    await assertSucceeds(ownerStorage.ref('avatars/user_1/avatar_new.jpg').getDownloadURL());
+    await assertFails(otherStorage.ref('avatars/user_1/avatar_new.jpg').delete());
+    await assertSucceeds(ownerStorage.ref('avatars/user_1/avatar_new.jpg').delete());
+
     // SVG avatars are blocked to prevent stored XSS
     await assertFails(
       ownerStorage.ref('avatars/user_1/xss.svg').put(Buffer.from('<svg></svg>'), {
@@ -106,6 +118,13 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       .authenticatedContext('courier_kyc_1', {
         email: 'ck@test.com',
         email_verified: true,
+      })
+      .storage();
+    const unlockedCourierStorage = testEnv
+      .authenticatedContext('courier_kyc_1', {
+        email: 'ck@test.com',
+        email_verified: true,
+        kycLocked: false,
       })
       .storage();
     const lockedCourierStorage = testEnv
@@ -125,6 +144,12 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       .authenticatedContext('super_admin', {
         email: 'Pamphile.gbede@gmail.com',
         email_verified: true,
+      })
+      .storage();
+    const unverifiedSuperAdminStorage = testEnv
+      .authenticatedContext('super_admin_unv', {
+        email: 'pamphile.gbede@gmail.com',
+        email_verified: false,
       })
       .storage();
     const claimAdminStorage = testEnv
@@ -156,6 +181,12 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
     );
     await assertSucceeds(
       courierStorage.ref('kyc/courier_kyc_1/cni.pdf').put(Buffer.from('%PDF-1.4\n1 0 obj'), {
+        contentType: 'application/pdf',
+        customMetadata: { uploadedBy: 'courier_kyc_1' },
+      })
+    );
+    await assertSucceeds(
+      unlockedCourierStorage.ref('kyc/courier_kyc_1/cni_retry.pdf').put(Buffer.from('%PDF-1.4\n1 0 obj'), {
         contentType: 'application/pdf',
         customMetadata: { uploadedBy: 'courier_kyc_1' },
       })
@@ -226,10 +257,12 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
     );
 
-    // Owner, Super-Admin, and claim-Admin can read/inspect; outsider strictly denied
+    // Owner, Super-Admin (verified), and claim-Admin can read/inspect; unverified Super-Admin & outsider strictly denied
     await assertSucceeds(courierStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
+    await assertSucceeds(courierStorage.ref('kyc/courier_kyc_1/cni.pdf').getDownloadURL());
     await assertSucceeds(superAdminStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
     await assertSucceeds(claimAdminStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
+    await assertFails(unverifiedSuperAdminStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
     await assertFails(outsiderStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
     await assertFails(outsiderStorage.ref('kyc/courier_kyc_1/cni.jpg').getDownloadURL());
   });
@@ -293,12 +326,27 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
     );
 
-    // Direct Storage SDK read by ANY non-admin (even verified users) is strictly denied (participant check happens in backend /api/pod/media)
+    // Direct Storage SDK read by ANY non-admin (even verified users knowing the exact path) is strictly denied
     await assertFails(outsiderStorage.ref('pod/order_pod_1/photo.jpg').getMetadata());
     await assertFails(outsiderStorage.ref('pod/order_pod_1/photo.jpg').getDownloadURL());
     await assertFails(verifiedCourierStorage.ref('pod/order_pod_1/photo.jpg').getMetadata());
+    await assertFails(verifiedCourierStorage.ref('pod/order_pod_1/photo.jpg').getDownloadURL());
     await assertFails(unverifiedStorage.ref('pod/order_pod_1/photo.jpg').getMetadata());
     await assertSucceeds(superAdminStorage.ref('pod/order_pod_1/photo.jpg').getMetadata());
+    await assertSucceeds(superAdminStorage.ref('pod/order_pod_1/photo.jpg').getDownloadURL());
+
+    // Verified non-admin cannot overwrite or update metadata of existing POD file
+    await assertFails(
+      verifiedCourierStorage.ref('pod/order_pod_1/photo.jpg').put(Buffer.from('overwrite'), {
+        contentType: 'image/jpeg',
+        customMetadata: { uploadedBy: 'courier_verified' },
+      })
+    );
+    await assertFails(
+      verifiedCourierStorage.ref('pod/order_pod_1/photo.jpg').updateMetadata({
+        customMetadata: { uploadedBy: 'courier_verified' },
+      })
+    );
 
     // Non-admin cannot delete POD proof; Admin can
     await assertFails(verifiedCourierStorage.ref('pod/order_pod_1/photo.jpg').delete());
@@ -352,12 +400,22 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
     );
 
-    // Direct Storage SDK read by ANY non-admin verified user or outsider is strictly denied
+    // Direct Storage SDK read by ANY non-admin verified user or outsider (even knowing exact path) is strictly denied
     await assertFails(outsiderChatStorage.ref('chat/conv_media_1/receipt.pdf').getMetadata());
     await assertFails(outsiderChatStorage.ref('chat/conv_media_1/receipt.pdf').getDownloadURL());
     await assertFails(verifiedUserStorage.ref('chat/conv_media_1/receipt.pdf').getMetadata());
+    await assertFails(verifiedUserStorage.ref('chat/conv_media_1/receipt.pdf').getDownloadURL());
     await assertFails(unverifiedStorage.ref('chat/conv_media_1/receipt.pdf').getMetadata());
     await assertSucceeds(superAdminStorage.ref('chat/conv_media_1/receipt.pdf').getMetadata());
+    await assertSucceeds(superAdminStorage.ref('chat/conv_media_1/receipt.pdf').getDownloadURL());
+
+    // Verified non-admin cannot overwrite or update metadata on existing chat file
+    await assertFails(
+      verifiedUserStorage.ref('chat/conv_media_1/receipt.pdf').put(Buffer.from('%PDF-1.4'), {
+        contentType: 'application/pdf',
+        customMetadata: { uploadedBy: 'vendor_chat_1' },
+      })
+    );
 
     // Non-admin cannot delete chat media; Admin can
     await assertFails(verifiedUserStorage.ref('chat/conv_media_1/receipt.pdf').delete());

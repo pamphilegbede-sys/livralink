@@ -835,5 +835,126 @@ test('Express API security & health integration tests', async (t) => {
     assert.equal(kycPlan.patch.documentStoragePath, 'kyc/courier_99/cni.jpg');
     assert.equal(kycPlan.patch.documentPhotoUrl, '');
   });
+
+  await t.test('POST /api/courier/kyc/upload enforces email_verified, KYC-STEP-C lock, magic bytes, and surfaces GCS IAM/Rules diagnostics cleanly', async () => {
+    const serverMod = await import('../../server');
+    const storageFiles = new Map<string, { contentType: string; data: Buffer; metadata?: Record<string, any> }>();
+    let kycStatus: 'non_soumis' | 'en_attente' | 'valide' | 'refuse' = 'non_soumis';
+    let simulateGcsForbidden = false;
+
+    serverMod.setTokenVerifierForTests(async (tok) => {
+      if (tok === 'courier-verified-tok') {
+        return { uid: 'courier_kyc_up', email: 'courier@livralink.bj', email_verified: true };
+      }
+      if (tok === 'unverified-tok') {
+        return { uid: 'courier_unv', email: 'unv@livralink.bj', email_verified: false };
+      }
+      throw new Error('Invalid token');
+    });
+
+    serverMod.setFirestoreAdminForTests({
+      collection: (name: string) => ({
+        doc: () => ({
+          get: async () => {
+            if (name === 'kyc') {
+              if (kycStatus === 'non_soumis') return { exists: false, data: () => undefined };
+              return { exists: true, data: () => ({ status: kycStatus }) };
+            }
+            return { exists: false, data: () => undefined };
+          },
+        }),
+      }),
+    });
+
+    serverMod.setStorageBucketForTests({
+      file: (path: string) => ({
+        save: async (buf: Buffer, opts: any) => {
+          if (simulateGcsForbidden) {
+            const err: any = new Error('Forbidden: storage.objects.create PERMISSION_DENIED');
+            err.code = 403;
+            throw err;
+          }
+          storageFiles.set(path, {
+            contentType: opts?.metadata?.contentType || 'application/octet-stream',
+            data: buf,
+            metadata: opts?.metadata?.metadata || {},
+          });
+        },
+      }),
+    });
+
+    const validJpgBase64 = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]).toString('base64');
+    const spoofedHtmlBase64 = Buffer.from('<html><script>alert(1)</script></html>').toString('base64');
+
+    try {
+      // 1. Unauthenticated -> 401
+      const unauthRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docType: 'cni', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
+      });
+      assert.equal(unauthRes.status, 401);
+
+      // 2. Unverified email -> 403
+      const unvRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer unverified-tok' },
+        body: JSON.stringify({ docType: 'cni', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
+      });
+      assert.equal(unvRes.status, 403);
+
+      // 3. Pending or validated KYC dossier -> 409 KYC-STEP-C
+      for (const blockedStatus of ['en_attente', 'valide'] as const) {
+        kycStatus = blockedStatus;
+        const lockedRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-verified-tok' },
+          body: JSON.stringify({ docType: 'cni', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
+        });
+        assert.equal(lockedRes.status, 409);
+        assert.equal((await lockedRes.json()).stepCode, 'KYC-STEP-C');
+      }
+
+      // 4. Spoofed MIME / magic bytes -> 400 KYC-STEP-B
+      kycStatus = 'refuse';
+      const spoofRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-verified-tok' },
+        body: JSON.stringify({ docType: 'cni', contentType: 'image/jpeg', dataBase64: spoofedHtmlBase64 }),
+      });
+      assert.equal(spoofRes.status, 400);
+      assert.equal((await spoofRes.json()).stepCode, 'KYC-STEP-B');
+
+      // 5. Valid JPG upload succeeds and stores strict private object under kyc/{uid}/ with uploadedBy metadata
+      const okRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-verified-tok' },
+        body: JSON.stringify({ docType: 'cni', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
+      });
+      assert.equal(okRes.status, 200);
+      const okBody = await okRes.json();
+      assert.equal(okBody.success, true);
+      assert.match(okBody.storagePath, /^kyc\/courier_kyc_up\/cni_\d+\.jpg$/);
+      assert.equal(storageFiles.get(okBody.storagePath)?.metadata?.uploadedBy, 'courier_kyc_up');
+      assert.equal(storageFiles.get(okBody.storagePath)?.metadata?.firebaseStorageDownloadTokens, undefined);
+
+      // 6. GCS 403 / PERMISSION_DENIED returns actionable 503 STORAGE_IAM_OR_RULES_REQUIRED
+      simulateGcsForbidden = true;
+      const gcsErrRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-verified-tok' },
+        body: JSON.stringify({ docType: 'cni', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
+      });
+      assert.equal(gcsErrRes.status, 503);
+      const gcsErrBody = await gcsErrRes.json();
+      assert.equal(gcsErrBody.stepCode, 'KYC-STEP-B');
+      assert.equal(gcsErrBody.code, 'STORAGE_IAM_OR_RULES_REQUIRED');
+    } finally {
+      serverMod.setStorageBucketForTests(null);
+      serverMod.setFirestoreAdminForTests(null);
+      serverMod.setTokenVerifierForTests(null);
+    }
+  });
 });
+
 

@@ -76,7 +76,12 @@ app.use((req, res, next) => {
 const standardJsonParser = express.json({ limit: '10kb' });
 const mediaUploadJsonParser = express.json({ limit: '22mb' });
 app.use((req, res, next) => {
-  if (req.method === 'POST' && (req.path === '/api/pod/upload' || req.path === '/api/chat/upload')) {
+  if (
+    req.method === 'POST' &&
+    (req.path === '/api/pod/upload' ||
+      req.path === '/api/chat/upload' ||
+      req.path === '/api/courier/kyc/upload')
+  ) {
     return mediaUploadJsonParser(req, res, next);
   }
   return standardJsonParser(req, res, next);
@@ -4005,6 +4010,191 @@ const canUserAccessConversationMedia = (
   if (!convData || !callerUid) return false;
   return Array.isArray(convData.participantIds) && convData.participantIds.includes(callerUid);
 };
+
+const MAX_KYC_MEDIA_BYTES = 10 * 1024 * 1024;
+const ALLOWED_KYC_DOC_TYPES = new Set(['cni', 'permis', 'assurance', 'identity_photo']);
+const ALLOWED_KYC_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'application/pdf',
+]);
+
+app.post('/api/courier/kyc/upload', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+    const activeBucket =
+      process.env.NODE_ENV === 'test' && testStorageBucketOverride
+        ? testStorageBucketOverride
+        : firebaseAdminApp
+        ? getStorage(firebaseAdminApp).bucket(configuredStorageBucket)
+        : null;
+
+    if (!activeBucket) {
+      return res.status(503).json({
+        success: false,
+        stepCode: 'KYC-STEP-B',
+        code: 'STORAGE_ADMIN_UNAVAILABLE',
+        error: '[KYC-STEP-B] Firebase Storage Admin indisponible sur le serveur.',
+      });
+    }
+
+    const callerUid = String(req.user?.uid || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!callerUid || callerUid !== req.user?.uid) {
+      return res.status(401).json({
+        success: false,
+        stepCode: 'KYC-STEP-A',
+        error: '[KYC-STEP-A] Identifiant utilisateur Firebase Auth invalide.',
+      });
+    }
+
+    const rawDocType = String(req.body?.docType || 'cni').trim();
+    if (!ALLOWED_KYC_DOC_TYPES.has(rawDocType)) {
+      return res.status(400).json({
+        success: false,
+        stepCode: 'KYC-STEP-B',
+        error: '[KYC-STEP-B] Type de document KYC non autorisé.',
+      });
+    }
+
+    // Contrôle préalable Firestore : empêche tout nouvel upload si le dossier est déjà en attente ou validé
+    let firestoreLockChecked = false;
+    if (activeDb) {
+      try {
+        const kycSnap = await activeDb.collection('kyc').doc(callerUid).get();
+        const kycStatus = kycSnap.exists ? String(kycSnap.data()?.status || 'non_soumis') : 'non_soumis';
+        if (kycStatus === 'en_attente') {
+          return res.status(409).json({
+            success: false,
+            stepCode: 'KYC-STEP-C',
+            error: '[KYC-STEP-C] Votre dossier KYC est déjà en cours de vérification par l’administration.',
+          });
+        }
+        if (kycStatus === 'valide') {
+          return res.status(409).json({
+            success: false,
+            stepCode: 'KYC-STEP-C',
+            error: '[KYC-STEP-C] Votre dossier KYC est déjà validé.',
+          });
+        }
+        if (kycStatus !== 'refuse') {
+          const userSnap = await activeDb.collection('users').doc(callerUid).get();
+          if (userSnap.exists) {
+            const userData = userSnap.data() || {};
+            if (userData.isKycVerified === true || userData.kycStatus === 'valide') {
+              return res.status(409).json({
+                success: false,
+                stepCode: 'KYC-STEP-C',
+                error: '[KYC-STEP-C] Votre dossier KYC est déjà validé.',
+              });
+            }
+            if (userData.kycStatus === 'en_attente') {
+              return res.status(409).json({
+                success: false,
+                stepCode: 'KYC-STEP-C',
+                error: '[KYC-STEP-C] Votre dossier KYC est déjà en cours de vérification par l’administration.',
+              });
+            }
+          }
+        }
+        firestoreLockChecked = true;
+      } catch (dbErr: any) {
+        const msg = String(dbErr?.message || dbErr || '');
+        const isIamDenied = msg.includes('PERMISSION_DENIED') || String(dbErr?.code || '') === '7';
+        if (!isIamDenied) {
+          console.warn('[KYC-STEP-B][FIRESTORE PRECHECK WARN]:', msg);
+        }
+      }
+    }
+
+    if (!firestoreLockChecked && (req.user as any)?.kycLocked === true) {
+      return res.status(409).json({
+        success: false,
+        stepCode: 'KYC-STEP-C',
+        error: '[KYC-STEP-C] Votre compte est verrouillé pour le dépôt KYC (dossier en attente ou validé).',
+      });
+    }
+
+    const decoded = decodeUploadedBase64Media(req.body?.dataBase64, req.body?.dataUrl, req.body?.contentType);
+    if ('error' in decoded) {
+      return res.status(400).json({
+        success: false,
+        stepCode: 'KYC-STEP-B',
+        error: `[KYC-STEP-B] ${decoded.error}`,
+      });
+    }
+
+    if (!ALLOWED_KYC_MIME_TYPES.has(decoded.contentType)) {
+      return res.status(400).json({
+        success: false,
+        stepCode: 'KYC-STEP-B',
+        error: '[KYC-STEP-B] Format de document non autorisé. Formats acceptés : JPG, JPEG, PNG, WebP ou PDF.',
+      });
+    }
+    if (!verifyMagicBytesForMime(decoded.buffer, decoded.contentType)) {
+      return res.status(400).json({
+        success: false,
+        stepCode: 'KYC-STEP-B',
+        error: '[KYC-STEP-B] Signature binaire du fichier KYC non conforme au type MIME déclaré.',
+      });
+    }
+    if (decoded.buffer.length <= 0 || decoded.buffer.length >= MAX_KYC_MEDIA_BYTES) {
+      return res.status(400).json({
+        success: false,
+        stepCode: 'KYC-STEP-B',
+        error: '[KYC-STEP-B] Le document dépasse la taille maximale autorisée de 10 Mo ou est vide.',
+      });
+    }
+
+    const ext = extensionForUploadedMime(decoded.contentType, 'jpg');
+    const fileName = `${rawDocType}_${Date.now()}.${ext}`;
+    const storagePath = `kyc/${callerUid}/${fileName}`;
+
+    await activeBucket.file(storagePath).save(decoded.buffer, {
+      resumable: false,
+      metadata: {
+        contentType: decoded.contentType,
+        metadata: {
+          uploadedBy: callerUid,
+          uploadedAt: new Date().toISOString(),
+          docType: rawDocType,
+        },
+      },
+    });
+
+    return res.json({
+      success: true,
+      storagePath,
+      contentType: decoded.contentType,
+      fileName,
+      size: decoded.buffer.length,
+    });
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    const status = Number(err?.code || err?.status || 0);
+    const isIamOrForbidden =
+      status === 403 ||
+      String(err?.code || '') === '7' ||
+      /PERMISSION_DENIED|Forbidden|storage\.objects\.create|does not have/i.test(msg);
+
+    if (isIamOrForbidden) {
+      return res.status(503).json({
+        success: false,
+        stepCode: 'KYC-STEP-B',
+        code: 'STORAGE_IAM_OR_RULES_REQUIRED',
+        error:
+          '[KYC-STEP-B] Accès refusé par Firebase Storage (403). Publiez le fichier storage.rules sur le bucket gen-lang-client-0654978401.firebasestorage.app et vérifiez le rôle IAM roles/storage.objectAdmin du compte de service serveur.',
+      });
+    }
+
+    console.error('[KYC UPLOAD PROXY ERROR]:', msg);
+    return res.status(500).json({
+      success: false,
+      stepCode: 'KYC-STEP-B',
+      error: '[KYC-STEP-B] Échec du téléversement sécurisé du justificatif KYC.',
+    });
+  }
+});
 
 app.post('/api/pod/upload', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
   try {

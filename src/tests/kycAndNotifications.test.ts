@@ -290,6 +290,7 @@ describe('Suite de tests — KYC, Notifications & Isolation (LivraLink)', () => 
     assert.equal(errB.stepCode, 'KYC-STEP-B');
     assert.match(errB.message, /^\[KYC-STEP-B\]/);
     assert.match(errB.message, /403/);
+    assert.match(errB.message, /storage\.rules|kycLocked/i);
 
     const errD = createKYCStepError('KYC-STEP-D', 'Enregistrement refusé par les règles Firestore.', {
       originalCode: 'permission-denied',

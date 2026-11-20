@@ -116,6 +116,9 @@ export function formatStorageErrorMessage(error: any, storagePath: string, stepC
   const prefix = stepCode ? `[${stepCode}] ` : '';
 
   if (code === 'storage/unauthorized' || /403|permission|unauthorized/i.test(rawMessage)) {
+    if (stepCode === 'KYC-STEP-B') {
+      return `${prefix}Accès refusé par Firebase Storage (403). Vérifiez que les règles Firebase Storage (storage.rules) sont publiées sur le projet et que votre compte n’est pas verrouillé (kycLocked).`;
+    }
     return `${prefix}Accès refusé par Firebase Storage (403). Vérifiez que votre adresse e-mail est bien vérifiée et que vous n’avez pas déjà un dossier en attente ou validé.`;
   }
   if (code === 'storage/unauthenticated') {
@@ -488,8 +491,63 @@ export async function uploadKYCDocument(
       size: blob.size,
     };
   } catch (error: any) {
+    const errCode = String(error?.code || '');
+    const errMsg = String(error?.message || '');
+    const isCancelled = errCode === 'storage/canceled' || options?.signal?.aborted;
+    const isClientStorageDenied =
+      !isCancelled &&
+      (errCode === 'storage/unauthorized' || /403|unauthorized|permission/i.test(errMsg));
+
+    if (isClientStorageDenied && typeof fetch === 'function') {
+      try {
+        options?.onProgress?.(40);
+        const token = await currentUser.getIdToken(true);
+        const dataBase64 = await blobToBase64(blob);
+        const res = await fetch('/api/courier/kyc/upload', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            docType,
+            contentType,
+            dataBase64,
+          }),
+          signal: options?.signal,
+        });
+        const payload = await res.json().catch(() => null);
+        if (res.ok && payload?.success && payload?.storagePath) {
+          options?.onProgress?.(100);
+          return {
+            storagePath: String(payload.storagePath),
+            contentType: String(payload.contentType || contentType),
+            fileName: String(payload.fileName || fileName),
+            size: Number(payload.size || blob.size),
+          };
+        }
+        if (payload?.stepCode || payload?.error) {
+          const targetStep = (payload.stepCode || 'KYC-STEP-B') as KYCStepCode;
+          throw createKYCStepError(
+            targetStep,
+            String(payload.error || formatStorageErrorMessage(error, storagePath, targetStep)),
+            { originalCode: String(payload.code || errCode) }
+          );
+        }
+      } catch (fallbackErr: any) {
+        if (fallbackErr?.stepCode) {
+          throw fallbackErr;
+        }
+        if (fallbackErr?.name === 'AbortError' || options?.signal?.aborted) {
+          throw createKYCStepError('KYC-STEP-B', 'Téléversement annulé par l’utilisateur.', {
+            originalCode: 'storage/canceled',
+          });
+        }
+      }
+    }
+
     throw createKYCStepError('KYC-STEP-B', formatStorageErrorMessage(error, storagePath, 'KYC-STEP-B'), {
-      originalCode: String(error?.code || ''),
+      originalCode: errCode,
     });
   }
 }
