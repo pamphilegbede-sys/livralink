@@ -934,7 +934,7 @@ test('Express API security & health integration tests', async (t) => {
       assert.equal(okRes.status, 200);
       const okBody = await okRes.json();
       assert.equal(okBody.success, true);
-      assert.match(okBody.storagePath, /^kyc\/courier_kyc_up\/cni_\d+\.jpg$/);
+      assert.match(okBody.storagePath, /^kyc\/courier_kyc_up\/cni_\d+_[a-f0-9]+\.jpg$/);
       assert.equal(storageFiles.get(okBody.storagePath)?.metadata?.uploadedBy, 'courier_kyc_up');
       assert.equal(storageFiles.get(okBody.storagePath)?.metadata?.firebaseStorageDownloadTokens, undefined);
 
@@ -955,6 +955,200 @@ test('Express API security & health integration tests', async (t) => {
       serverMod.setTokenVerifierForTests(null);
     }
   });
-});
 
+  await t.test('KYC end-to-end server lifecycle: kycLocked claim, admin document access, reject, resubmit, and approve', async () => {
+    const serverMod = await import('../../server');
+    const storageFiles = new Map<string, { contentType: string; data: Buffer; metadata?: Record<string, any> }>();
+    const collections = new Map<string, Map<string, Record<string, any>>>([
+      ['users', new Map([['courier_e2e', { uid: 'courier_e2e', email: 'e2e@livralink.bj', fullName: 'Koffi E2E', role: 'livreur', isKycVerified: false, kycStatus: 'non_soumis' }]])],
+      ['kyc', new Map()],
+      ['notifications', new Map()],
+      ['deliveries', new Map()],
+      ['priority_missions', new Map()],
+    ]);
+    let simulateFirestorePrecheckError = false;
+
+    serverMod.setTokenVerifierForTests(async (tok) => {
+      if (tok === 'courier-e2e-tok') {
+        return { uid: 'courier_e2e', email: 'e2e@livralink.bj', email_verified: true, kycLocked: false };
+      }
+      if (tok === 'courier-locked-tok') {
+        return { uid: 'courier_e2e', email: 'e2e@livralink.bj', email_verified: true, kycLocked: true };
+      }
+      if (tok === 'outsider-e2e-tok') {
+        return { uid: 'outsider_e2e', email: 'out@livralink.bj', email_verified: true };
+      }
+      if (tok === 'admin-e2e-tok') {
+        return { uid: 'super_admin_e2e', email: 'pamphile.gbede@gmail.com', email_verified: true };
+      }
+      throw new Error('Invalid token');
+    });
+
+    const getCol = (name: string) => {
+      if (!collections.has(name)) collections.set(name, new Map());
+      return collections.get(name)!;
+    };
+
+    serverMod.setFirestoreAdminForTests({
+      collection: (name: string) => ({
+        get: async () => ({
+          docs: Array.from(getCol(name).entries()).map(([id, data]) => ({ id, data: () => data })),
+          forEach: (cb: (snap: { id: string; data: () => Record<string, any> }) => void) => {
+            for (const [id, data] of getCol(name).entries()) {
+              cb({ id, data: () => data });
+            }
+          },
+        }),
+        doc: (id: string) => ({
+          _col: name,
+          _id: id,
+          get: async () => {
+            if (simulateFirestorePrecheckError) {
+              const err: any = new Error('7 PERMISSION_DENIED');
+              err.code = 7;
+              throw err;
+            }
+            const col = getCol(name);
+            return { id, exists: col.has(id), data: () => col.get(id) };
+          },
+          set: async (payload: Record<string, any>, opts?: { merge?: boolean }) => {
+            const col = getCol(name);
+            const prev = opts?.merge ? col.get(id) || {} : {};
+            col.set(id, { ...prev, ...payload });
+          },
+        }),
+      }),
+      batch: () => {
+        const ops: Array<() => void> = [];
+        return {
+          set: (ref: { _col: string; _id: string }, payload: Record<string, any>, opts?: { merge?: boolean }) => {
+            ops.push(() => {
+              const col = getCol(ref._col);
+              const prev = opts?.merge ? col.get(ref._id) || {} : {};
+              col.set(ref._id, { ...prev, ...payload });
+            });
+          },
+          commit: async () => {
+            ops.forEach((fn) => fn());
+          },
+        };
+      },
+    });
+
+    serverMod.setStorageBucketForTests({
+      file: (path: string) => ({
+        save: async (buf: Buffer, opts: any) => {
+          storageFiles.set(path, {
+            contentType: opts?.metadata?.contentType || 'application/octet-stream',
+            data: buf,
+            metadata: opts?.metadata?.metadata || {},
+          });
+        },
+        exists: async () => [storageFiles.has(path)],
+        getMetadata: async () => [{ contentType: storageFiles.get(path)?.contentType || 'application/pdf' }],
+        download: async () => [storageFiles.get(path)?.data || Buffer.alloc(0)],
+      }),
+    });
+
+    const samplePdfBase64 = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF').toString('base64');
+
+    try {
+      // 1. When Firestore precheck fails, kycLocked: true claim MUST block upload with 409 KYC-STEP-C
+      simulateFirestorePrecheckError = true;
+      const lockedClaimRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-locked-tok' },
+        body: JSON.stringify({ docType: 'cni', contentType: 'application/pdf', dataBase64: samplePdfBase64 }),
+      });
+      assert.equal(lockedClaimRes.status, 409);
+      assert.equal((await lockedClaimRes.json()).stepCode, 'KYC-STEP-C');
+      simulateFirestorePrecheckError = false;
+
+      // 2. Courier uploads valid PDF KYC document
+      const uploadRes1 = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-e2e-tok' },
+        body: JSON.stringify({ docType: 'cni', contentType: 'application/pdf', dataBase64: samplePdfBase64 }),
+      });
+      assert.equal(uploadRes1.status, 200);
+      const up1 = await uploadRes1.json();
+      assert.equal(up1.contentType, 'application/pdf');
+      assert.match(up1.storagePath, /^kyc\/courier_e2e\/cni_\d+_[a-f0-9]+\.pdf$/);
+
+      // Persist KYC dossier as client batch.commit() does
+      getCol('kyc').set('courier_e2e', {
+        id: 'courier_e2e',
+        userId: 'courier_e2e',
+        courierId: 'courier_e2e',
+        fullName: 'Koffi E2E',
+        phone: '+22997001122',
+        email: 'e2e@livralink.bj',
+        status: 'en_attente',
+        documentStoragePath: up1.storagePath,
+        documentMimeType: up1.contentType,
+      });
+
+      // 3. Super-Admin retrieves KYC dossier in sync-overview and reads private PDF; outsider gets 403
+      const syncRes = await fetch(`${baseUrl}/api/admin/sync-overview`, {
+        headers: { Authorization: 'Bearer admin-e2e-tok' },
+      });
+      assert.equal(syncRes.status, 200);
+      const syncBody = await syncRes.json();
+      assert.equal(syncBody.kycRequests.length, 1);
+      assert.equal(syncBody.kycRequests[0].documentStoragePath, up1.storagePath);
+
+      const adminDocRes = await fetch(`${baseUrl}/api/kyc/document?path=${encodeURIComponent(up1.storagePath)}`, {
+        headers: { Authorization: 'Bearer admin-e2e-tok' },
+      });
+      assert.equal(adminDocRes.status, 200);
+      assert.equal(adminDocRes.headers.get('content-type'), 'application/pdf');
+
+      const ownerDocRes = await fetch(`${baseUrl}/api/kyc/document?path=${encodeURIComponent(up1.storagePath)}`, {
+        headers: { Authorization: 'Bearer courier-e2e-tok' },
+      });
+      assert.equal(ownerDocRes.status, 200);
+
+      const outsiderDocRes = await fetch(`${baseUrl}/api/kyc/document?path=${encodeURIComponent(up1.storagePath)}`, {
+        headers: { Authorization: 'Bearer outsider-e2e-tok' },
+      });
+      assert.equal(outsiderDocRes.status, 403);
+
+      // 4. Super-Admin rejects dossier -> status becomes 'refuse', courier can upload again
+      const rejectRes = await fetch(`${baseUrl}/api/admin/kyc/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer admin-e2e-tok' },
+        body: JSON.stringify({ targetUid: 'courier_e2e', requestId: 'courier_e2e', decision: 'refuse', reason: 'Recto illisible' }),
+      });
+      assert.equal(rejectRes.status, 200);
+      assert.equal(getCol('kyc').get('courier_e2e')?.status, 'refuse');
+      assert.equal(getCol('users').get('courier_e2e')?.kycStatus, 'refuse');
+      assert.equal(getCol('users').get('courier_e2e')?.isKycVerified, false);
+
+      // Even if a stale kycLocked: true token hits /api/courier/kyc/upload, Firestore status 'refuse' allows resubmission
+      const resubmitUploadRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-locked-tok' },
+        body: JSON.stringify({ docType: 'cni', contentType: 'application/pdf', dataBase64: samplePdfBase64 }),
+      });
+      assert.equal(resubmitUploadRes.status, 200);
+
+      // 5. Super-Admin approves -> kyc/users/notifications updated atomically
+      const approveRes = await fetch(`${baseUrl}/api/admin/kyc/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer admin-e2e-tok' },
+        body: JSON.stringify({ targetUid: 'courier_e2e', requestId: 'courier_e2e', decision: 'valide' }),
+      });
+      assert.equal(approveRes.status, 200);
+      assert.equal(getCol('kyc').get('courier_e2e')?.status, 'valide');
+      assert.equal(getCol('kyc').get('courier_e2e')?.isApproved, true);
+      assert.equal(getCol('users').get('courier_e2e')?.kycStatus, 'valide');
+      assert.equal(getCol('users').get('courier_e2e')?.isKycVerified, true);
+      assert.equal(getCol('notifications').size, 2);
+    } finally {
+      serverMod.setStorageBucketForTests(null);
+      serverMod.setFirestoreAdminForTests(null);
+      serverMod.setTokenVerifierForTests(null);
+    }
+  });
+});
 

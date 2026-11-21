@@ -101,6 +101,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
   const objectUrlRef = useRef<string | null>(null);
   const uploadAbortRef = useRef<AbortController | null>(null);
+  const isSubmittingRef = useRef<boolean>(false);
 
   const revokeObjectPreview = () => {
     if (objectUrlRef.current && objectUrlRef.current.startsWith('blob:')) {
@@ -122,7 +123,25 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
   useEffect(() => {
     if (!isOpen) return;
-    setEmailVerified(Boolean(auth.currentUser?.emailVerified ?? firebaseUser?.emailVerified));
+    const currentVerified = Boolean(auth.currentUser?.emailVerified ?? firebaseUser?.emailVerified);
+    setEmailVerified(currentVerified);
+
+    let cancelled = false;
+    if (!currentVerified && auth.currentUser && typeof auth.currentUser.reload === 'function') {
+      auth.currentUser
+        .reload()
+        .then(async () => {
+          if (cancelled || !auth.currentUser) return;
+          if (auth.currentUser.emailVerified) {
+            await auth.currentUser.getIdToken(true).catch(() => {});
+            if (!cancelled) {
+              setEmailVerified(true);
+            }
+          }
+        })
+        .catch(() => {});
+    }
+
     setLastName(existingKyc?.lastName || '');
     setFirstName(existingKyc?.firstName || '');
     setPhone(existingKyc?.phone || '');
@@ -147,7 +166,6 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     setPhotoPreview(null);
 
     if (existingKyc?.documentStoragePath || existingKyc?.documentPhotoUrl) {
-      let cancelled = false;
       setIsLoadingExistingDoc(true);
       fetchAuthorizedKYCDocumentBlob({
         storagePath: existingKyc.documentStoragePath,
@@ -170,10 +188,11 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
         .finally(() => {
           if (!cancelled) setIsLoadingExistingDoc(false);
         });
-      return () => {
-        cancelled = true;
-      };
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen, existingKyc?.id, existingKyc?.status, existingKyc?.documentStoragePath, existingKyc?.documentPhotoUrl, firebaseUser?.emailVerified]);
 
   if (!isOpen) return null;
@@ -282,6 +301,9 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
   };
 
   const performSubmit = async () => {
+    if (isSubmittingRef.current) {
+      return;
+    }
     setSubmitError(null);
 
     if (!activeCourierId || !auth.currentUser) {
@@ -367,6 +389,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       return;
     }
 
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     setUploadProgress(selectedFile && !pendingUploadedAsset ? 5 : null);
 
@@ -422,6 +445,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       showToast(errMsg, 'error');
     } finally {
       uploadAbortRef.current = null;
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
       setUploadProgress(null);
     }

@@ -2117,7 +2117,14 @@ export const AdminConsole: React.FC = () => {
                           <>
                             <button
                               disabled={isSubmittingKycDecision}
-                              onClick={() => void approveKYC(kyc.id)}
+                              onClick={async () => {
+                                setIsSubmittingKycDecision(true);
+                                try {
+                                  await approveKYC(kyc.id);
+                                } finally {
+                                  setIsSubmittingKycDecision(false);
+                                }
+                              }}
                               className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-50"
                               title="Valider directement"
                             >
@@ -2125,7 +2132,14 @@ export const AdminConsole: React.FC = () => {
                             </button>
                             <button
                               disabled={isSubmittingKycDecision}
-                              onClick={() => void rejectKYC(kyc.id)}
+                              onClick={async () => {
+                                setIsSubmittingKycDecision(true);
+                                try {
+                                  await rejectKYC(kyc.id);
+                                } finally {
+                                  setIsSubmittingKycDecision(false);
+                                }
+                              }}
                               className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
                               title="Refuser directement"
                             >
@@ -2243,15 +2257,31 @@ export const AdminConsole: React.FC = () => {
                           {kyc.status === 'en_attente' ? (
                             <>
                               <button
-                                onClick={() => void approveKYC(kyc.id)}
-                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold shadow-2xs transition-all active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
+                                disabled={isSubmittingKycDecision}
+                                onClick={async () => {
+                                  setIsSubmittingKycDecision(true);
+                                  try {
+                                    await approveKYC(kyc.id);
+                                  } finally {
+                                    setIsSubmittingKycDecision(false);
+                                  }
+                                }}
+                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold shadow-2xs transition-all active:scale-95 flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
                               >
                                 <span className="material-symbols-outlined text-xs">check</span>
                                 <span>Valider</span>
                               </button>
                               <button
-                                onClick={() => void rejectKYC(kyc.id)}
-                                className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-[10px] font-bold transition-all active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
+                                disabled={isSubmittingKycDecision}
+                                onClick={async () => {
+                                  setIsSubmittingKycDecision(true);
+                                  try {
+                                    await rejectKYC(kyc.id);
+                                  } finally {
+                                    setIsSubmittingKycDecision(false);
+                                  }
+                                }}
+                                className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-[10px] font-bold transition-all active:scale-95 flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
                               >
                                 <span>Refuser</span>
                               </button>

@@ -231,7 +231,7 @@ let cachedP0Security: P0SecurityService | null = null;
 let testP0SecurityOverride: P0SecurityService | null = null;
 let testFirestoreOverride: any = null;
 let testStorageBucketOverride: any = null;
-let testTokenVerifierOverride: ((token: string) => Promise<{ uid: string; email?: string; email_verified?: boolean; admin?: boolean }>) | null = null;
+let testTokenVerifierOverride: ((token: string) => Promise<{ uid: string; email?: string; email_verified?: boolean; admin?: boolean; kycLocked?: boolean }>) | null = null;
 
 export function setP0SecurityForTests(service: P0SecurityService | null): void {
   if (process.env.NODE_ENV === 'test') {
@@ -252,7 +252,7 @@ export function setStorageBucketForTests(bucketOverride: any): void {
 }
 
 export function setTokenVerifierForTests(
-  verifier: ((token: string) => Promise<{ uid: string; email?: string; email_verified?: boolean; admin?: boolean }>) | null
+  verifier: ((token: string) => Promise<{ uid: string; email?: string; email_verified?: boolean; admin?: boolean; kycLocked?: boolean }>) | null
 ): void {
   if (process.env.NODE_ENV === 'test') {
     testTokenVerifierOverride = verifier;
@@ -363,6 +363,7 @@ interface AuthenticatedRequest extends Request {
     email?: string;
     email_verified?: boolean;
     isAdmin?: boolean;
+    kycLocked?: boolean;
   };
 }
 
@@ -417,6 +418,7 @@ const authenticateFirebaseToken = async (req: AuthenticatedRequest, res: Respons
         email: decoded.email,
         email_verified: decoded.email_verified,
         isAdmin: isSuperAdminEmail || Boolean(decoded.admin),
+        kycLocked: Boolean((decoded as any).kycLocked),
       };
       return next();
     } catch (err: any) {
@@ -435,6 +437,7 @@ const authenticateFirebaseToken = async (req: AuthenticatedRequest, res: Respons
         email: decoded.email,
         email_verified: decoded.email_verified,
         isAdmin: isSuperAdminEmail || Boolean(decoded.admin),
+        kycLocked: Boolean((decoded as any).kycLocked),
       };
     } catch (err: any) {
       recordSecurityAnomaly(getClientIp(req), 'INVALID_BEARER_TOKEN', `Échec vérification jeton Firebase: ${err?.message || err}`);
@@ -4147,7 +4150,7 @@ app.post('/api/courier/kyc/upload', requireVerifiedUser as any, async (req: Auth
     }
 
     const ext = extensionForUploadedMime(decoded.contentType, 'jpg');
-    const fileName = `${rawDocType}_${Date.now()}.${ext}`;
+    const fileName = `${rawDocType}_${Date.now()}_${crypto.randomBytes(3).toString('hex')}.${ext}`;
     const storagePath = `kyc/${callerUid}/${fileName}`;
 
     await activeBucket.file(storagePath).save(decoded.buffer, {

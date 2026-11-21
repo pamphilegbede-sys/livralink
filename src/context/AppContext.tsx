@@ -2248,9 +2248,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ? userData.kycStatus
           : 'non_soumis';
       if (
-        derivedStatus === 'non_soumis' &&
         latestKycDocStatus &&
-        latestKycDocStatus !== 'non_soumis'
+        latestKycDocStatus !== 'non_soumis' &&
+        derivedStatus !== 'valide' &&
+        derivedStatus !== latestKycDocStatus
       ) {
         return;
       }
@@ -3885,6 +3886,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  const inFlightKycSubmitUidsRef = React.useRef<Set<string>>(new Set());
+
   const submitKYCRequest = async (
     data: Partial<KYCUserRequest>,
     options?: {
@@ -3904,6 +3907,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (data.courierId && data.courierId !== cleanCourierId) {
       throw createKYCStepError('KYC-STEP-A', 'Identifiant du dossier KYC incohérent avec le compte connecté.');
     }
+
+    if (inFlightKycSubmitUidsRef.current.has(cleanCourierId)) {
+      throw createKYCStepError(
+        'KYC-STEP-C',
+        'Une soumission de votre dossier KYC est déjà en cours. Veuillez patienter.'
+      );
+    }
+    inFlightKycSubmitUidsRef.current.add(cleanCourierId);
+    try {
 
     let freshIdToken = '';
     try {
@@ -4226,6 +4238,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     showToast(`Dossier KYC transmis avec succès ! En attente de validation administrative.`, 'success');
     return newReq;
+    } finally {
+      inFlightKycSubmitUidsRef.current.delete(cleanCourierId);
+    }
   };
 
   const commitAdminKycDecisionClientFallback = async (params: {

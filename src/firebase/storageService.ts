@@ -454,6 +454,14 @@ export async function uploadKYCDocument(
     throw createKYCStepError('KYC-STEP-A', 'Identifiant utilisateur incohérent pour le téléversement KYC.');
   }
 
+  try {
+    if (typeof currentUser.getIdToken === 'function') {
+      await currentUser.getIdToken(true);
+    }
+  } catch {
+    // Non-blocking: let Storage SDK or server endpoint report exact auth error if session expired
+  }
+
   const { blob, contentType } = await resolveBlobAndMimeType(fileOrDataUrl);
   if (!isAllowedKycMimeType(contentType)) {
     throw createKYCStepError(
@@ -470,7 +478,8 @@ export async function uploadKYCDocument(
 
   const ext = getExtensionForMimeType(contentType);
   const timestamp = Date.now();
-  const fileName = `${docType}_${timestamp}.${ext}`;
+  const uniqueSuffix = Math.random().toString(36).slice(2, 8);
+  const fileName = `${docType}_${timestamp}_${uniqueSuffix}.${ext}`;
   const storagePath = `kyc/${cleanUserId}/${fileName}`;
 
   const metadata = {
@@ -534,6 +543,13 @@ export async function uploadKYCDocument(
             { originalCode: String(payload.code || errCode) }
           );
         }
+        if (!res.ok) {
+          throw createKYCStepError(
+            'KYC-STEP-B',
+            `Accès direct Firebase Storage refusé (403) et échec du relais serveur (HTTP ${res.status}). Vérifiez les règles storage.rules et votre session.`,
+            { originalCode: errCode || `http_${res.status}` }
+          );
+        }
       } catch (fallbackErr: any) {
         if (fallbackErr?.stepCode) {
           throw fallbackErr;
@@ -543,6 +559,11 @@ export async function uploadKYCDocument(
             originalCode: 'storage/canceled',
           });
         }
+        throw createKYCStepError(
+          'KYC-STEP-B',
+          `Accès Firebase Storage refusé (403) et relais serveur inaccessible (${fallbackErr?.message || 'erreur réseau'}).`,
+          { originalCode: errCode || 'storage/unauthorized' }
+        );
       }
     }
 
