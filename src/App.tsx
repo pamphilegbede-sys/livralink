@@ -50,6 +50,7 @@ const MainAppRouter: React.FC = () => {
     deliveries,
     setSelectedDelivery,
     acceptDelivery,
+    refuseDelivery,
     isAuthLoading, 
     isTestModalOpen, 
     closeTestModal, 
@@ -218,6 +219,10 @@ const MainAppRouter: React.FC = () => {
           onDismiss={dismissPriorityMissionAlert}
           onAccept={(orderId) => {
             acceptDelivery(orderId);
+            dismissPriorityMissionAlert();
+          }}
+          onRefuse={(orderId) => {
+            void refuseDelivery(orderId, 'Déclinée depuis la bannière');
             dismissPriorityMissionAlert();
           }}
           onViewDetails={(orderId) => {

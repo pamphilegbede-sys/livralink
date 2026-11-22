@@ -14,6 +14,12 @@ export interface FirestoreUserRecord {
   gpsCoordinates?: string;
   locationCommune?: string;
   locationAddress?: string;
+  locationLat?: number;
+  locationLng?: number;
+  locationUpdatedAt?: any;
+  locationSource?: string;
+  locationAccuracyMeters?: number;
+  isAvailable?: boolean;
   isKycVerified?: boolean;
   kycStatus?: string;
   status?: string;
@@ -163,6 +169,7 @@ export const mapFirestoreUserToCourier = (data: FirestoreUserRecord, docId: stri
     distanceKm: 1.0,
     etaMinutes: 8,
     status,
+    isAvailable: data.isAvailable !== false && status === 'en_ligne',
     walletBalanceFCFA: typeof data.walletBalanceFCFA === 'number' && Number.isFinite(data.walletBalanceFCFA) ? data.walletBalanceFCFA : 0,
     priceFCFA: 2000,
     commissionFCFA: 0,
@@ -170,6 +177,11 @@ export const mapFirestoreUserToCourier = (data: FirestoreUserRecord, docId: stri
     badge: isAccredited ? 'Livreur Vérifié KYC ★' : 'Nouveau Livreur',
     isKycVerified: isAccredited,
     kycStatus: (data.kycStatus as Courier['kycStatus']) || (isAccredited ? 'valide' : 'non_soumis'),
+    locationLat: typeof data.locationLat === 'number' && Number.isFinite(data.locationLat) ? data.locationLat : undefined,
+    locationLng: typeof data.locationLng === 'number' && Number.isFinite(data.locationLng) ? data.locationLng : undefined,
+    locationUpdatedAt: normalizeDateString(data.locationUpdatedAt) || undefined,
+    locationSource: typeof data.locationSource === 'string' ? data.locationSource : undefined,
+    locationAccuracyMeters: typeof data.locationAccuracyMeters === 'number' && Number.isFinite(data.locationAccuracyMeters) ? data.locationAccuracyMeters : undefined,
     createdAt: normalizeDateString(data.createdAt),
   };
 };
@@ -221,6 +233,9 @@ export const mapFirestoreDeliveryToOrder = (data: any, docId: string): DeliveryO
       commissionFCFA: 0,
       netEarningFCFA: fee,
     } : undefined),
+    courierId: data.courierId || data.courier?.id || undefined,
+    courierName: data.courierName || data.courier?.name || undefined,
+    assignedAt: data.assignedAt || undefined,
     status: data.status || 'en_attente',
     statusNote: data.statusNote || '',
     createdAt: createdIso,
@@ -231,6 +246,25 @@ export const mapFirestoreDeliveryToOrder = (data: any, docId: string): DeliveryO
     merchantStoreName: data.merchantStoreName || data.pickupLocation?.name,
     timeline: Array.isArray(data.timeline) ? data.timeline : [],
     podData: data.podData || data.pod,
+    courierLat: typeof data.courierLat === 'number' ? data.courierLat : undefined,
+    courierLng: typeof data.courierLng === 'number' ? data.courierLng : undefined,
+    courierLocationUpdatedAt: normalizeDateString(data.courierLocationUpdatedAt) || undefined,
+    dispatchMode: data.dispatchMode === 'direct' ? 'direct' : data.dispatchMode === 'auto' ? 'auto' : undefined,
+    dispatchState: data.dispatchState || undefined,
+    preferredCourierId: data.preferredCourierId ?? undefined,
+    preferredCourierName: data.preferredCourierName ?? undefined,
+    targetCourierId: data.targetCourierId ?? undefined,
+    targetCourierName: data.targetCourierName ?? undefined,
+    targetCourierDistanceKm: typeof data.targetCourierDistanceKm === 'number' ? data.targetCourierDistanceKm : undefined,
+    targetIsPreferred: typeof data.targetIsPreferred === 'boolean' ? data.targetIsPreferred : undefined,
+    candidateQueue: Array.isArray(data.candidateQueue) ? data.candidateQueue : undefined,
+    rejectedCourierIds: Array.isArray(data.rejectedCourierIds) ? data.rejectedCourierIds : undefined,
+    expiredCourierIds: Array.isArray(data.expiredCourierIds) ? data.expiredCourierIds : undefined,
+    offerAttempt: typeof data.offerAttempt === 'number' ? data.offerAttempt : undefined,
+    offerTimeoutSeconds: typeof data.offerTimeoutSeconds === 'number' ? data.offerTimeoutSeconds : undefined,
+    offerStartedAt: typeof data.offerStartedAt === 'number' ? data.offerStartedAt : undefined,
+    offerExpiresAt: typeof data.offerExpiresAt === 'number' ? data.offerExpiresAt : undefined,
+    dispatchFailureReason: typeof data.dispatchFailureReason === 'string' ? data.dispatchFailureReason : undefined,
   };
 };
 

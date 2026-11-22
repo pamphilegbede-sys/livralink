@@ -97,6 +97,15 @@ import {
   resolveAppViewFromPathname,
   VIEW_TO_PATH,
 } from '../config/seo';
+import {
+  DEFAULT_GPS_MAX_AGE_MS,
+  DEFAULT_OFFER_TIMEOUT_SECONDS,
+  clampOfferTimeoutSeconds,
+  computeHaversineDistanceKm,
+  courierRecordToDispatchInput,
+  rankDispatchCandidates,
+  resolveOrderPickupCoords,
+} from '../utils/dispatchEngine';
 
 export type AppView =
   | 'landing'
@@ -182,9 +191,30 @@ interface AppContextType {
   
   // Interactive Actions
   fetchDeliveries: (vendorUidOverride?: string) => Promise<DeliveryOrder[]>;
-  createDelivery: (newOrder: Partial<DeliveryOrder>, options?: { clientEmail?: string }) => DeliveryOrder;
+  createDelivery: (
+    newOrder: Partial<DeliveryOrder>,
+    options?: {
+      clientEmail?: string;
+      dispatchMode?: 'auto' | 'direct';
+      preferredCourierId?: string | null;
+      offerTimeoutSeconds?: number;
+    }
+  ) => DeliveryOrder;
+  relaunchDeliveryDispatch: (
+    orderId: string,
+    options?: { preferredCourierId?: string | null; offerTimeoutSeconds?: number }
+  ) => Promise<void>;
+  advanceExpiredOffer: (orderId: string) => Promise<void>;
+  loadEligibleCouriers: () => Promise<Courier[]>;
+  syncCourierGpsPosition: (coords?: {
+    lat: number;
+    lng: number;
+    accuracyMeters?: number;
+    source?: 'browser_gps' | 'live_watch';
+  }) => Promise<boolean>;
+  gpsTrackingStatus: 'active' | 'denied' | 'unavailable' | 'idle';
   acceptDelivery: (orderId: string, customCourier?: Courier) => void | Promise<void>;
-  refuseDelivery: (orderId: string, reason?: string) => void;
+  refuseDelivery: (orderId: string, reason?: string) => void | Promise<void>;
   updateDeliveryStatus: (orderId: string, newStatus: DeliveryStatus, note?: string, callerRoleOverride?: UserRole) => { success: boolean; reason?: string };
   assignCourierToDelivery: (orderId: string, courierId: string) => void | Promise<void>;
   validatePOD: (
@@ -202,7 +232,7 @@ interface AppContextType {
   generateNewOTP: (orderId: string) => Promise<string>;
   privateOtps: Record<string, string>;
   fetchOrderPrivateOtp: (orderId: string) => Promise<string | null>;
-  toggleCourierAvailability: () => void;
+  toggleCourierAvailability: () => void | Promise<void>;
   selectActiveCourier: (courierOrId: Courier | string) => void;
   approveKYC: (requestId: string) => Promise<boolean> | void;
   rejectKYC: (requestId: string, reason?: string) => Promise<boolean> | void;
@@ -790,6 +820,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [priorityMissionAlert, setPriorityMissionAlert] = useState<PriorityMissionAlert | null>(null);
   const notifiedMissionsRef = React.useRef<Set<string>>(new Set());
   const dismissPriorityMissionAlert = React.useCallback(() => setPriorityMissionAlert(null), []);
+  const [gpsTrackingStatus, setGpsTrackingStatus] = useState<'active' | 'denied' | 'unavailable' | 'idle'>('idle');
+  const advancingOffersRef = React.useRef<Set<string>>(new Set());
+  const lastGpsWatchSyncRef = React.useRef<{ at: number; lat: number; lng: number } | null>(null);
 
   // Email Notification Center Modal state
   const [isEmailCenterOpen, setIsEmailCenterOpen] = useState(false);
@@ -1598,10 +1631,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             } catch {}
             if (!loadedMerchant) {
               loadedMerchant = createFreshMerchantSettings(prof);
-              try {
-                localStorage.setItem(`livralink_merchant_settings_${user.uid}`, JSON.stringify(loadedMerchant));
-              } catch {}
+            } else {
+              loadedMerchant = {
+                ...loadedMerchant,
+                preferredCourierId: (prof as any).preferredCourierId ?? loadedMerchant.preferredCourierId,
+                preferredCourierName: (prof as any).preferredCourierName ?? loadedMerchant.preferredCourierName,
+                dispatchOfferTimeoutSeconds: typeof (prof as any).dispatchOfferTimeoutSeconds === 'number'
+                  ? clampOfferTimeoutSeconds((prof as any).dispatchOfferTimeoutSeconds)
+                  : clampOfferTimeoutSeconds(loadedMerchant.dispatchOfferTimeoutSeconds ?? DEFAULT_OFFER_TIMEOUT_SECONDS),
+              };
             }
+            try {
+              localStorage.setItem(`livralink_merchant_settings_${user.uid}`, JSON.stringify(loadedMerchant));
+            } catch {}
             setMerchantSettings(loadedMerchant);
           };
 
@@ -1610,6 +1652,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const authoritativeKycStatus: 'non_soumis' | 'en_attente' | 'valide' | 'refuse' = isAccredited
               ? 'valide'
               : prof.kycStatus || 'non_soumis';
+            const serverAvailable = (prof as any).isAvailable !== false && (prof as any).status !== 'hors_ligne';
             let loadedCourier: CourierSettings | null = null;
             try {
               const saved = localStorage.getItem(`livralink_courier_settings_${user.uid}`);
@@ -1626,7 +1669,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               isKycVerified: isAccredited,
               kycStatus: authoritativeKycStatus,
               kycRejectionReason: prof.kycRejectionReason || loadedCourier.kycRejectionReason,
-              isAvailable: isAccredited ? loadedCourier.isAvailable : false,
+              isAvailable: isAccredited ? (typeof (prof as any).isAvailable === 'boolean' || (prof as any).status ? serverAvailable : loadedCourier.isAvailable) : false,
             };
             try {
               localStorage.setItem(`livralink_courier_settings_${user.uid}`, JSON.stringify(loadedCourier));
@@ -1638,10 +1681,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 (c) => c.id === user.uid || (c.email && c.email.toLowerCase() === (prof.email || '').toLowerCase())
               );
               if (matched) {
-                const updatedMatched = {
+                const updatedMatched: Courier = {
                   ...matched,
                   isKycVerified: isAccredited,
-                  status: isAccredited ? matched.status : ('hors_ligne' as const),
+                  status: isAccredited ? (loadedCourier!.isAvailable ? 'en_ligne' : 'hors_ligne') : ('hors_ligne' as const),
+                  isAvailable: isAccredited ? loadedCourier!.isAvailable : false,
+                  locationLat: typeof prof.locationLat === 'number' ? prof.locationLat : matched.locationLat,
+                  locationLng: typeof prof.locationLng === 'number' ? prof.locationLng : matched.locationLng,
+                  locationUpdatedAt: prof.locationUpdatedAt || matched.locationUpdatedAt,
+                  locationSource: prof.locationSource || matched.locationSource,
+                  locationAccuracyMeters: prof.locationAccuracyMeters ?? matched.locationAccuracyMeters,
                 };
                 setSelectedCourier(updatedMatched);
                 return prev.map((c) => (c.id === updatedMatched.id ? updatedMatched : c));
@@ -1885,13 +1934,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return [];
       }
       try {
-        const qPending = query(collection(db, 'deliveries'), where('status', '==', 'en_attente'));
+        const qTargeted = query(collection(db, 'deliveries'), where('targetCourierId', '==', activeAuthUser.uid));
         const qMine = query(collection(db, 'deliveries'), where('courierId', '==', activeAuthUser.uid));
-        const [pendingSnap, mineSnap] = await Promise.all([getDocs(qPending), getDocs(qMine)]);
+        const [targetedSnap, mineSnap] = await Promise.all([getDocs(qTargeted), getDocs(qMine)]);
         const merged = new Map<string, DeliveryOrder>();
-        pendingSnap.docs.forEach((d) => {
+        targetedSnap.docs.forEach((d) => {
           const mapped = mapFirestoreDeliveryToOrder(d.data(), d.id);
-          merged.set(mapped.id.replace(/^#/, ''), mapped);
+          if (mapped.status === 'en_attente' && mapped.targetCourierId === activeAuthUser.uid) {
+            merged.set(mapped.id.replace(/^#/, ''), mapped);
+          }
         });
         mineSnap.docs.forEach((d) => {
           const mapped = mapFirestoreDeliveryToOrder(d.data(), d.id);
@@ -2032,7 +2083,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const syncCourierDeliveries = () => {
         const merged = new Map<string, DeliveryOrder>();
-        pendingMap.forEach((ord, norm) => merged.set(norm, ord));
+        pendingMap.forEach((ord, norm) => {
+          if (ord.status === 'en_attente' && ord.targetCourierId === currentUid) {
+            merged.set(norm, ord);
+          }
+        });
         mineMap.forEach((ord, norm) => {
           const prevOrd = merged.get(norm);
           merged.set(
@@ -2046,16 +2101,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
 
       try {
-        const qPending = query(collection(db, 'deliveries'), where('status', '==', 'en_attente'));
+        const qTargeted = query(collection(db, 'deliveries'), where('targetCourierId', '==', currentUid));
         const qMine = query(collection(db, 'deliveries'), where('courierId', '==', currentUid));
         unsubs.push(
           onSnapshot(
-            qPending,
+            qTargeted,
             (snap) => {
               pendingMap.clear();
               snap.docs.forEach((d) => {
                 const mapped = mapFirestoreDeliveryToOrder(d.data(), d.id);
-                pendingMap.set(mapped.id.replace(/^#/, ''), mapped);
+                if (mapped.status === 'en_attente' && mapped.targetCourierId === currentUid) {
+                  pendingMap.set(mapped.id.replace(/^#/, ''), mapped);
+                }
               });
               syncCourierDeliveries();
             },
@@ -2063,7 +2120,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               if (err?.code === 'permission-denied') {
                 handleFirestoreError(err, OperationType.LIST, 'deliveries');
               }
-              console.warn('Écouteur livreur pending deliveries:', err?.message || err);
+              console.warn('Écouteur livreur offres ciblées:', err?.message || err);
             }
           ),
           onSnapshot(
@@ -2241,6 +2298,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const syncOwnUserDoc = (userData: any | null) => {
       if (!userData) return;
+      if (userData.role === 'vendeur' || isUserMasterAdmin) {
+        setMerchantSettings((prev) => ({
+          ...prev,
+          preferredCourierId: userData.preferredCourierId !== undefined ? (userData.preferredCourierId || undefined) : prev.preferredCourierId,
+          preferredCourierName: userData.preferredCourierName !== undefined ? (userData.preferredCourierName || undefined) : prev.preferredCourierName,
+          dispatchOfferTimeoutSeconds: typeof userData.dispatchOfferTimeoutSeconds === 'number'
+            ? clampOfferTimeoutSeconds(userData.dispatchOfferTimeoutSeconds)
+            : prev.dispatchOfferTimeoutSeconds,
+        }));
+      }
+
+      if (userData.role === 'livreur') {
+        const isServerAvail = userData.isAvailable !== false && userData.status !== 'hors_ligne' && userData.status !== 'suspendu';
+        setCourierSettings((prev) => ({
+          ...prev,
+          isAvailable: (userData.isKycVerified === true || userData.kycStatus === 'valide') ? isServerAvail : false,
+        }));
+        setCouriers((prev) =>
+          prev.map((c) =>
+            c.id === uid
+              ? {
+                  ...c,
+                  status: userData.status || c.status,
+                  isAvailable: isServerAvail,
+                  locationLat: typeof userData.locationLat === 'number' ? userData.locationLat : c.locationLat,
+                  locationLng: typeof userData.locationLng === 'number' ? userData.locationLng : c.locationLng,
+                  locationUpdatedAt: userData.locationUpdatedAt || c.locationUpdatedAt,
+                  locationSource: userData.locationSource || c.locationSource,
+                  locationAccuracyMeters: userData.locationAccuracyMeters ?? c.locationAccuracyMeters,
+                }
+              : c
+          )
+        );
+      }
+
       const derivedStatus =
         userData.isKycVerified === true || userData.kycStatus === 'valide'
           ? 'valide'
@@ -2292,24 +2384,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [firebaseUser?.uid, isAdminAuthenticated]);
 
-  // Contextual real-time Firestore listener for priority missions (strictly gated on authenticated KYC courier/admin)
+  // Contextual real-time Firestore listener for targeted priority missions (strictly gated on targeted KYC courier or admin)
   useEffect(() => {
     if (!firebaseUser || !firebaseUser.emailVerified) return;
     const isAllowed = isAdminAuthenticated || (userProfile?.role === 'livreur' && userProfile?.isKycVerified === true);
     if (!isAllowed) return;
 
     try {
-      const activeMissionsQuery = query(
-        collection(db, 'priority_missions'),
-        where('status', '==', 'en_attente')
-      );
+      const activeMissionsQuery = isAdminAuthenticated
+        ? query(collection(db, 'priority_missions'), where('status', '==', 'en_attente'))
+        : query(collection(db, 'priority_missions'), where('targetCourierId', '==', firebaseUser.uid));
 
       const unsubscribe = onSnapshot(activeMissionsQuery, (snapshot) => {
         snapshot.docChanges().forEach((change) => {
-          if (change.type === 'added' || change.type === 'modified') {
-            const data = change.doc.data();
-            const missionId = data.id || data.orderId || change.doc.id;
+          const data = change.doc.data();
+          const missionId = data.id || data.orderId || change.doc.id;
+          const isTargetedForMe = data.targetCourierId === firebaseUser.uid;
 
+          if (change.type === 'removed' || data.status !== 'en_attente' || (!isAdminAuthenticated && !isTargetedForMe)) {
+            setPriorityMissionAlert((prev) =>
+              prev && (prev.id === missionId || prev.orderId === (data.orderId || missionId)) ? null : prev
+            );
+            return;
+          }
+
+          if (change.type === 'added' || change.type === 'modified') {
             const isMasterRef = isVerifiedMasterAdminEmail(
               firebaseUserRef.current?.email || userProfileRef.current?.email,
               firebaseUserRef.current?.emailVerified
@@ -2320,8 +2419,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               firebaseUserRef.current != null &&
               userProfileRef.current != null;
 
-            if (isCourierActive && data.status === 'en_attente' && !notifiedMissionsRef.current.has(missionId)) {
-              notifiedMissionsRef.current.add(missionId);
+            const dedupKey = `${missionId}:${data.offerAttempt || 1}:${data.targetCourierId || ''}`;
+            const isOfferStillValid =
+              typeof data.offerExpiresAt !== 'number' || data.offerExpiresAt > Date.now();
+
+            if (
+              isCourierActive &&
+              data.status === 'en_attente' &&
+              (isTargetedForMe || isMasterRef) &&
+              isOfferStillValid &&
+              !notifiedMissionsRef.current.has(dedupKey)
+            ) {
+              notifiedMissionsRef.current.add(dedupKey);
 
               setPriorityMissionAlert({
                 id: missionId,
@@ -2333,15 +2442,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 itemValueCOD: typeof data.cod === 'number' ? data.cod : (typeof data.itemValueCOD === 'number' ? data.itemValueCOD : 0),
                 itemDescription: data.itemDescription || 'Colis Express Prioritaire',
                 createdAt: typeof data.createdAt === 'string' ? data.createdAt : new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-                source: 'firestore'
+                source: 'firestore',
+                distanceKm: typeof data.targetCourierDistanceKm === 'number' ? data.targetCourierDistanceKm : null,
+                isPreferred: Boolean(data.targetIsPreferred),
+                offerExpiresAt: typeof data.offerExpiresAt === 'number' ? data.offerExpiresAt : null,
+                offerTimeoutSeconds: typeof data.offerTimeoutSeconds === 'number' ? data.offerTimeoutSeconds : DEFAULT_OFFER_TIMEOUT_SECONDS,
+                offerAttempt: typeof data.offerAttempt === 'number' ? data.offerAttempt : 1,
               });
 
               playPriorityMissionChime();
 
               addNotification({
                 type: 'priority_mission',
-                title: '⚡ Mission prioritaire disponible',
-                message: `Course express ${data.storeName || data.pickupName || 'Boutique'} ➔ ${data.dropoffCommune || 'Cotonou'} (${typeof data.fee === 'number' ? data.fee : 2500} FCFA net).`,
+                title: data.targetIsPreferred ? '⭐ Offre prioritaire (Livreur préféré)' : '⚡ Nouvelle offre de livraison GPS',
+                message: `Course ${data.storeName || data.pickupName || 'Boutique'} ➔ ${data.dropoffCommune || 'Cotonou'} (${typeof data.fee === 'number' ? data.fee : 2500} FCFA net).`,
                 orderId: missionId,
                 actionView: 'livreur_missions',
                 roleTarget: 'livreur'
@@ -2816,9 +2930,308 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Session déconnectée avec succès.', 'info');
   };
 
+  const loadEligibleCouriers = React.useCallback(async (): Promise<Courier[]> => {
+    const activeUser = auth.currentUser;
+    if (!activeUser || !activeUser.emailVerified) return couriers;
+    try {
+      const token = await activeUser.getIdToken();
+      const res = await fetch('/api/couriers/eligible', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success && Array.isArray(data.couriers)) {
+        const list: Courier[] = data.couriers;
+        setCouriers(list);
+        return list;
+      }
+    } catch (err) {
+      console.warn('Notice chargement livreurs éligibles:', err);
+    }
+    return couriers;
+  }, [couriers]);
+
+  useEffect(() => {
+    if (!firebaseUser?.emailVerified || !userProfile) return;
+    if (userProfile.role === 'vendeur' || isAdminAuthenticated) {
+      void loadEligibleCouriers();
+    }
+  }, [firebaseUser?.uid, firebaseUser?.emailVerified, userProfile?.role, isAdminAuthenticated]);
+
+  const applyServerDispatchPatchToOrder = React.useCallback((orderId: string, patch: any) => {
+    const normTarget = orderId.replace(/^#/, '');
+    setDeliveries((prev) =>
+      prev.map((ord) => {
+        if (ord.id === orderId || ord.id.replace(/^#/, '') === normTarget) {
+          return {
+            ...ord,
+            ...(patch.status ? { status: patch.status } : {}),
+            ...(patch.statusNote ? { statusNote: patch.statusNote } : {}),
+            ...(patch.dispatchState !== undefined ? { dispatchState: patch.dispatchState } : {}),
+            ...(patch.dispatchMode !== undefined ? { dispatchMode: patch.dispatchMode } : {}),
+            ...(patch.preferredCourierId !== undefined ? { preferredCourierId: patch.preferredCourierId } : {}),
+            ...(patch.preferredCourierName !== undefined ? { preferredCourierName: patch.preferredCourierName } : {}),
+            ...(patch.targetCourierId !== undefined ? { targetCourierId: patch.targetCourierId } : {}),
+            ...(patch.targetCourierName !== undefined ? { targetCourierName: patch.targetCourierName } : {}),
+            ...(patch.targetCourierDistanceKm !== undefined ? { targetCourierDistanceKm: patch.targetCourierDistanceKm } : {}),
+            ...(patch.targetIsPreferred !== undefined ? { targetIsPreferred: patch.targetIsPreferred } : {}),
+            ...(Array.isArray(patch.candidateQueue) ? { candidateQueue: patch.candidateQueue } : {}),
+            ...(Array.isArray(patch.rejectedCourierIds) ? { rejectedCourierIds: patch.rejectedCourierIds } : {}),
+            ...(Array.isArray(patch.expiredCourierIds) ? { expiredCourierIds: patch.expiredCourierIds } : {}),
+            ...(patch.offerAttempt !== undefined ? { offerAttempt: patch.offerAttempt } : {}),
+            ...(patch.offerTimeoutSeconds !== undefined ? { offerTimeoutSeconds: patch.offerTimeoutSeconds } : {}),
+            ...(patch.offerStartedAt !== undefined ? { offerStartedAt: patch.offerStartedAt } : {}),
+            ...(patch.offerExpiresAt !== undefined ? { offerExpiresAt: patch.offerExpiresAt } : {}),
+            ...(patch.dispatchFailureReason !== undefined ? { dispatchFailureReason: patch.dispatchFailureReason } : {}),
+          };
+        }
+        return ord;
+      })
+    );
+    setSelectedDelivery((prev) => {
+      if (prev && (prev.id === orderId || prev.id.replace(/^#/, '') === normTarget)) {
+        return {
+          ...prev,
+          ...(patch.status ? { status: patch.status } : {}),
+          ...(patch.statusNote ? { statusNote: patch.statusNote } : {}),
+          ...(patch.dispatchState !== undefined ? { dispatchState: patch.dispatchState } : {}),
+          ...(patch.targetCourierId !== undefined ? { targetCourierId: patch.targetCourierId } : {}),
+          ...(patch.targetCourierName !== undefined ? { targetCourierName: patch.targetCourierName } : {}),
+          ...(patch.targetCourierDistanceKm !== undefined ? { targetCourierDistanceKm: patch.targetCourierDistanceKm } : {}),
+          ...(patch.targetIsPreferred !== undefined ? { targetIsPreferred: patch.targetIsPreferred } : {}),
+          ...(Array.isArray(patch.candidateQueue) ? { candidateQueue: patch.candidateQueue } : {}),
+          ...(patch.offerAttempt !== undefined ? { offerAttempt: patch.offerAttempt } : {}),
+          ...(patch.offerTimeoutSeconds !== undefined ? { offerTimeoutSeconds: patch.offerTimeoutSeconds } : {}),
+          ...(patch.offerStartedAt !== undefined ? { offerStartedAt: patch.offerStartedAt } : {}),
+          ...(patch.offerExpiresAt !== undefined ? { offerExpiresAt: patch.offerExpiresAt } : {}),
+          ...(patch.dispatchFailureReason !== undefined ? { dispatchFailureReason: patch.dispatchFailureReason } : {}),
+        };
+      }
+      return prev;
+    });
+  }, []);
+
+  const runClientFallbackDispatch = async (
+    order: DeliveryOrder,
+    cleanDocId: string,
+    opts?: { preferredCourierId?: string | null; offerTimeoutSeconds?: number; rejectedCourierIds?: string[]; expiredCourierIds?: string[] }
+  ) => {
+    const pickup = resolveOrderPickupCoords(order);
+    const timeoutSec = clampOfferTimeoutSeconds(
+      opts?.offerTimeoutSeconds ?? order.offerTimeoutSeconds ?? merchantSettings.dispatchOfferTimeoutSeconds ?? DEFAULT_OFFER_TIMEOUT_SECONDS
+    );
+    const excluded = new Set<string>([
+      ...(opts?.rejectedCourierIds || order.rejectedCourierIds || []),
+      ...(opts?.expiredCourierIds || order.expiredCourierIds || []),
+    ]);
+    const preferredId = opts?.preferredCourierId !== undefined ? opts.preferredCourierId : (order.preferredCourierId || merchantSettings.preferredCourierId || null);
+    const inputs = couriers.map((c) => courierRecordToDispatchInput(c));
+    const ranked = rankDispatchCandidates({
+      pickupCoords: pickup,
+      couriers: inputs,
+      preferredCourierId: preferredId,
+      excludedCourierIds: Array.from(excluded),
+      gpsMaxAgeMs: DEFAULT_GPS_MAX_AGE_MS,
+    });
+    const first = ranked.candidates[0] || null;
+    const nowEpoch = Date.now();
+    const patch = first
+      ? {
+          dispatchMode: 'auto' as const,
+          dispatchState: 'offered' as const,
+          targetCourierId: first.courierId,
+          targetCourierName: first.name,
+          targetCourierDistanceKm: first.distanceKm,
+          targetIsPreferred: first.isPreferred,
+          candidateQueue: ranked.queue,
+          offerAttempt: (order.offerAttempt || 0) + 1,
+          offerTimeoutSeconds: timeoutSec,
+          offerStartedAt: nowEpoch,
+          offerExpiresAt: nowEpoch + timeoutSec * 1000,
+          statusNote: first.isPreferred
+            ? `Proposition prioritaire envoyée à votre livreur préféré (${first.name})`
+            : `Proposition envoyée à ${first.name} (${first.distanceKm?.toFixed(1) ?? '?'} km)`,
+        }
+      : {
+          dispatchMode: 'auto' as const,
+          dispatchState: 'exhausted' as const,
+          targetCourierId: null,
+          targetCourierName: null,
+          targetCourierDistanceKm: null,
+          targetIsPreferred: false,
+          candidateQueue: [],
+          offerTimeoutSeconds: timeoutSec,
+          dispatchFailureReason: 'NO_ELIGIBLE_COURIER',
+          statusNote: 'Aucun livreur actif et disponible à proximité. Relancez la recherche dès que possible.',
+        };
+
+    applyServerDispatchPatchToOrder(order.id, patch);
+    if (auth.currentUser) {
+      await setDoc(doc(db, 'deliveries', cleanDocId), patch, { merge: true }).catch(() => {});
+      await setDoc(doc(db, 'priority_missions', cleanDocId), patch, { merge: true }).catch(() => {});
+    }
+    if (first) {
+      showToast(
+        first.isPreferred
+          ? `⭐ Proposition envoyée en priorité à votre livreur préféré : ${first.name}.`
+          : `📍 Proposition envoyée au livreur le plus proche : ${first.name}${first.distanceKm !== null ? ` (${first.distanceKm.toFixed(1)} km)` : ''}.`,
+        'success'
+      );
+    } else {
+      showToast('⚠️ Course enregistrée, mais aucun livreur actif n’est disponible pour l’instant. Vous pourrez relancer la recherche.', 'info');
+    }
+  };
+
+  const triggerStartDispatch = async (
+    order: DeliveryOrder,
+    cleanDocId: string,
+    opts?: { relaunch?: boolean; preferredCourierId?: string | null; offerTimeoutSeconds?: number }
+  ) => {
+    const activeUser = auth.currentUser;
+    if (!activeUser) return;
+    try {
+      const token = await activeUser.getIdToken();
+      const res = await fetch(`/api/deliveries/${encodeURIComponent(cleanDocId)}/dispatch/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          relaunch: Boolean(opts?.relaunch),
+          preferredCourierId: opts?.preferredCourierId,
+          offerTimeoutSeconds: opts?.offerTimeoutSeconds,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        const patch = {
+          dispatchMode: 'auto',
+          dispatchState: data.dispatchState,
+          targetCourierId: data.targetCourierId ?? null,
+          targetCourierName: data.targetCourierName ?? null,
+          targetCourierDistanceKm: data.targetCourierDistanceKm ?? null,
+          targetIsPreferred: Boolean(data.targetIsPreferred),
+          candidateQueue: data.candidateQueue || [],
+          rejectedCourierIds: data.rejectedCourierIds || [],
+          expiredCourierIds: data.expiredCourierIds || [],
+          offerAttempt: data.offerAttempt || 0,
+          offerTimeoutSeconds: data.offerTimeoutSeconds || DEFAULT_OFFER_TIMEOUT_SECONDS,
+          offerStartedAt: data.offerStartedAt ?? null,
+          offerExpiresAt: data.offerExpiresAt ?? null,
+          dispatchFailureReason: data.dispatchFailureReason ?? null,
+          statusNote: data.statusNote,
+        };
+        applyServerDispatchPatchToOrder(order.id, patch);
+        if (data.dispatchState === 'offered' && data.targetCourierName) {
+          showToast(
+            data.targetIsPreferred
+              ? `⭐ Offre envoyée en priorité à votre livreur préféré : ${data.targetCourierName}.`
+              : `📍 Livreur le plus proche contacté : ${data.targetCourierName}${typeof data.targetCourierDistanceKm === 'number' ? ` (${data.targetCourierDistanceKm.toFixed(1)} km)` : ''}.`,
+            'success'
+          );
+        } else {
+          showToast(
+            data.message || 'Course sauvegardée en attente : aucun livreur actif avec GPS valide disponible pour l’instant. Cliquez sur « Relancer la recherche ».',
+            'info'
+          );
+        }
+        return;
+      }
+      if (res.status === 503 || data?.code === 'IAM_PERMISSION_DENIED') {
+        await runClientFallbackDispatch(order, cleanDocId, opts);
+        return;
+      }
+      if (!res.ok) {
+        showToast(data?.error || 'Impossible de démarrer l’attribution automatique.', 'error');
+      }
+    } catch {
+      await runClientFallbackDispatch(order, cleanDocId, opts);
+    }
+  };
+
+  const relaunchDeliveryDispatch = async (
+    orderId: string,
+    options?: { preferredCourierId?: string | null; offerTimeoutSeconds?: number }
+  ) => {
+    const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
+    const order = deliveriesRef.current.find((d) => d.id === orderId || d.id.replace(/^#/, '') === cleanDocId);
+    if (!order) return;
+    await triggerStartDispatch(order, cleanDocId, {
+      relaunch: true,
+      preferredCourierId: options?.preferredCourierId !== undefined ? options.preferredCourierId : (order.preferredCourierId ?? merchantSettings.preferredCourierId ?? null),
+      offerTimeoutSeconds: options?.offerTimeoutSeconds ?? order.offerTimeoutSeconds ?? merchantSettings.dispatchOfferTimeoutSeconds,
+    });
+  };
+
+  const advanceExpiredOffer = React.useCallback(async (orderId: string) => {
+    const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!cleanDocId || advancingOffersRef.current.has(cleanDocId)) return;
+    const activeUser = auth.currentUser;
+    if (!activeUser || !activeUser.emailVerified) return;
+    advancingOffersRef.current.add(cleanDocId);
+    try {
+      const token = await activeUser.getIdToken();
+      const res = await fetch(`/api/deliveries/${encodeURIComponent(cleanDocId)}/dispatch/advance`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success && !data.unchanged) {
+        applyServerDispatchPatchToOrder(orderId, {
+          dispatchState: data.dispatchState,
+          targetCourierId: data.targetCourierId ?? null,
+          targetCourierName: data.targetCourierName ?? null,
+          targetCourierDistanceKm: data.targetCourierDistanceKm ?? null,
+          targetIsPreferred: Boolean(data.targetIsPreferred),
+          candidateQueue: data.candidateQueue || [],
+          expiredCourierIds: data.expiredCourierIds || [],
+          offerAttempt: data.offerAttempt || 0,
+          offerTimeoutSeconds: data.offerTimeoutSeconds || DEFAULT_OFFER_TIMEOUT_SECONDS,
+          offerStartedAt: data.offerStartedAt ?? null,
+          offerExpiresAt: data.offerExpiresAt ?? null,
+          dispatchFailureReason: data.dispatchFailureReason ?? null,
+          statusNote: data.statusNote,
+        });
+      }
+    } catch {
+    } finally {
+      advancingOffersRef.current.delete(cleanDocId);
+    }
+  }, [applyServerDispatchPatchToOrder]);
+
+  // Automatic sequential queue advancement when active offer expires
+  useEffect(() => {
+    if (!firebaseUser || !firebaseUser.emailVerified) return;
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const activeUid = firebaseUser.uid;
+      for (const ord of deliveriesRef.current) {
+        if (
+          ord.status === 'en_attente' &&
+          ord.dispatchState === 'offered' &&
+          typeof ord.offerExpiresAt === 'number' &&
+          now >= ord.offerExpiresAt &&
+          (ord.merchantId === activeUid || ord.targetCourierId === activeUid || isAdminAuthenticated)
+        ) {
+          void advanceExpiredOffer(ord.id);
+        }
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [firebaseUser?.uid, firebaseUser?.emailVerified, isAdminAuthenticated, advanceExpiredOffer]);
+
   const createDelivery = (
     newOrderData: Partial<DeliveryOrder>,
-    options?: { clientEmail?: string }
+    options?: {
+      clientEmail?: string;
+      dispatchMode?: 'auto' | 'direct';
+      preferredCourierId?: string | null;
+      offerTimeoutSeconds?: number;
+    }
   ): DeliveryOrder => {
     const randPart = secureRandomInt(1000, 10000);
     const timePart = Date.now().toString(36).toUpperCase().slice(-4);
@@ -2837,9 +3250,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const clientPhone = newOrderData.clientPhone?.trim() || '';
     const clientNote = newOrderData.clientNote?.trim() || '';
     const itemDesc = newOrderData.itemDescription?.trim() || 'Colis';
-    // Ne pas forcer un livreur automatiquement si non spécifié : la course doit rester disponible pour tous les livreurs
     const courierObj = newOrderData.courier || undefined;
     const initialStatus: DeliveryStatus = newOrderData.status || (courierObj ? 'assignee' : 'en_attente');
+    const resolvedDispatchMode: 'auto' | 'direct' = courierObj || options?.dispatchMode === 'direct' ? 'direct' : 'auto';
+    const resolvedPreferredCourierId =
+      options?.preferredCourierId !== undefined
+        ? options.preferredCourierId
+        : (resolvedDispatchMode === 'auto' ? (merchantSettings.preferredCourierId || null) : null);
+    const preferredCourierEntity = resolvedPreferredCourierId
+      ? couriers.find((c) => c.id === resolvedPreferredCourierId)
+      : undefined;
+    const resolvedPreferredCourierName = preferredCourierEntity?.name || merchantSettings.preferredCourierName || null;
+    const resolvedTimeoutSec = clampOfferTimeoutSeconds(
+      options?.offerTimeoutSeconds ?? merchantSettings.dispatchOfferTimeoutSeconds ?? DEFAULT_OFFER_TIMEOUT_SECONDS
+    );
 
     const authenticatedMerchantUid =
       (isDirectorModeActive && isAdminAuthenticated && directorTargetId)
@@ -2878,9 +3302,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       totalCustomerPayable: codVal + calculatedFee,
       courier: courierObj,
       status: initialStatus,
+      dispatchMode: resolvedDispatchMode,
+      dispatchState: courierObj ? 'assigned' : 'searching',
+      preferredCourierId: resolvedPreferredCourierId,
+      preferredCourierName: resolvedPreferredCourierName,
+      offerTimeoutSeconds: resolvedTimeoutSec,
       statusNote: newOrderData.statusNote || (courierObj
         ? `Assignée à ${courierObj.name}`
-        : `Course publiée • Disponible pour tous les livreurs de la zone`),
+        : `Recherche intelligente du livreur le plus proche en cours...`),
       createdAt: new Date().toISOString(),
       estimatedArrival: 'Dans ~20 min',
       otpCode: newOrderData.otpCode || secureRandomInt(1000, 10000).toString(),
@@ -2893,16 +3322,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         {
           id: 't2',
           stepNumber: 2,
-          title: courierObj ? 'Livreur assigné' : 'Diffusion de la course',
-          description: courierObj ? `Attribuée à ${courierObj.name}` : 'Diffusée en temps réel à tous les coursiers disponibles dans la zone',
+          title: courierObj ? 'Livreur assigné' : 'Attribution intelligente GPS',
+          description: courierObj
+            ? `Attribuée à ${courierObj.name}`
+            : 'Recherche du livreur préféré ou du coursier actif le plus proche du point de collecte',
           timestamp: 'Maintenant',
           status: 'completed'
         },
         {
           id: 't3',
           stepNumber: 3,
-          title: courierObj ? 'Mission acceptée' : 'En attente d\'acceptation',
-          description: courierObj ? 'En attente de prise en charge' : 'En attente qu\'un coursier disponible accepte la course',
+          title: courierObj ? 'Mission acceptée' : 'Proposition séquentielle en cours',
+          description: courierObj ? 'En attente de prise en charge' : 'En attente de réponse du livreur ciblé',
           status: 'active'
         },
         { id: 't4', stepNumber: 4, title: 'Colis récupéré', description: 'Point de collecte boutique', status: 'pending' },
@@ -2936,7 +3367,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       roleTarget: 'vendeur'
     });
 
-    // Sync to Firestore collections (strictly conforming to isValidDelivery & private/otp rules)
     const cleanDocId = newId.replace(/[^a-zA-Z0-9_-]/g, '');
     if (newOrder.otpCode) {
       setPrivateOtps((prev) => ({ ...prev, [newId]: newOrder.otpCode! }));
@@ -2963,14 +3393,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deliveryFee: newOrder.deliveryFee,
         totalCustomerPayable: newOrder.totalCustomerPayable,
         status: 'en_attente',
+        dispatchMode: resolvedDispatchMode,
+        dispatchState: courierObj ? 'assigned' : 'searching',
+        preferredCourierId: resolvedPreferredCourierId,
+        preferredCourierName: resolvedPreferredCourierName,
+        offerTimeoutSeconds: resolvedTimeoutSec,
+        rejectedCourierIds: [],
+        expiredCourierIds: [],
+        offerAttempt: 0,
         statusNote: newOrder.statusNote,
         createdAt: Date.now(),
         otpRequired: true,
       };
 
+      const shouldAutoDispatch = !courierObj && initialStatus === 'en_attente' && resolvedDispatchMode === 'auto';
+
       try {
+        const missionInitPromise = (!courierObj || initialStatus === 'en_attente')
+          ? setDoc(doc(db, 'priority_missions', cleanDocId), {
+              id: newId,
+              orderId: newId,
+              merchantId: authenticatedMerchantUid,
+              storeName: resolvedStoreName,
+              pickupCommune: newOrder.pickupLocation.commune || 'Cotonou',
+              dropoffCommune: newOrder.dropoffLocation.commune || 'Cotonou',
+              fee: calculatedFee,
+              cod: codVal,
+              itemDescription: itemDesc,
+              status: 'en_attente',
+              dispatchMode: resolvedDispatchMode,
+              dispatchState: courierObj ? 'assigned' : 'searching',
+              preferredCourierId: resolvedPreferredCourierId,
+              preferredCourierName: resolvedPreferredCourierName,
+              offerTimeoutSeconds: resolvedTimeoutSec,
+              createdAt: Date.now(),
+              urgency: 'high'
+            }).catch((err: any) => {
+              console.error('Erreur synchro priority_missions:', err?.message || err);
+            })
+          : Promise.resolve();
+
         setDoc(doc(db, 'deliveries', cleanDocId), firestoreDeliveryPayload)
           .then(async () => {
+            await missionInitPromise;
             if (newOrder.otpCode) {
               await setDoc(doc(db, 'deliveries', cleanDocId, 'private', 'otp'), {
                 otpCode: newOrder.otpCode,
@@ -2996,12 +3461,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 doc(db, 'deliveries', cleanDocId),
                 {
                   status: initialStatus,
+                  dispatchState: 'assigned',
                   courierId: courierObj.id,
                   courierName: courierObj.name,
                   updatedAt: Date.now(),
                 },
                 { merge: true }
               );
+            }
+            if (shouldAutoDispatch) {
+              await triggerStartDispatch(newOrder, cleanDocId, {
+                preferredCourierId: resolvedPreferredCourierId,
+                offerTimeoutSeconds: resolvedTimeoutSec,
+              });
             }
             if (newOrder.merchantEmail || userProfile?.email) {
               void sendPlatformNotification({
@@ -3046,35 +3518,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    if (!courierObj || initialStatus === 'en_attente') {
-      if (auth.currentUser) {
-        try {
-          setDoc(doc(db, 'priority_missions', cleanDocId), {
-            id: newId,
-            orderId: newId,
-            merchantId: authenticatedMerchantUid,
-            storeName: resolvedStoreName,
-            pickupCommune: newOrder.pickupLocation.commune || 'Cotonou',
-            dropoffCommune: newOrder.dropoffLocation.commune || 'Cotonou',
-            fee: calculatedFee,
-            cod: codVal,
-            itemDescription: itemDesc,
-            status: 'en_attente',
-            createdAt: Date.now(),
-            urgency: 'high'
-          }).catch((err: any) => {
-            console.error('Erreur synchro priority_missions:', err?.message || err);
-          });
-        } catch (err: any) {
-          console.error('Erreur synchro priority_missions:', err?.message || err);
-        }
-      }
-    }
-
     if (courierObj) {
       showToast(`Commande ${newId} créée et assignée à ${courierObj.name}.`, 'success');
     } else {
-      showToast(`Commande ${newId} publiée avec succès ! Diffusée en temps réel aux livreurs.`, 'success');
+      showToast(`Commande ${newId} enregistrée. Recherche du livreur actif le plus proche...`, 'info');
     }
     return newOrder;
   };
@@ -3138,7 +3585,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
-    // Resolve courier entity WITHOUT mutating React state until Firestore transaction succeeds
     let courier: Courier;
     if (customCourier) {
       courier = { ...customCourier, id: authenticatedCourierUid, status: 'en_course' };
@@ -3214,7 +3660,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    // 1. Atomic Firestore transaction FIRST (anti-race-condition)
     const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
     const missionDocRef = doc(db, 'priority_missions', cleanDocId);
     const deliveryDocRef = doc(db, 'deliveries', cleanDocId);
@@ -3222,62 +3667,114 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const nowEpoch = Date.now();
     const nowIso = new Date().toISOString();
 
-    try {
-      await runTransaction(db, async (transaction) => {
-        const [missionSnap, deliverySnap] = await Promise.all([
-          transaction.get(missionDocRef),
-          transaction.get(deliveryDocRef),
-        ]);
-
-        if (!missionSnap.exists() && !deliverySnap.exists()) {
-          throw new Error('MISSION_NOT_FOUND');
-        }
-
-        if (deliverySnap.exists()) {
-          const dData = deliverySnap.data();
-          if (dData.status !== 'en_attente' || Boolean(dData.courierId)) {
-            throw new Error('MISSION_ALREADY_ASSIGNED');
+    let acceptedViaBackend = false;
+    if (auth.currentUser && !isDirectorModeActive) {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch(`/api/deliveries/${encodeURIComponent(cleanDocId)}/dispatch/respond`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ action: 'accept' }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success) {
+          acceptedViaBackend = true;
+        } else if (res.status !== 503 && data?.code !== 'IAM_PERMISSION_DENIED') {
+          if (data?.code === 'ALREADY_ASSIGNED') {
+            showToast("⚡ Cette mission vient d'être prise par un autre livreur.", 'error');
+          } else if (data?.code === 'OFFER_EXPIRED') {
+            showToast("⏱️ Le délai de réponse pour cette proposition a expiré. Elle a été transférée au livreur suivant.", 'error');
+            setDeliveries((prev) => prev.filter((d) => d.id !== orderId && d.id.replace(/^#/, '') !== cleanDocId));
+          } else if (data?.code === 'NOT_TARGETED_COURIER') {
+            showToast("🔒 Cette proposition est actuellement réservée à un autre livreur.", 'error');
+            setDeliveries((prev) => prev.filter((d) => d.id !== orderId && d.id.replace(/^#/, '') !== cleanDocId));
+          } else if (data?.code === 'COURIER_BUSY') {
+            showToast("🚫 Terminez votre course active avant d'en accepter une nouvelle.", 'error');
+          } else {
+            showToast(data?.error || "Impossible d'accepter cette proposition.", 'error');
           }
-        }
-
-        if (missionSnap.exists()) {
-          const mData = missionSnap.data();
-          if (mData.status !== 'en_attente' || Boolean(mData.courierId)) {
-            throw new Error('MISSION_ALREADY_ASSIGNED');
+          if (priorityMissionAlert && (priorityMissionAlert.orderId === orderId || priorityMissionAlert.id === orderId)) {
+            setPriorityMissionAlert(null);
           }
+          return;
         }
-
-        if (missionSnap.exists()) {
-          transaction.update(missionDocRef, {
-            status: 'assignee',
-            courierId: authenticatedCourierUid,
-            courierName: safeCourierName,
-            assignedAt: nowEpoch,
-            updatedAt: nowIso,
-          });
-        }
-
-        if (deliverySnap.exists()) {
-          transaction.update(deliveryDocRef, {
-            status: 'assignee',
-            courierId: authenticatedCourierUid,
-            courierName: safeCourierName,
-            assignedAt: nowEpoch,
-            updatedAt: nowEpoch,
-          });
-        }
-      });
-    } catch (err: any) {
-      console.error('Erreur transaction acceptation mission:', err?.message || err);
-      if (err?.message === 'MISSION_ALREADY_ASSIGNED' || err?.message?.includes('ALREADY_ASSIGNED')) {
-        showToast("⚡ Cette mission vient d'être prise par un autre livreur.", 'error');
-        return;
-      }
-      showToast('Impossible de réserver la mission sur le serveur Firestore.', 'error');
-      return;
+      } catch {}
     }
 
-    // 2. Commit local state ONLY AFTER atomic transaction succeeds
+    if (!acceptedViaBackend) {
+      try {
+        await runTransaction(db, async (transaction) => {
+          const [missionSnap, deliverySnap] = await Promise.all([
+            transaction.get(missionDocRef),
+            transaction.get(deliveryDocRef),
+          ]);
+
+          if (!missionSnap.exists() && !deliverySnap.exists()) {
+            throw new Error('MISSION_NOT_FOUND');
+          }
+
+          if (deliverySnap.exists()) {
+            const dData = deliverySnap.data();
+            if (dData.status !== 'en_attente' || Boolean(dData.courierId)) {
+              throw new Error('MISSION_ALREADY_ASSIGNED');
+            }
+            if (dData.targetCourierId && dData.targetCourierId !== authenticatedCourierUid && !isDirectorModeActive) {
+              throw new Error('NOT_TARGETED_COURIER');
+            }
+          }
+
+          if (missionSnap.exists()) {
+            const mData = missionSnap.data();
+            if (mData.status !== 'en_attente' || Boolean(mData.courierId)) {
+              throw new Error('MISSION_ALREADY_ASSIGNED');
+            }
+          }
+
+          if (missionSnap.exists()) {
+            transaction.update(missionDocRef, {
+              status: 'assignee',
+              dispatchState: 'assigned',
+              targetCourierId: null,
+              targetCourierName: null,
+              courierId: authenticatedCourierUid,
+              courierName: safeCourierName,
+              assignedAt: nowEpoch,
+              updatedAt: nowIso,
+            });
+          }
+
+          if (deliverySnap.exists()) {
+            transaction.update(deliveryDocRef, {
+              status: 'assignee',
+              dispatchState: 'assigned',
+              targetCourierId: null,
+              targetCourierName: null,
+              courierId: authenticatedCourierUid,
+              courierName: safeCourierName,
+              assignedAt: nowEpoch,
+              updatedAt: nowEpoch,
+            });
+          }
+        });
+      } catch (err: any) {
+        console.error('Erreur transaction acceptation mission:', err?.message || err);
+        if (err?.message === 'MISSION_ALREADY_ASSIGNED' || err?.message?.includes('ALREADY_ASSIGNED')) {
+          showToast("⚡ Cette mission vient d'être prise par un autre livreur.", 'error');
+          return;
+        }
+        if (err?.message === 'NOT_TARGETED_COURIER') {
+          showToast("🔒 Cette mission est proposée à un autre livreur pour le moment.", 'error');
+          return;
+        }
+        showToast('Impossible de réserver la mission sur le serveur Firestore.', 'error');
+        return;
+      }
+    }
+
+    // Commit local state ONLY AFTER atomic backend/transaction acceptance succeeds
     setSelectedCourier(courier);
     setCourierSettings(prev => ({
       ...prev,
@@ -3328,7 +3825,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return {
             ...ord,
             courier,
+            courierId: courier.id,
             status: 'acceptee' as const,
+            dispatchState: 'assigned',
+            targetCourierId: null,
+            targetCourierName: null,
             statusNote: `Course acceptée par le livreur (${courier.name}) • En route vers le point de collecte`,
             timeline: updatedTimeline,
           };
@@ -3350,39 +3851,67 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       orderDocId: cleanDocId,
       actionView: 'vendeur_tracking'
     });
-    void dispatchTrustedNotification({
-      type: 'order_accepted',
-      title: '🎉 Mission acceptée par le coursier',
-      message: `La course ${orderId} a été prise en charge par ${courier.name} (${courier.vehicle}).`,
-      orderId,
-      actionView: 'vendeur_tracking',
-      dedupKey: `order_accepted:${cleanDocId}:${authenticatedCourierUid}`,
-    });
+    if (!acceptedViaBackend) {
+      void dispatchTrustedNotification({
+        type: 'order_accepted',
+        title: '🎉 Mission acceptée par le coursier',
+        message: `La course ${orderId} a été prise en charge par ${courier.name} (${courier.vehicle}).`,
+        orderId,
+        actionView: 'vendeur_tracking',
+        dedupKey: `order_accepted:${cleanDocId}:${authenticatedCourierUid}`,
+      });
+    }
     showToast(`🎉 Course ${orderId} acceptée avec succès par ${courier.name} ! Vous êtes assigné à cette livraison.`, 'success');
   };
 
-  const refuseDelivery = (orderId: string, reason?: string) => {
-    setDeliveries(prev =>
-      prev.map(ord => {
-        if (ord.id === orderId) {
-          return {
-            ...ord,
-            status: 'en_attente' as const,
-            statusNote: reason || 'Course déclinée par le livreur • Disponible pour d\'autres coursiers',
-          };
+  const refuseDelivery = async (orderId: string, reason?: string) => {
+    const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
+    const activeUid = auth.currentUser?.uid || firebaseUser?.uid || userProfile?.uid;
+
+    if (priorityMissionAlert && (priorityMissionAlert.orderId === orderId || priorityMissionAlert.id === orderId)) {
+      setPriorityMissionAlert(null);
+    }
+
+    let handledViaBackend = false;
+    if (auth.currentUser) {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch(`/api/deliveries/${encodeURIComponent(cleanDocId)}/dispatch/respond`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ action: 'refuse', reason }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success) {
+          handledViaBackend = true;
+        } else if (res.status !== 503 && data?.code !== 'IAM_PERMISSION_DENIED') {
+          showToast(data?.error || 'Impossible de refuser cette offre.', 'error');
+          return;
         }
-        return ord;
-      })
-    );
-    addAuditLog('system', `Course ${orderId} refusée`, `Déclinée par le coursier`);
-    addNotification({
-      type: 'order_status',
-      title: '⚠️ Course déclinée',
-      message: `La course ${orderId} a été déclinée par le livreur. Elle reste ouverte à la communauté.`,
-      orderId,
-      actionView: 'vendeur_tracking'
-    });
-    showToast(`Course ${orderId} refusée. Elle reste dans la file des livraisons disponibles.`, 'info');
+      } catch {}
+    }
+
+    if (!handledViaBackend && auth.currentUser && activeUid) {
+      const targetOrder = deliveriesRef.current.find((d) => d.id === orderId || d.id.replace(/^#/, '') === cleanDocId);
+      if (targetOrder) {
+        await runClientFallbackDispatch(targetOrder, cleanDocId, {
+          rejectedCourierIds: [...(targetOrder.rejectedCourierIds || []), activeUid],
+        });
+      }
+    }
+
+    // Remove targeted pending mission from this courier's list (it moved to next candidate)
+    if (userProfile?.role === 'livreur' && !isAdminAuthenticated) {
+      setDeliveries((prev) =>
+        prev.filter((ord) => !(ord.id === orderId && ord.status === 'en_attente' && !ord.courierId))
+      );
+    }
+
+    addAuditLog('system', `Course ${orderId} refusée`, `Déclinée par le coursier • Passage au livreur suivant`);
+    showToast(`Course ${orderId} déclinée. Proposition transférée au livreur disponible suivant.`, 'info');
   };
 
   const updateDeliveryStatus = (orderId: string, newStatus: DeliveryStatus, note?: string, callerRoleOverride?: UserRole): { success: boolean; reason?: string } => {
@@ -3859,10 +4388,178 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true };
   };
 
-  const toggleCourierAvailability = () => {
-    // Contrôle KYC obligatoire avant de pouvoir passer en service (En ligne)
+  const syncCourierGpsPosition = React.useCallback(async (coords?: {
+    lat: number;
+    lng: number;
+    accuracyMeters?: number;
+    source?: 'browser_gps' | 'live_watch';
+  }): Promise<boolean> => {
+    const activeUser = auth.currentUser;
+    if (!activeUser || !activeUser.emailVerified) return false;
+
+    let lat = coords?.lat;
+    let lng = coords?.lng;
+    let accuracyMeters = coords?.accuracyMeters;
+    let source = coords?.source || 'browser_gps';
+
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      if (typeof window === 'undefined' || !navigator.geolocation) {
+        setGpsTrackingStatus('unavailable');
+        return false;
+      }
+      try {
+        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 8000,
+            maximumAge: 15000,
+          });
+        });
+        lat = Math.round(pos.coords.latitude * 100000) / 100000;
+        lng = Math.round(pos.coords.longitude * 100000) / 100000;
+        accuracyMeters = Math.round(pos.coords.accuracy);
+        source = 'browser_gps';
+        setGpsTrackingStatus('active');
+      } catch (err: any) {
+        if (err?.code === 1) setGpsTrackingStatus('denied');
+        else setGpsTrackingStatus('unavailable');
+        return false;
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    const gpsFormatted = `${lat.toFixed(4)}° N, ${lng.toFixed(4)}° E`;
+
+    setCourierSettings((prev) => ({
+      ...prev,
+      gpsCoordinates: gpsFormatted,
+    }));
+    setUserProfile((prev) =>
+      prev && prev.uid === activeUser.uid
+        ? {
+            ...prev,
+            locationLat: lat,
+            locationLng: lng,
+            locationUpdatedAt: nowIso,
+            locationSource: source,
+            locationAccuracyMeters: accuracyMeters,
+            gpsCoordinates: gpsFormatted,
+          }
+        : prev
+    );
+
+    let syncedViaBackend = false;
+    try {
+      const token = await activeUser.getIdToken();
+      const res = await fetch('/api/couriers/availability', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          isAvailable: true,
+          lat,
+          lng,
+          accuracyMeters,
+          locationSource: source,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        syncedViaBackend = true;
+      }
+    } catch {}
+
+    if (!syncedViaBackend) {
+      await updateDoc(doc(db, 'users', activeUser.uid), {
+        locationLat: lat,
+        locationLng: lng,
+        locationUpdatedAt: nowIso,
+        locationSource: source,
+        ...(typeof accuracyMeters === 'number' ? { locationAccuracyMeters: accuracyMeters } : {}),
+        gpsCoordinates: gpsFormatted,
+        updatedAt: nowIso,
+      }).catch(() => {});
+    }
+
+    // Update active order tracking coords if courier currently has an assigned order
+    const ongoingOrder = deliveriesRef.current.find(
+      (d) =>
+        (d.courierId === activeUser.uid || d.courier?.id === activeUser.uid) &&
+        (d.status === 'assignee' || d.status === 'acceptee' || d.status === 'colis_recupere' || d.status === 'en_cours')
+    );
+    if (ongoingOrder) {
+      const cleanDocId = ongoingOrder.id.replace(/[^a-zA-Z0-9_-]/g, '');
+      const timeLabel = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      await updateDoc(doc(db, 'deliveries', cleanDocId), {
+        courierLat: lat,
+        courierLng: lng,
+        courierLocationUpdatedAt: timeLabel,
+        updatedAt: Date.now(),
+      }).catch(() => {});
+    }
+
+    return true;
+  }, []);
+
+  // Continuous throttled GPS watch when verified courier is En Ligne
+  useEffect(() => {
+    if (
+      !firebaseUser?.emailVerified ||
+      userProfile?.role !== 'livreur' ||
+      !userProfile?.isKycVerified ||
+      !courierSettings.isAvailable
+    ) {
+      return;
+    }
+    if (typeof window === 'undefined' || !navigator.geolocation) {
+      setGpsTrackingStatus('unavailable');
+      return;
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const lat = Math.round(pos.coords.latitude * 100000) / 100000;
+        const lng = Math.round(pos.coords.longitude * 100000) / 100000;
+        const accuracyMeters = Math.round(pos.coords.accuracy);
+        setGpsTrackingStatus('active');
+
+        const now = Date.now();
+        const last = lastGpsWatchSyncRef.current;
+        const movedKm = last ? computeHaversineDistanceKm({ lat: last.lat, lng: last.lng }, { lat, lng }) : 999;
+        if (!last || now - last.at >= 45000 || movedKm >= 0.05) {
+          lastGpsWatchSyncRef.current = { at: now, lat, lng };
+          void syncCourierGpsPosition({ lat, lng, accuracyMeters, source: 'live_watch' });
+        }
+      },
+      (err) => {
+        if (err?.code === 1) {
+          setGpsTrackingStatus('denied');
+        } else {
+          setGpsTrackingStatus('unavailable');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 20000 }
+    );
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [
+    firebaseUser?.uid,
+    firebaseUser?.emailVerified,
+    userProfile?.role,
+    userProfile?.isKycVerified,
+    courierSettings.isAvailable,
+    syncCourierGpsPosition,
+  ]);
+
+  const toggleCourierAvailability = async () => {
     const activeUid = userProfile?.uid || auth.currentUser?.uid || selectedCourier?.id;
-    if (!courierSettings.isAvailable) {
+    const turningOn = !courierSettings.isAvailable;
+
+    if (turningOn) {
       const isKycApproved =
         Boolean(selectedCourier?.isKycVerified && selectedCourier.id === activeUid) ||
         Boolean(userProfile?.isKycVerified) ||
@@ -3879,11 +4576,110 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    setCourierSettings(prev => {
-      const next = !prev.isAvailable;
-      showToast(next ? '🟢 Vous êtes maintenant DISPONIBLE pour les courses.' : '⏸️ Vous êtes passé EN PAUSE / HORS-LIGNE.', next ? 'success' : 'info');
-      return { ...prev, isAvailable: next };
+    let capturedCoords: { lat: number; lng: number; accuracyMeters?: number } | null = null;
+    if (turningOn && typeof window !== 'undefined' && navigator.geolocation) {
+      try {
+        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 7000,
+            maximumAge: 15000,
+          });
+        });
+        capturedCoords = {
+          lat: Math.round(pos.coords.latitude * 100000) / 100000,
+          lng: Math.round(pos.coords.longitude * 100000) / 100000,
+          accuracyMeters: Math.round(pos.coords.accuracy),
+        };
+        setGpsTrackingStatus('active');
+      } catch (err: any) {
+        if (err?.code === 1) {
+          setGpsTrackingStatus('denied');
+          showToast(
+            '📍 GPS refusé : activez la géolocalisation dans votre navigateur pour recevoir les courses les plus proches.',
+            'error'
+          );
+        } else {
+          setGpsTrackingStatus('unavailable');
+        }
+      }
+    } else if (!turningOn) {
+      setGpsTrackingStatus('idle');
+    }
+
+    setCourierSettings((prev) => {
+      const updated = {
+        ...prev,
+        isAvailable: turningOn,
+        ...(capturedCoords
+          ? { gpsCoordinates: `${capturedCoords.lat.toFixed(4)}° N, ${capturedCoords.lng.toFixed(4)}° E` }
+          : {}),
+      };
+      if (activeUid) {
+        try {
+          localStorage.setItem(`livralink_courier_settings_${activeUid}`, JSON.stringify(updated));
+        } catch {}
+      }
+      return updated;
     });
+
+    if (auth.currentUser && auth.currentUser.emailVerified) {
+      const uid = auth.currentUser.uid;
+      let syncedViaBackend = false;
+      try {
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch('/api/couriers/availability', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            isAvailable: turningOn,
+            ...(capturedCoords
+              ? {
+                  lat: capturedCoords.lat,
+                  lng: capturedCoords.lng,
+                  accuracyMeters: capturedCoords.accuracyMeters,
+                  locationSource: 'browser_gps',
+                }
+              : {}),
+          }),
+        });
+        if (res.ok) syncedViaBackend = true;
+      } catch {}
+
+      if (!syncedViaBackend) {
+        const nowIso = new Date().toISOString();
+        await updateDoc(doc(db, 'users', uid), {
+          isAvailable: turningOn,
+          status: turningOn ? 'en_ligne' : 'hors_ligne',
+          ...(capturedCoords
+            ? {
+                locationLat: capturedCoords.lat,
+                locationLng: capturedCoords.lng,
+                locationUpdatedAt: nowIso,
+                locationSource: 'browser_gps',
+                locationAccuracyMeters: capturedCoords.accuracyMeters,
+              }
+            : {}),
+          updatedAt: nowIso,
+        }).catch(() => {});
+      }
+    }
+
+    if (!turningOn && priorityMissionAlert) {
+      setPriorityMissionAlert(null);
+    }
+
+    showToast(
+      turningOn
+        ? capturedCoords
+          ? '🟢 En ligne avec position GPS active pour les propositions de proximité.'
+          : '🟢 Vous êtes EN LIGNE. Activez le GPS pour recevoir les propositions par proximité.'
+        : '⏸️ Vous êtes passé EN PAUSE / HORS-LIGNE.',
+      turningOn ? 'success' : 'info'
+    );
   };
 
   const inFlightKycSubmitUidsRef = React.useRef<Set<string>>(new Set());
@@ -5416,6 +6212,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setPricingRules,
         fetchDeliveries,
         createDelivery,
+        relaunchDeliveryDispatch,
+        advanceExpiredOffer,
+        loadEligibleCouriers,
+        syncCourierGpsPosition,
+        gpsTrackingStatus,
         acceptDelivery,
         refuseDelivery,
         updateDeliveryStatus,

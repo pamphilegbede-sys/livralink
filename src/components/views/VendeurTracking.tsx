@@ -33,6 +33,7 @@ export const VendeurTracking: React.FC = () => {
     directorTargetName,
     openLivreurSearchModal,
     openRateLivreurModal,
+    relaunchDeliveryDispatch,
   } = useApp();
 
   // Isolation stricte des livraisons pour le suivi vendeur (par UID uniquement)
@@ -54,6 +55,7 @@ export const VendeurTracking: React.FC = () => {
   const [showEmailOtpBox, setShowEmailOtpBox] = useState(false);
   const [otpClientEmail, setOtpClientEmail] = useState('');
   const [sendingEmailOtp, setSendingEmailOtp] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   // Sync active course strictly within merchantDeliveries
   React.useEffect(() => {
@@ -71,6 +73,13 @@ export const VendeurTracking: React.FC = () => {
       void fetchOrderPrivateOtp(currentOrder.id);
     }
   }, [currentOrder?.id, fetchOrderPrivateOtp]);
+
+  React.useEffect(() => {
+    if (currentOrder?.status !== 'en_attente' || !currentOrder?.offerExpiresAt) return;
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [currentOrder?.status, currentOrder?.offerExpiresAt]);
 
   // Calcul dynamique des compteurs de statut pour les onglets
   const countAll = merchantDeliveries.length;
@@ -121,8 +130,7 @@ export const VendeurTracking: React.FC = () => {
   };
 
   const handleRelaunch = (orderId: string) => {
-    openLivreurSearchModal(orderId);
-    showToast(`Recherche de coursier relancée pour ${orderId}`, 'info');
+    void relaunchDeliveryDispatch(orderId);
   };
 
   const currentOtp = (currentOrder?.id && privateOtps[currentOrder.id]) || currentOrder?.otpCode || '••••';
@@ -665,42 +673,134 @@ export const VendeurTracking: React.FC = () => {
                       )}
                     </div>
                   ) : (
-                    <div className="p-4 rounded-2xl bg-amber-50/90 border-2 border-amber-300 space-y-3 shadow-xs">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] uppercase font-bold text-amber-900 tracking-wider flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
-                          <span>Attribution en cours</span>
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full bg-amber-200 text-amber-950 text-[10px] font-black">
-                          Diffusion ouverte
-                        </span>
-                      </div>
+                    (() => {
+                      const isExhausted =
+                        currentOrder.dispatchState === 'exhausted' ||
+                        (!currentOrder.targetCourierId && currentOrder.dispatchState !== 'searching');
+                      const isSearching = currentOrder.dispatchState === 'searching' && !currentOrder.targetCourierId;
+                      const expMs = typeof currentOrder.offerExpiresAt === 'number'
+                        ? currentOrder.offerExpiresAt
+                        : currentOrder.offerExpiresAt
+                        ? Date.parse(String(currentOrder.offerExpiresAt))
+                        : NaN;
+                      const remainingSeconds = Number.isFinite(expMs) ? Math.max(0, Math.ceil((expMs - nowMs) / 1000)) : null;
 
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-800 font-black flex items-center justify-center text-sm shadow-xs border border-amber-200">
-                          <span className="material-symbols-outlined text-xl">podcasts</span>
+                      if (isExhausted) {
+                        return (
+                          <div className="p-4 rounded-2xl bg-red-50/80 dark:bg-red-950/30 border-2 border-red-300 dark:border-red-800 space-y-3 shadow-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] uppercase font-bold text-red-900 dark:text-red-300 tracking-wider flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                                <span>Recherche épuisée</span>
+                              </span>
+                              <span className="px-2 py-0.5 rounded-full bg-red-200 dark:bg-red-900/70 text-red-950 dark:text-red-100 text-[10px] font-black">
+                                Aucun livreur disponible
+                              </span>
+                            </div>
+
+                            <p className="text-xs font-bold text-slate-900 dark:text-white">
+                              Aucun livreur actif et disponible trouvé pour le moment.
+                            </p>
+                            <p className="text-[11px] text-slate-600 dark:text-slate-300 bg-white/80 dark:bg-slate-900/70 p-2.5 rounded-xl border border-red-200 dark:border-red-900 leading-relaxed">
+                              Votre livraison reste enregistrée en attente (aucune suppression). Relancez la recherche dès qu&apos;un coursier passe en ligne ou assignez manuellement.
+                            </p>
+
+                            <div className="pt-1 flex flex-col gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleRelaunch(currentOrder.id)}
+                                className="w-full py-2.5 px-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                              >
+                                <span className="material-symbols-outlined text-sm">refresh</span>
+                                <span>Relancer la recherche</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openLivreurSearchModal(currentOrder.id)}
+                                className="w-full py-2 px-3 bg-white dark:bg-slate-900 hover:bg-slate-50 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                              >
+                                <span className="material-symbols-outlined text-sm">person_search</span>
+                                <span>Assigner manuellement</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      if (isSearching) {
+                        return (
+                          <div className="p-4 rounded-2xl bg-blue-50/80 border-2 border-blue-300 space-y-3 shadow-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] uppercase font-bold text-blue-900 tracking-wider flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-blue-500 animate-ping"></span>
+                                <span>Analyse GPS en cours</span>
+                              </span>
+                            </div>
+                            <p className="text-xs font-bold text-slate-900">
+                              Recherche du livreur le plus proche...
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="p-4 rounded-2xl bg-amber-50/90 border-2 border-amber-300 space-y-3 shadow-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] uppercase font-bold text-amber-900 tracking-wider flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+                              <span>Proposition en cours (Tour #{currentOrder.offerAttempt || 1})</span>
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full bg-amber-200 text-amber-950 text-[10px] font-black">
+                              {remainingSeconds !== null ? `${remainingSeconds}s restantes` : 'Ciblée GPS'}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-800 font-black flex items-center justify-center text-sm shadow-xs border border-amber-200">
+                              <span className="material-symbols-outlined text-xl">my_location</span>
+                            </div>
+                            <div>
+                              <div className="font-bold text-slate-900 text-xs flex items-center gap-1.5 flex-wrap">
+                                <span>Proposé à : {currentOrder.targetCourierName || 'Coursier le plus proche'}</span>
+                                {currentOrder.targetIsPreferred && (
+                                  <span className="px-1.5 py-0.5 rounded bg-amber-200 text-amber-950 text-[10px] font-bold">
+                                    ⭐ Préféré
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-amber-800 font-medium">
+                                {typeof currentOrder.targetCourierDistanceKm === 'number'
+                                  ? `À ${currentOrder.targetCourierDistanceKm} km du point de collecte`
+                                  : 'Sélectionné par proximité GPS'}
+                              </div>
+                            </div>
+                          </div>
+
+                          <p className="text-[11px] text-slate-600 bg-white/80 p-2.5 rounded-xl border border-amber-200 leading-relaxed">
+                            Cette mission est proposée exclusivement à ce coursier. S&apos;il refuse ou ne répond pas avant la fin du délai, elle bascule automatiquement au livreur suivant le plus proche.
+                          </p>
+
+                          <div className="pt-1 flex flex-col gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleRelaunch(currentOrder.id)}
+                              className="w-full py-2 px-3 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-sm">refresh</span>
+                              <span>Relancer la recherche</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openLivreurSearchModal(currentOrder.id)}
+                              className="w-full py-2 px-3 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-sm">person_search</span>
+                              <span>Rechercher &amp; Assigner un livreur</span>
+                            </button>
+                          </div>
                         </div>
-                        <div>
-                          <div className="font-bold text-slate-900 text-xs">Aucun livreur pré-assigné</div>
-                          <div className="text-[11px] text-amber-800 font-medium">Disponible pour tous les livreurs de la zone</div>
-                        </div>
-                      </div>
-
-                      <p className="text-[11px] text-slate-600 bg-white/80 p-2.5 rounded-xl border border-amber-200 leading-relaxed">
-                        Cette livraison est visible en temps réel par tous les livreurs connectés à proximité de <strong>{currentOrder.dropoffLocation.commune}</strong>. Vous pouvez aussi rechercher activement un coursier spécifique et lui assigner la mission.
-                      </p>
-
-                      <div className="pt-1 flex flex-col gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openLivreurSearchModal(currentOrder.id)}
-                          className="w-full py-2.5 px-3 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          <span className="material-symbols-outlined text-sm">person_search</span>
-                          <span>Rechercher &amp; Assigner un livreur</span>
-                        </button>
-                      </div>
-                    </div>
+                      );
+                    })()
                   )}
 
                   {/* Destination Info */}

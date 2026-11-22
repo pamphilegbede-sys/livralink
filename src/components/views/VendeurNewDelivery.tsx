@@ -16,9 +16,19 @@ import {
   formatTravelDuration,
 } from '../../config/maps';
 
+import {
+  rankDispatchCandidates,
+  courierRecordToDispatchInput,
+  evaluateCourierGpsFreshness,
+  computeHaversineDistanceKm,
+  DEFAULT_GPS_MAX_AGE_MS,
+  DEFAULT_OFFER_TIMEOUT_SECONDS,
+} from '../../utils/dispatchEngine';
+
 export const VendeurNewDelivery: React.FC = () => {
   const {
     couriers,
+    loadEligibleCouriers,
     selectedCourier,
     setSelectedCourier,
     createDelivery,
@@ -29,6 +39,7 @@ export const VendeurNewDelivery: React.FC = () => {
     userProfile,
     deliveryDraft,
     setDeliveryDraft,
+    firebaseUser,
   } = useApp();
 
   // Active Wizard Step: 1 = Client, 2 = Colis & Trajet, 3 = Attribution Coursier
@@ -214,10 +225,29 @@ export const VendeurNewDelivery: React.FC = () => {
   const numericCod = typeof codAmount === 'number' ? codAmount : 0;
   const totalClient = numericCod + deliveryFee;
 
-  // Step 3: Attribution Coursier & Diffusion
-  const [dispatchMode, setDispatchMode] = useState<'broadcast' | 'direct'>('broadcast');
+  // Step 3: Attribution Automatique GPS & Livreur Préféré
+  const [dispatchMode, setDispatchMode] = useState<'auto' | 'direct'>('auto');
+  const [preferredCourierId, setPreferredCourierId] = useState<string>(merchantSettings.preferredCourierId || '');
+  const [offerTimeoutSeconds, setOfferTimeoutSeconds] = useState<number>(
+    merchantSettings.dispatchOfferTimeoutSeconds || DEFAULT_OFFER_TIMEOUT_SECONDS
+  );
   const [selectedDriverId, setSelectedDriverId] = useState(selectedCourier?.id || couriers[0]?.id || '');
   const [filterType, setFilterType] = useState<'all' | 'nearest' | 'top'>('all');
+
+  useEffect(() => {
+    if (firebaseUser) {
+      void loadEligibleCouriers();
+    }
+  }, [firebaseUser, loadEligibleCouriers]);
+
+  useEffect(() => {
+    if (merchantSettings.preferredCourierId !== undefined) {
+      setPreferredCourierId(merchantSettings.preferredCourierId || '');
+    }
+    if (merchantSettings.dispatchOfferTimeoutSeconds) {
+      setOfferTimeoutSeconds(merchantSettings.dispatchOfferTimeoutSeconds);
+    }
+  }, [merchantSettings.preferredCourierId, merchantSettings.dispatchOfferTimeoutSeconds]);
 
   // Validation errors
   const [step1Errors, setStep1Errors] = useState<{ name?: string; phone?: string }>({});
@@ -229,14 +259,63 @@ export const VendeurNewDelivery: React.FC = () => {
     dropoffCommune?: string;
   }>({});
 
-  const currentSelectedDriver = couriers.find((c) => c.id === selectedDriverId) || couriers[0];
+  const effectivePickupPoint = useMemo(() => {
+    if (originPos) return originPos;
+    const loc = getLocationForCommune(pickupCommune || merchantSettings.storeCommune || 'Cotonou - Haie Vive');
+    return { lat: loc.lat, lng: loc.lng };
+  }, [originPos, pickupCommune, merchantSettings.storeCommune]);
 
-  // Couriers filtering
-  const displayedDrivers = couriers.filter((c) => {
-    if (filterType === 'nearest') return c.distanceKm <= 2.0;
-    if (filterType === 'top') return c.rating >= 4.9;
-    return true;
-  });
+  const rankedDispatchPreview = useMemo(() => {
+    return rankDispatchCandidates({
+      pickupCoords: effectivePickupPoint,
+      couriers: couriers.map((c) => courierRecordToDispatchInput(c)),
+      preferredCourierId: preferredCourierId || null,
+      gpsMaxAgeMs: DEFAULT_GPS_MAX_AGE_MS,
+    });
+  }, [effectivePickupPoint, couriers, preferredCourierId]);
+
+  const kycVerifiedCouriers = useMemo(
+    () => couriers.filter((c) => c.isKycVerified || c.kycStatus === 'valide'),
+    [couriers]
+  );
+
+  const currentSelectedDriver = couriers.find((c) => c.id === selectedDriverId) || kycVerifiedCouriers[0] || couriers[0];
+
+  // Couriers filtering & distance enrichment
+  const displayedDrivers = useMemo(() => {
+    const candidateRankMap = new Map(
+      rankedDispatchPreview.candidates.map((cand, idx) => [cand.courierId, { rank: idx + 1, cand }])
+    );
+    return couriers
+      .map((c) => {
+        const gpsCheck = evaluateCourierGpsFreshness(courierRecordToDispatchInput(c), Date.now(), DEFAULT_GPS_MAX_AGE_MS);
+        const liveDist =
+          gpsCheck.valid && gpsCheck.coords
+            ? computeHaversineDistanceKm(effectivePickupPoint, gpsCheck.coords)
+            : null;
+        const rankedInfo = candidateRankMap.get(c.id);
+        return {
+          courier: c,
+          gpsCheck,
+          liveDistanceKm: rankedInfo?.cand.distanceKm ?? liveDist,
+          rankOrder: rankedInfo?.rank ?? null,
+          isPreferred: c.id === preferredCourierId,
+        };
+      })
+      .filter((item) => {
+        if (filterType === 'nearest') {
+          return item.liveDistanceKm !== null && item.liveDistanceKm <= 4.0;
+        }
+        if (filterType === 'top') return item.courier.rating >= 4.9;
+        return true;
+      })
+      .sort((a, b) => {
+        if (a.rankOrder !== null && b.rankOrder !== null) return a.rankOrder - b.rankOrder;
+        if (a.rankOrder !== null) return -1;
+        if (b.rankOrder !== null) return 1;
+        return (a.liveDistanceKm ?? 9999) - (b.liveDistanceKm ?? 9999);
+      });
+  }, [couriers, rankedDispatchPreview.candidates, effectivePickupPoint, preferredCourierId, filterType]);
 
   const handleSelectCourier = (courierId: string) => {
     setSelectedDriverId(courierId);
@@ -325,7 +404,7 @@ export const VendeurNewDelivery: React.FC = () => {
     }
   };
 
-  const handleConfirmAssignment = (forceBroadcast = true) => {
+  const handleConfirmAssignment = (forceAuto = true) => {
     if (!validateStep1()) {
       setCurrentStep(1);
       return;
@@ -335,11 +414,10 @@ export const VendeurNewDelivery: React.FC = () => {
       return;
     }
 
-    // Par défaut : diffusion ouverte à tous les livreurs (aucune assignation automatique)
-    const isDirect = dispatchMode === 'direct' && !forceBroadcast;
+    const isDirect = dispatchMode === 'direct' && !forceAuto;
     const assignedDriver = isDirect ? currentSelectedDriver : undefined;
     if (isDirect && !assignedDriver) {
-      showToast('Aucun livreur sélectionné pour une attribution directe. Passez en mode diffusion.', 'error');
+      showToast('Aucun livreur sélectionné pour une attribution directe. Passez en attribution automatique GPS.', 'error');
       return;
     }
 
@@ -370,16 +448,19 @@ export const VendeurNewDelivery: React.FC = () => {
       isFragile,
       itemValueCOD: numericCod,
       deliveryFee,
-      courier: assignedDriver, // undefined en diffusion ouverte
+      courier: assignedDriver,
       status: assignedDriver ? 'assignee' : 'en_attente',
       statusNote: assignedDriver
         ? `Assignée au livreur (${assignedDriver.name})`
-        : `Course publiée • En attente d'acceptation par les livreurs de la zone (${dropoffCommune || 'Bénin'})`
-    }, trimmedClientEmail ? { clientEmail: trimmedClientEmail } : undefined);
+        : 'Recherche automatique du livreur le plus proche en cours...'
+    }, {
+      ...(trimmedClientEmail ? { clientEmail: trimmedClientEmail } : {}),
+      dispatchMode: isDirect ? 'direct' : 'auto',
+      preferredCourierId: isDirect ? null : (preferredCourierId || null),
+      offerTimeoutSeconds,
+    });
 
-    if (!assignedDriver) {
-      showToast(`🚀 Course ${newOrder.id} publiée avec succès ! Elle est désormais disponible pour tous les livreurs de la zone (${dropoffCommune}).`, 'success');
-    } else {
+    if (assignedDriver) {
       showToast(`Course ${newOrder.id} assignée au livreur ${assignedDriver.name}.`, 'success');
     }
 
@@ -467,12 +548,12 @@ export const VendeurNewDelivery: React.FC = () => {
               <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
                 {currentStep === 1 && '1. Coordonnées du Destinataire'}
                 {currentStep === 2 && '2. Détails du Colis & Adresse de Livraison'}
-                {currentStep === 3 && '3. Publication & Diffusion aux Livreurs'}
+                {currentStep === 3 && '3. Attribution Automatique GPS'}
               </h1>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                 {currentStep === 1 && 'Renseignez le nom, téléphone WhatsApp et consignes pour votre client.'}
                 {currentStep === 2 && 'Indiquez la commune de destination, la description du colis et le montant COD.'}
-                {currentStep === 3 && 'Publiez la course : elle sera disponible pour tous les livreurs de la zone pour acceptation immédiate.'}
+                {currentStep === 3 && 'Le système identifie automatiquement le livreur actif et disponible le plus proche du point de collecte (ou votre livreur préféré).'}
               </p>
             </div>
 
@@ -525,7 +606,7 @@ export const VendeurNewDelivery: React.FC = () => {
                     : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
-                <span>3. Diffusion</span>
+                <span>3. Attribution GPS</span>
               </button>
             </div>
           </div>
@@ -1173,8 +1254,8 @@ export const VendeurNewDelivery: React.FC = () => {
                     onClick={goToStep3}
                     className="min-h-[44px] px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-600/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    <span className="hidden sm:inline">Continuer vers Publication &amp; Diffusion</span>
-                    <span className="sm:hidden">Continuer (Étape 3 : Diffusion)</span>
+                    <span className="hidden sm:inline">Continuer vers Attribution GPS</span>
+                    <span className="sm:hidden">Continuer (Étape 3 : Attribution)</span>
                     <span className="material-symbols-outlined text-sm">arrow_forward</span>
                   </button>
                 </div>
@@ -1312,11 +1393,11 @@ export const VendeurNewDelivery: React.FC = () => {
                 <div className="p-5 rounded-3xl bg-slate-900 text-white space-y-4 shadow-md border border-slate-800">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                      <span className="material-symbols-outlined text-base">podcasts</span>
-                      <span>Mode de Validation &amp; Dispatching</span>
+                      <span className="material-symbols-outlined text-base">radar</span>
+                      <span>Mode d&apos;Attribution Intelligente</span>
                     </span>
-                    <span className="text-[10px] bg-amber-400/20 text-amber-300 border border-amber-400/30 px-2 py-0.5 rounded-full font-bold">
-                      {dispatchMode === 'broadcast' ? 'Diffusion Ouverte' : 'Direct'}
+                    <span className="text-[10px] bg-emerald-400/20 text-emerald-300 border border-emerald-400/30 px-2 py-0.5 rounded-full font-bold">
+                      {dispatchMode === 'auto' ? 'Auto GPS (Séquentiel)' : 'Direct'}
                     </span>
                   </div>
 
@@ -1324,15 +1405,15 @@ export const VendeurNewDelivery: React.FC = () => {
                   <div className="grid grid-cols-2 gap-2 p-1 bg-slate-800/80 rounded-2xl text-xs font-bold">
                     <button
                       type="button"
-                      onClick={() => setDispatchMode('broadcast')}
+                      onClick={() => setDispatchMode('auto')}
                       className={`py-2 px-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 ${
-                        dispatchMode === 'broadcast'
-                          ? 'bg-amber-500 text-slate-950 shadow-xs'
+                        dispatchMode === 'auto'
+                          ? 'bg-emerald-500 text-slate-950 shadow-xs'
                           : 'text-slate-300 hover:text-white'
                       }`}
                     >
-                      <span className="material-symbols-outlined text-sm">campaign</span>
-                      <span>Tous les livreurs</span>
+                      <span className="material-symbols-outlined text-sm">my_location</span>
+                      <span>Auto GPS Proche</span>
                     </button>
                     <button
                       type="button"
@@ -1348,18 +1429,69 @@ export const VendeurNewDelivery: React.FC = () => {
                     </button>
                   </div>
 
-                  {dispatchMode === 'broadcast' ? (
+                  {dispatchMode === 'auto' ? (
                     <div className="space-y-3">
+                      <div className="space-y-2 text-xs">
+                        <label className="block text-[11px] font-bold text-slate-300">
+                          Livreur préféré pour cette course (optionnel)
+                        </label>
+                        <select
+                          value={preferredCourierId}
+                          onChange={(e) => setPreferredCourierId(e.target.value)}
+                          className="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-medium outline-none focus:ring-2 focus:ring-emerald-500"
+                        >
+                          <option value="">Aucun — Proposer au plus proche par GPS</option>
+                          {kycVerifiedCouriers.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              ⭐ {c.name} ({c.status === 'en_ligne' && c.isAvailable !== false ? 'En ligne' : c.status === 'en_course' ? 'En course' : 'Hors-ligne'})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-2 text-xs">
+                        <label className="block text-[11px] font-bold text-slate-300">
+                          Délai avant basculement automatique au suivant
+                        </label>
+                        <select
+                          value={offerTimeoutSeconds}
+                          onChange={(e) => setOfferTimeoutSeconds(Number(e.target.value) || DEFAULT_OFFER_TIMEOUT_SECONDS)}
+                          className="w-full p-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-medium outline-none focus:ring-2 focus:ring-emerald-500"
+                        >
+                          <option value={20}>20 secondes</option>
+                          <option value={30}>30 secondes (Recommandé)</option>
+                          <option value={45}>45 secondes</option>
+                          <option value={60}>60 secondes</option>
+                        </select>
+                      </div>
+
                       <p className="text-[11px] text-slate-300 leading-relaxed">
-                        ✅ <strong>Aucune assignation automatique forcée :</strong> La livraison sera disponible instantanément pour l'ensemble des livreurs connectés dans la zone (<strong>{dropoffCommune || 'Bénin'}</strong>). Le premier livreur libre prendra en charge la course.
+                        {rankedDispatchPreview.candidates.length > 0 ? (
+                          <>
+                            🎯 <strong>1er destinataire ciblé :</strong>{' '}
+                            <span className="text-emerald-300 font-bold">
+                              {rankedDispatchPreview.candidates[0].name}
+                            </span>{' '}
+                            {rankedDispatchPreview.candidates[0].isPreferred
+                              ? '(⭐ Livreur préféré prioritaire)'
+                              : rankedDispatchPreview.candidates[0].distanceKm !== null
+                              ? `(à ${rankedDispatchPreview.candidates[0].distanceKm} km du point de collecte)`
+                              : ''}
+                            . S&apos;il refuse ou ne répond pas sous {offerTimeoutSeconds}s, la course bascule automatiquement au suivant.
+                          </>
+                        ) : (
+                          <>
+                            ⚠️ Aucun livreur avec GPS récent et disponible détecté pour l&apos;instant. La course sera enregistrée et vous pourrez relancer la recherche à tout moment.
+                          </>
+                        )}
                       </p>
                       <button
                         type="button"
                         onClick={() => handleConfirmAssignment(true)}
-                        className="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                        className="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
                       >
-                        <span className="material-symbols-outlined text-base font-bold">podcasts</span>
-                        <span>Diffuser la course à tous les livreurs</span>
+                        <span className="material-symbols-outlined text-base font-bold">radar</span>
+                        <span>Lancer l&apos;attribution automatique GPS</span>
                       </button>
                     </div>
                   ) : (
@@ -1381,7 +1513,7 @@ export const VendeurNewDelivery: React.FC = () => {
                 </div>
               </div>
 
-              {/* Right Column: Live Google Maps Route Preview + Couriers Fleet in Zone */}
+              {/* Right Column: Live Google Maps Route Preview + Ranked Couriers */}
               <div className="lg:col-span-7 space-y-5">
                 {/* Visualisation Google Maps & Estimation temps de trajet */}
                 <div className="space-y-2">
@@ -1393,7 +1525,7 @@ export const VendeurNewDelivery: React.FC = () => {
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200 text-[11px]">
                       <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
                       <span>
-                        Zone {dropoffCommune || 'Bénin'} : {couriers.length} livreurs • ~{estimatedDurationText}
+                        {rankedDispatchPreview.candidates.length} livreur(s) éligible(s) GPS • ~{estimatedDurationText}
                       </span>
                     </span>
                   </div>
@@ -1419,14 +1551,14 @@ export const VendeurNewDelivery: React.FC = () => {
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div>
                       <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                        <span>Livreurs connectés dans la zone</span>
+                        <span>Classement GPS &amp; Livreurs vérifiés</span>
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                          {displayedDrivers.length} prêts à accepter
+                          {rankedDispatchPreview.candidates.length} éligible(s) GPS
                         </span>
                       </h3>
                       <p className="text-xs text-slate-500">
-                        {dispatchMode === 'broadcast'
-                          ? 'Tous ces coursiers recevront la notification en temps réel dès votre validation.'
+                        {dispatchMode === 'auto'
+                          ? 'Ordre de priorité séquentiel : seul le 1er livreur disponible reçoit la proposition.'
                           : 'Cliquez sur un livreur pour lui attribuer directement cette course.'}
                       </p>
                     </div>
@@ -1447,23 +1579,30 @@ export const VendeurNewDelivery: React.FC = () => {
                           filterType === 'nearest' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'
                         }`}
                       >
-                        Plus proche
+                        Proches (&le;4 km)
                       </button>
                     </div>
                   </div>
 
-                  {dispatchMode === 'broadcast' && (
-                    <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-900 flex items-center gap-2.5">
-                      <span className="material-symbols-outlined text-lg text-amber-600 shrink-0">info</span>
+                  {dispatchMode === 'auto' && (
+                    <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2.5">
+                      <span className="material-symbols-outlined text-lg text-emerald-600 shrink-0">radar</span>
                       <p className="leading-snug">
-                        <strong>Mode Diffusion Active :</strong> La livraison ne sera pas bloquée sur un seul livreur. Le premier coursier disponible qui accepte la mission sur son écran la prendra en charge.
+                        <strong>Attribution Intelligente Active :</strong> Aucune diffusion massive. Le système propose la course uniquement au livreur prioritaire (préféré ou plus proche avec GPS valide &lt; 10 min) avec bascule automatique en cas de refus ou d&apos;expiration.
                       </p>
                     </div>
                   )}
 
                   <div className="space-y-2.5">
-                    {displayedDrivers.map((courier) => {
+                    {displayedDrivers.map(({ courier, gpsCheck, liveDistanceKm, rankOrder, isPreferred }) => {
                       const isSelected = courier.id === selectedDriverId && dispatchMode === 'direct';
+                      const isOnline = courier.status === 'en_ligne' && courier.isAvailable !== false;
+                      const gpsLabel = gpsCheck.valid
+                        ? 'GPS actif'
+                        : gpsCheck.reason === 'stale_gps'
+                        ? 'GPS expiré'
+                        : 'GPS indisponible';
+
                       return (
                         <div
                           key={courier.id}
@@ -1471,32 +1610,51 @@ export const VendeurNewDelivery: React.FC = () => {
                           className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
                             isSelected
                               ? 'border-2 border-blue-600 bg-blue-50/50 shadow-sm ring-2 ring-blue-600/20'
+                              : rankOrder === 1
+                              ? 'border-emerald-300 bg-emerald-50/30 hover:border-emerald-400'
                               : 'border-slate-200 bg-white hover:border-slate-300'
                           }`}
                         >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-700 font-extrabold flex items-center justify-center text-sm">
-                                {courier.avatarInitials}
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-700 font-extrabold flex items-center justify-center text-sm shrink-0">
+                                {rankOrder !== null ? `#${rankOrder}` : courier.avatarInitials}
                               </div>
-                              <div>
-                                <h4 className="font-bold text-xs sm:text-sm text-slate-900 flex items-center gap-1.5">
+                              <div className="min-w-0">
+                                <h4 className="font-bold text-xs sm:text-sm text-slate-900 flex items-center gap-1.5 flex-wrap">
                                   <span>{courier.name}</span>
                                   <span className="text-[10px] font-semibold text-slate-500">({courier.vehicle})</span>
+                                  {isPreferred && (
+                                    <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-extrabold">
+                                      ⭐ Préféré
+                                    </span>
+                                  )}
                                 </h4>
-                                <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
+                                <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5 flex-wrap">
                                   <span className="text-amber-600 font-bold flex items-center">
                                     ★ {courier.rating}
                                   </span>
                                   <span>•</span>
-                                  <span>{courier.totalDeliveries} courses</span>
+                                  <span className={isOnline ? 'text-emerald-700 font-bold' : 'text-slate-500'}>
+                                    {isOnline ? 'En ligne' : courier.status === 'en_course' ? 'En course' : 'Hors-ligne'}
+                                  </span>
                                   <span>•</span>
-                                  <span className="text-emerald-700 font-bold">~{courier.etaMinutes} min ({courier.distanceKm} km)</span>
+                                  <span className={gpsCheck.valid ? 'text-blue-700 font-bold' : 'text-amber-700'}>
+                                    {gpsLabel}
+                                  </span>
+                                  {liveDistanceKm !== null && (
+                                    <>
+                                      <span>•</span>
+                                      <span className="text-emerald-700 font-bold">
+                                        {liveDistanceKm} km du retrait
+                                      </span>
+                                    </>
+                                  )}
                                 </div>
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-3 shrink-0">
                               <span className="font-extrabold text-blue-700 text-xs sm:text-sm">
                                 {deliveryFee.toLocaleString('fr-FR')} F
                               </span>
@@ -1526,15 +1684,15 @@ export const VendeurNewDelivery: React.FC = () => {
                     <span>Retour : Colis</span>
                   </button>
 
-                  {dispatchMode === 'broadcast' ? (
+                  {dispatchMode === 'auto' ? (
                     <button
                       type="button"
                       onClick={() => handleConfirmAssignment(true)}
-                      className="min-h-[44px] flex-1 py-3.5 px-6 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-blue-600/30 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer text-center"
+                      className="min-h-[44px] flex-1 py-3.5 px-6 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-emerald-600/30 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer text-center"
                     >
-                      <span className="material-symbols-outlined text-lg">podcasts</span>
-                      <span className="hidden sm:inline">Diffuser &amp; Rendre disponible à tous les livreurs</span>
-                      <span className="sm:hidden">Diffuser la course à tous les livreurs</span>
+                      <span className="material-symbols-outlined text-lg">radar</span>
+                      <span className="hidden sm:inline">Publier &amp; Lancer l&apos;attribution GPS</span>
+                      <span className="sm:hidden">Lancer l&apos;attribution GPS</span>
                     </button>
                   ) : (
                     <button

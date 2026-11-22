@@ -33,6 +33,13 @@ export interface UserProfile {
   locationLat?: number;
   locationLng?: number;
   locationUpdatedAt?: string;
+  locationSource?: 'browser_gps' | 'benin_default' | 'live_watch' | 'manual' | string;
+  locationAccuracyMeters?: number;
+  status?: string;
+  isAvailable?: boolean;
+  preferredCourierId?: string;
+  preferredCourierName?: string;
+  dispatchOfferTimeoutSeconds?: number;
   isKycVerified?: boolean;
   kycStatus?: 'non_soumis' | 'en_attente' | 'valide' | 'refuse';
   kycRejectionReason?: string;
@@ -225,6 +232,12 @@ export const buildFirestoreUserPayload = (
   }
   if (typeof profile.locationUpdatedAt === 'string' && profile.locationUpdatedAt.trim()) {
     payload.locationUpdatedAt = profile.locationUpdatedAt.trim().slice(0, 64);
+  }
+  if (typeof profile.locationSource === 'string' && profile.locationSource.trim()) {
+    payload.locationSource = profile.locationSource.trim().slice(0, 32);
+  }
+  if (typeof profile.locationAccuracyMeters === 'number' && Number.isFinite(profile.locationAccuracyMeters)) {
+    payload.locationAccuracyMeters = profile.locationAccuracyMeters;
   }
 
   return payload;
@@ -499,6 +512,8 @@ export const detectAndSaveUserLocation = async (
         locationLat: detected.lat,
         locationLng: detected.lng,
         locationUpdatedAt: detected.detectedAt,
+        locationSource: detected.source,
+        ...(typeof detected.accuracyMeters === 'number' ? { locationAccuracyMeters: detected.accuracyMeters } : {}),
       };
 
       if (userProfile?.role === 'vendeur') {

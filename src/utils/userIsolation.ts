@@ -40,6 +40,11 @@ export const createFreshMerchantSettings = (profile?: Partial<UserProfile> | nul
     channelEmail: true,
     defaultPaymentMethod: cleanPhone ? `Mobile Money (${cleanPhone})` : '',
     twoFactorAuth: false,
+    preferredCourierId: (profile as any)?.preferredCourierId || undefined,
+    preferredCourierName: (profile as any)?.preferredCourierName || undefined,
+    dispatchOfferTimeoutSeconds: typeof (profile as any)?.dispatchOfferTimeoutSeconds === 'number'
+      ? (profile as any).dispatchOfferTimeoutSeconds
+      : 30,
   };
 };
 
@@ -60,7 +65,7 @@ export const createFreshCourierSettings = (profile?: Partial<UserProfile> | null
     email: cleanEmail,
     parkingBaseAddress: cleanBase,
     gpsCoordinates: profile?.gpsCoordinates,
-    isAvailable: Boolean(profile?.isKycVerified || profile?.kycStatus === 'valide'),
+    isAvailable: Boolean((profile?.isKycVerified || profile?.kycStatus === 'valide') && (profile as any)?.isAvailable !== false && (profile as any)?.status !== 'hors_ligne'),
     workingHours: 'Lundi à Samedi de 08:00 à 19:00',
     soundAlerts: true,
     activeZones: profile?.locationCommune ? [profile.locationCommune] : [],
@@ -101,7 +106,13 @@ export const createFreshCourierEntity = (profile: Partial<UserProfile> & { uid: 
     zone: profile.locationCommune || 'Cotonou & Alentours',
     distanceKm: 0.8,
     etaMinutes: 5,
-    status: isKycAccredited ? 'en_ligne' : 'hors_ligne',
+    status: isKycAccredited && (profile as any)?.status !== 'hors_ligne' ? 'en_ligne' : 'hors_ligne',
+    isAvailable: isKycAccredited && (profile as any)?.isAvailable !== false && (profile as any)?.status !== 'hors_ligne',
+    locationLat: typeof profile.locationLat === 'number' ? profile.locationLat : undefined,
+    locationLng: typeof profile.locationLng === 'number' ? profile.locationLng : undefined,
+    locationUpdatedAt: profile.locationUpdatedAt,
+    locationSource: profile.locationSource,
+    locationAccuracyMeters: profile.locationAccuracyMeters,
     walletBalanceFCFA: 0,
     priceFCFA: 2000,
     commissionFCFA: 0,

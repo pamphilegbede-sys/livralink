@@ -120,6 +120,12 @@ service cloud.firestore {
              (!('locationLat' in data) || (data.locationLat is number)) &&
              (!('locationLng' in data) || (data.locationLng is number)) &&
              (!('locationUpdatedAt' in data) || (data.locationUpdatedAt is string && data.locationUpdatedAt.size() <= 64)) &&
+             (!('locationSource' in data) || (data.locationSource is string && data.locationSource in ['browser_gps', 'benin_default', 'live_watch', 'manual'])) &&
+             (!('locationAccuracyMeters' in data) || (data.locationAccuracyMeters is number && data.locationAccuracyMeters >= 0)) &&
+             (!('isAvailable' in data) || (data.isAvailable is bool)) &&
+             (!('preferredCourierId' in data) || data.preferredCourierId == null || (data.preferredCourierId is string && data.preferredCourierId.size() <= 128)) &&
+             (!('preferredCourierName' in data) || data.preferredCourierName == null || (data.preferredCourierName is string && data.preferredCourierName.size() <= 128)) &&
+             (!('dispatchOfferTimeoutSeconds' in data) || (data.dispatchOfferTimeoutSeconds is number && data.dispatchOfferTimeoutSeconds >= 15 && data.dispatchOfferTimeoutSeconds <= 180)) &&
              (!('mfaEnabled' in data) || (data.mfaEnabled is bool));
     }
 
@@ -135,6 +141,7 @@ service cloud.firestore {
                'storeName', 'storeCommune', 'storeAddress', 'storeCoordinates',
                'vehicleType', 'gpsCoordinates', 'locationCommune', 'locationAddress',
                'locationLat', 'locationLng', 'locationUpdatedAt',
+               'locationSource', 'locationAccuracyMeters', 'isAvailable',
                'isKycVerified', 'kycStatus', 'kycRejectionReason', 'kycSubmittedAt',
                'mfaEnabled', 'mfaMethod',
                'createdAt', 'updatedAt'
@@ -156,6 +163,14 @@ service cloud.firestore {
              (!('itemValueCOD' in data) || (data.itemValueCOD is number && data.itemValueCOD >= 0)) &&
              (!('courierId' in data) || (data.courierId is string && data.courierId.size() >= 1 && data.courierId.size() <= 128)) &&
              (!('courierName' in data) || (data.courierName is string && data.courierName.size() <= 128)) &&
+             (!('dispatchMode' in data) || data.dispatchMode in ['auto', 'direct']) &&
+             (!('dispatchState' in data) || data.dispatchState in ['idle', 'searching', 'offered', 'assigned', 'exhausted']) &&
+             (!('preferredCourierId' in data) || data.preferredCourierId == null || (data.preferredCourierId is string && data.preferredCourierId.size() <= 128)) &&
+             (!('targetCourierId' in data) || data.targetCourierId == null || (data.targetCourierId is string && data.targetCourierId.size() <= 128)) &&
+             (!('offerAttempt' in data) || (data.offerAttempt is number && data.offerAttempt >= 0)) &&
+             (!('offerTimeoutSeconds' in data) || (data.offerTimeoutSeconds is number && data.offerTimeoutSeconds >= 15 && data.offerTimeoutSeconds <= 180)) &&
+             (!('offerStartedAt' in data) || data.offerStartedAt is number) &&
+             (!('offerExpiresAt' in data) || data.offerExpiresAt is number) &&
              (!('otpRequired' in data) || data.otpRequired is bool);
     }
 
@@ -230,7 +245,11 @@ service cloud.firestore {
             (!('role' in existing()) || existing().role == '') &&
             incoming().role in ['client', 'vendeur', 'livreur']
           )) &&
-          (!('status' in incoming()) || ('status' in existing() && incoming().status == existing().status)) &&
+          (
+            !('status' in incoming()) ||
+            ('status' in existing() && incoming().status == existing().status) ||
+            (isLivreur() && (!('status' in existing()) || existing().status in ['en_ligne', 'hors_ligne', 'actif']) && incoming().status in ['en_ligne', 'hors_ligne'])
+          ) &&
           (!('isKycVerified' in incoming()) || ('isKycVerified' in existing() && incoming().isKycVerified == existing().isKycVerified) || (!('isKycVerified' in existing()) && incoming().isKycVerified == false)) &&
           (!('preferredRateDiscountPercent' in incoming()) || ('preferredRateDiscountPercent' in existing() && incoming().preferredRateDiscountPercent == existing().preferredRateDiscountPercent) || (!('preferredRateDiscountPercent' in existing()) && incoming().preferredRateDiscountPercent == 0)) &&
           (
@@ -243,6 +262,8 @@ service cloud.firestore {
             'storeName', 'storeCommune', 'storeAddress', 'storeCoordinates',
             'vehicleType', 'gpsCoordinates', 'locationCommune', 'locationAddress',
             'locationLat', 'locationLng', 'locationUpdatedAt',
+            'locationSource', 'locationAccuracyMeters', 'status', 'isAvailable',
+            'preferredCourierId', 'preferredCourierName', 'dispatchOfferTimeoutSeconds',
             'kycStatus', 'kycSubmittedAt',
             'mfaEnabled', 'mfaMethod', 'updatedAt'
           ])
@@ -260,7 +281,12 @@ service cloud.firestore {
         resource.data.merchantId == request.auth.uid ||
         getCourierId(resource.data) == request.auth.uid ||
         ('clientId' in resource.data && resource.data.clientId == request.auth.uid) ||
-        (isKycVerifiedLivreur() && resource.data.status == 'en_attente' && noCourierAssigned(resource.data))
+        (
+          isKycVerifiedLivreur() &&
+          resource.data.status == 'en_attente' &&
+          noCourierAssigned(resource.data) &&
+          ('targetCourierId' in resource.data && resource.data.targetCourierId == request.auth.uid)
+        )
       );
 
       allow list: if hasVerifiedEmail() && (
@@ -268,7 +294,7 @@ service cloud.firestore {
         (isVendeur() && resource.data.merchantId == request.auth.uid) ||
         (isKycVerifiedLivreur() && (
           resource.data.courierId == request.auth.uid ||
-          resource.data.status == 'en_attente'
+          resource.data.targetCourierId == request.auth.uid
         )) ||
         (isClient() && 'clientId' in resource.data && resource.data.clientId == request.auth.uid)
       );
@@ -288,7 +314,12 @@ service cloud.firestore {
                       'pickupLocation', 'dropoffLocation', 'itemDescription', 'itemWeightKg',
                       'itemFormat', 'isFragile', 'itemValueCOD', 'deliveryFee',
                       'totalCustomerPayable', 'status', 'statusNote', 'createdAt',
-                      'updatedAt', 'estimatedArrival', 'otpRequired', 'timeline'
+                      'updatedAt', 'estimatedArrival', 'otpRequired', 'timeline',
+                      'dispatchMode', 'dispatchState', 'preferredCourierId', 'preferredCourierName',
+                      'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
+                      'candidateQueue', 'rejectedCourierIds', 'expiredCourierIds',
+                      'offerAttempt', 'offerTimeoutSeconds', 'offerStartedAt', 'offerExpiresAt',
+                      'dispatchFailureReason'
                     ]);
 
       allow update: if isValidId(deliveryId) &&
@@ -311,7 +342,7 @@ service cloud.firestore {
                       (
                         !(existing().status in ['livree', 'echec']) &&
                         (
-                          // Owning vendor edits while still pending and unassigned
+                          // Owning vendor edits or dispatches while still pending and unassigned
                           (
                             isVendeur() &&
                             existing().merchantId == request.auth.uid &&
@@ -323,21 +354,46 @@ service cloud.firestore {
                               'clientName', 'clientPhone', 'clientNote', 'itemDescription',
                               'itemWeightKg', 'itemFormat', 'isFragile',
                               'itemValueCOD', 'deliveryFee', 'totalCustomerPayable',
-                              'pickupLocation', 'dropoffLocation', 'updatedAt'
+                              'pickupLocation', 'dropoffLocation', 'statusNote', 'updatedAt',
+                              'dispatchMode', 'dispatchState', 'preferredCourierId', 'preferredCourierName',
+                              'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
+                              'candidateQueue', 'rejectedCourierIds', 'expiredCourierIds',
+                              'offerAttempt', 'offerTimeoutSeconds', 'offerStartedAt', 'offerExpiresAt',
+                              'dispatchFailureReason'
                             ])
                           ) ||
-                          // KYC-verified courier claiming an open unassigned mission
+                          // KYC-verified courier claiming an open or targeted unassigned mission
                           (
                             isKycVerifiedLivreur() &&
                             existing().status == 'en_attente' &&
                             noCourierAssigned(existing()) &&
+                            (!('targetCourierId' in existing()) || existing().targetCourierId == null || existing().targetCourierId == request.auth.uid) &&
                             'courierId' in incoming() &&
                             incoming().courierId is string &&
                             incoming().courierId == request.auth.uid &&
                             (!('courier' in incoming()) || (incoming().courier is map && incoming().courier.id == request.auth.uid)) &&
+                            (!('dispatchState' in incoming()) || incoming().dispatchState == 'assigned') &&
+                            (!('targetCourierId' in incoming()) || incoming().targetCourierId == null) &&
                             incoming().status in ['assignee', 'acceptee'] &&
                             incoming().diff(existing()).affectedKeys().hasOnly([
-                              'courierId', 'courierName', 'courier', 'assignedAt', 'status', 'statusNote', 'updatedAt'
+                              'courierId', 'courierName', 'courier', 'assignedAt', 'status', 'statusNote',
+                              'dispatchState', 'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
+                              'updatedAt'
+                            ])
+                          ) ||
+                          // Targeted KYC-verified courier refusing or advancing own offer sequentially
+                          (
+                            isKycVerifiedLivreur() &&
+                            existing().status == 'en_attente' &&
+                            noCourierAssigned(existing()) &&
+                            'targetCourierId' in existing() &&
+                            existing().targetCourierId == request.auth.uid &&
+                            noCourierAssigned(incoming()) &&
+                            incoming().status == 'en_attente' &&
+                            incoming().diff(existing()).affectedKeys().hasOnly([
+                              'dispatchState', 'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
+                              'candidateQueue', 'rejectedCourierIds', 'expiredCourierIds',
+                              'offerAttempt', 'offerStartedAt', 'offerExpiresAt', 'dispatchFailureReason', 'statusNote', 'updatedAt'
                             ])
                           ) ||
                           // Assigned KYC-verified courier advancing pickup/transit/failure (NOT 'livree'!)
@@ -545,7 +601,7 @@ service cloud.firestore {
       allow get: if isValidId(missionId) && hasVerifiedEmail() && (
         isAdmin() ||
         (isKycVerifiedLivreur() && (
-          (resource.data.status == 'en_attente' && noCourierAssigned(resource.data)) ||
+          (resource.data.status == 'en_attente' && noCourierAssigned(resource.data) && 'targetCourierId' in resource.data && resource.data.targetCourierId == request.auth.uid) ||
           getCourierId(resource.data) == request.auth.uid
         )) ||
         (isVendeur() && ('merchantId' in resource.data && resource.data.merchantId == request.auth.uid))
@@ -554,7 +610,7 @@ service cloud.firestore {
       allow list: if hasVerifiedEmail() && (
         isAdmin() ||
         (isKycVerifiedLivreur() && (
-          resource.data.status == 'en_attente' ||
+          resource.data.targetCourierId == request.auth.uid ||
           resource.data.courierId == request.auth.uid
         )) ||
         (isVendeur() && resource.data.merchantId == request.auth.uid)
@@ -569,6 +625,9 @@ service cloud.firestore {
                     incoming().keys().hasOnly([
                       'id', 'orderId', 'merchantId', 'storeName', 'pickupCommune',
                       'dropoffCommune', 'fee', 'cod', 'itemDescription', 'urgency',
+                      'dispatchMode', 'dispatchState', 'preferredCourierId', 'preferredCourierName',
+                      'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
+                      'offerAttempt', 'offerTimeoutSeconds', 'offerStartedAt', 'offerExpiresAt',
                       'status', 'createdAt', 'updatedAt'
                     ]);
 
@@ -592,19 +651,41 @@ service cloud.firestore {
                             incoming().status == existing().status &&
                             incoming().diff(existing()).affectedKeys().hasOnly([
                               'fee', 'cod', 'pickupCommune', 'dropoffCommune', 'itemDescription',
-                              'storeName', 'urgency', 'updatedAt'
+                              'storeName', 'urgency',
+                              'dispatchMode', 'dispatchState', 'preferredCourierId', 'preferredCourierName',
+                              'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
+                              'offerAttempt', 'offerTimeoutSeconds', 'offerStartedAt', 'offerExpiresAt',
+                              'updatedAt'
                             ])
                           ) ||
                           (
                             isKycVerifiedLivreur() &&
                             existing().status == 'en_attente' &&
                             noCourierAssigned(existing()) &&
+                            (!('targetCourierId' in existing()) || existing().targetCourierId == null || existing().targetCourierId == request.auth.uid) &&
                             incoming().status in ['assignee', 'acceptee'] &&
                             'courierId' in incoming() &&
                             incoming().courierId is string &&
                             incoming().courierId == request.auth.uid &&
+                            (!('dispatchState' in incoming()) || incoming().dispatchState == 'assigned') &&
+                            (!('targetCourierId' in incoming()) || incoming().targetCourierId == null) &&
                             incoming().diff(existing()).affectedKeys().hasOnly([
-                              'status', 'courierId', 'courierName', 'assignedAt', 'updatedAt'
+                              'status', 'courierId', 'courierName', 'assignedAt',
+                              'dispatchState', 'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
+                              'updatedAt'
+                            ])
+                          ) ||
+                          (
+                            isKycVerifiedLivreur() &&
+                            existing().status == 'en_attente' &&
+                            noCourierAssigned(existing()) &&
+                            'targetCourierId' in existing() &&
+                            existing().targetCourierId == request.auth.uid &&
+                            noCourierAssigned(incoming()) &&
+                            incoming().status == 'en_attente' &&
+                            incoming().diff(existing()).affectedKeys().hasOnly([
+                              'dispatchState', 'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
+                              'offerAttempt', 'offerStartedAt', 'offerExpiresAt', 'updatedAt'
                             ])
                           ) ||
                           (

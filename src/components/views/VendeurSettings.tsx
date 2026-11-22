@@ -26,6 +26,9 @@ export const VendeurSettings: React.FC = () => {
     userProfile,
     detectedLocation,
     detectAndSaveLocation,
+    couriers,
+    loadEligibleCouriers,
+    firebaseUser,
   } = useApp();
 
   // Active Tab: 0 = Profil, 1 = Expéditions, 2 = Paiements, 3 = Notifications & Thème
@@ -42,6 +45,11 @@ export const VendeurSettings: React.FC = () => {
   const [frequentZones, setFrequentZones] = useState<string[]>(merchantSettings.frequentZones || []);
   const [permanentInstructions, setPermanentInstructions] = useState(merchantSettings.permanentInstructions || '');
   const [defaultPaymentMethod, setDefaultPaymentMethod] = useState(merchantSettings.defaultPaymentMethod || 'Règlement Direct (Cash / MoMo)');
+  const [preferredCourierId, setPreferredCourierId] = useState<string>(merchantSettings.preferredCourierId || '');
+  const [preferredCourierName, setPreferredCourierName] = useState<string>(merchantSettings.preferredCourierName || '');
+  const [dispatchOfferTimeoutSeconds, setDispatchOfferTimeoutSeconds] = useState<number>(
+    merchantSettings.dispatchOfferTimeoutSeconds || 30
+  );
 
   // Notifications
   const [notifyOnCreated, setNotifyOnCreated] = useState(merchantSettings.notifyOnCreated);
@@ -57,6 +65,12 @@ export const VendeurSettings: React.FC = () => {
   const [isRunningTests, setIsRunningTests] = useState(false);
 
   useEffect(() => {
+    if (firebaseUser) {
+      void loadEligibleCouriers();
+    }
+  }, [firebaseUser, loadEligibleCouriers]);
+
+  useEffect(() => {
     setStoreName(merchantSettings.storeName);
     setManagerName(merchantSettings.managerName);
     setPhone(merchantSettings.phone);
@@ -67,6 +81,9 @@ export const VendeurSettings: React.FC = () => {
     setFrequentZones(merchantSettings.frequentZones || []);
     setPermanentInstructions(merchantSettings.permanentInstructions || '');
     setDefaultPaymentMethod(merchantSettings.defaultPaymentMethod || 'Règlement Direct (Cash / MoMo)');
+    setPreferredCourierId(merchantSettings.preferredCourierId || '');
+    setPreferredCourierName(merchantSettings.preferredCourierName || '');
+    setDispatchOfferTimeoutSeconds(merchantSettings.dispatchOfferTimeoutSeconds || 30);
     setNotifyOnCreated(merchantSettings.notifyOnCreated);
     setNotifyOnStatusChange(merchantSettings.notifyOnStatusChange);
     setNotifyOnCourierAssigned(merchantSettings.notifyOnCourierAssigned);
@@ -105,6 +122,11 @@ export const VendeurSettings: React.FC = () => {
       return;
     }
 
+    const selectedPrefCourier = couriers.find((c) => c.id === preferredCourierId);
+    const resolvedPrefName = preferredCourierId
+      ? (selectedPrefCourier?.name || preferredCourierName || '')
+      : '';
+
     const coords = storeCommune ? getLocationForCommune(storeCommune) : undefined;
     const updated: typeof merchantSettings = {
       ...merchantSettings,
@@ -120,6 +142,9 @@ export const VendeurSettings: React.FC = () => {
       frequentZones,
       permanentInstructions,
       defaultPaymentMethod,
+      preferredCourierId: preferredCourierId || undefined,
+      preferredCourierName: resolvedPrefName || undefined,
+      dispatchOfferTimeoutSeconds,
       notifyOnCreated,
       notifyOnStatusChange,
       notifyOnCourierAssigned,
@@ -148,6 +173,9 @@ export const VendeurSettings: React.FC = () => {
           storeName: storeName.trim(),
           storeCommune,
           storeAddress: defaultPickupAddress.trim(),
+          preferredCourierId: preferredCourierId || null,
+          preferredCourierName: resolvedPrefName || null,
+          dispatchOfferTimeoutSeconds,
           ...(coords ? { storeCoordinates: [coords.lat, coords.lng] } : {}),
           updatedAt: new Date().toISOString(),
         });
@@ -584,6 +612,64 @@ export const VendeurSettings: React.FC = () => {
                     placeholder="Ex: Appeler avant de venir en boutique."
                     className="w-full p-2 text-xs rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-600"
                   />
+                </div>
+              </div>
+
+              {/* Attribution Automatique GPS & Livreur Préféré */}
+              <div className="p-4 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 space-y-4 text-xs">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h3 className="font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-indigo-600 dark:text-indigo-400 text-base">radar</span>
+                      <span>Attribution Automatique GPS &amp; Livreur Préféré</span>
+                    </h3>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
+                      Vos nouvelles livraisons sont proposées en priorité à votre livreur préféré s&apos;il est actif et disponible, sinon automatiquement au livreur GPS le plus proche.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="block font-bold text-slate-700 dark:text-slate-200">
+                      Livreur préféré par défaut
+                    </label>
+                    <select
+                      value={preferredCourierId}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setPreferredCourierId(val);
+                        const match = couriers.find((c) => c.id === val);
+                        setPreferredCourierName(match?.name || '');
+                      }}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-600 font-medium"
+                    >
+                      <option value="">Aucun (attribution GPS automatique au plus proche)</option>
+                      {couriers
+                        .filter((c) => c.isKycVerified || c.kycStatus === 'valide')
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>
+                            ⭐ {c.name} ({c.vehicle} • {c.status === 'en_ligne' && c.isAvailable !== false ? 'En ligne' : c.status === 'en_course' ? 'En course' : 'Hors-ligne'})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block font-bold text-slate-700 dark:text-slate-200">
+                      Délai d&apos;expiration par proposition
+                    </label>
+                    <select
+                      value={dispatchOfferTimeoutSeconds}
+                      onChange={(e) => setDispatchOfferTimeoutSeconds(Number(e.target.value) || 30)}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-600 font-medium"
+                    >
+                      <option value={20}>20 secondes</option>
+                      <option value={30}>30 secondes (Recommandé)</option>
+                      <option value={45}>45 secondes</option>
+                      <option value={60}>60 secondes</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 

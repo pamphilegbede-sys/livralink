@@ -23,6 +23,7 @@ export interface Courier {
   distanceKm: number;
   etaMinutes: number;
   status: 'en_ligne' | 'en_course' | 'hors_ligne' | 'suspendu';
+  isAvailable?: boolean;
   walletBalanceFCFA?: number;
   priceFCFA: number;
   commissionFCFA: number;
@@ -32,6 +33,11 @@ export interface Courier {
   kycStatus?: 'non_soumis' | 'en_attente' | 'valide' | 'refuse';
   kycRejectionReason?: string;
   totalReviews?: number;
+  locationLat?: number;
+  locationLng?: number;
+  locationUpdatedAt?: string;
+  locationSource?: 'browser_gps' | 'benin_default' | 'live_watch' | 'manual' | string;
+  locationAccuracyMeters?: number;
   createdAt?: string;
 }
 
@@ -126,6 +132,27 @@ export interface DeliveryOrder {
   courierLat?: number;
   courierLng?: number;
   courierLocationUpdatedAt?: string;
+  dispatchMode?: 'auto' | 'direct';
+  dispatchState?: 'idle' | 'searching' | 'offered' | 'assigned' | 'exhausted';
+  preferredCourierId?: string | null;
+  preferredCourierName?: string | null;
+  targetCourierId?: string | null;
+  targetCourierName?: string | null;
+  targetCourierDistanceKm?: number | null;
+  targetIsPreferred?: boolean;
+  candidateQueue?: Array<{
+    courierId: string;
+    name: string;
+    distanceKm: number | null;
+    isPreferred: boolean;
+  }>;
+  rejectedCourierIds?: string[];
+  expiredCourierIds?: string[];
+  offerAttempt?: number;
+  offerTimeoutSeconds?: number;
+  offerStartedAt?: number;
+  offerExpiresAt?: number;
+  dispatchFailureReason?: string;
 }
 
 export interface KYCUserRequest {
@@ -189,6 +216,9 @@ export interface MerchantSettings {
   channelEmail: boolean;
   defaultPaymentMethod: string;
   twoFactorAuth: boolean;
+  preferredCourierId?: string;
+  preferredCourierName?: string;
+  dispatchOfferTimeoutSeconds?: number;
 }
 
 export interface CourierSettings {

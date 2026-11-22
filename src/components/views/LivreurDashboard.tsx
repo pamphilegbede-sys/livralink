@@ -26,7 +26,6 @@ export const LivreurDashboard: React.FC = () => {
     acceptDelivery,
     refuseDelivery,
     updateDeliveryStatus,
-    updateDeliveryDetails,
     setCurrentView,
     featureFlags,
     openKYCModal,
@@ -34,18 +33,23 @@ export const LivreurDashboard: React.FC = () => {
     firebaseUser,
     isAdminAuthenticated,
     isUserMasterAdmin,
+    gpsTrackingStatus,
+    syncCourierGpsPosition,
   } = useApp();
 
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [expandedMapOrderId, setExpandedMapOrderId] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const activeUid = userProfile?.uid || firebaseUser?.uid || '';
   const isSupervisory = isAdminAuthenticated && isUserMasterAdmin;
 
-  // Livraisons en attente d'acceptation par les livreurs
-  const pendingDeliveries = deliveries.filter(
-    (d) => d.status === 'en_attente' && !d.courier && !d.courierId
-  );
+  // Propositions ciblées exclusivement à ce livreur (aucune diffusion massive)
+  const pendingDeliveries = deliveries.filter((d) => {
+    if (d.status !== 'en_attente' || d.courier || d.courierId) return false;
+    if (isSupervisory) return true;
+    return Boolean(activeUid && d.targetCourierId === activeUid);
+  });
 
   const activeCourierName =
     (userProfile?.role === 'livreur' && userProfile?.fullName) ||
@@ -107,31 +111,14 @@ export const LivreurDashboard: React.FC = () => {
     return false;
   });
 
-  // Transmission automatique de la position GPS du livreur en direct pendant une course active
+  // Décompte en direct pour les propositions exclusives avec offerExpiresAt
+  const hasTimedPendingOffer = pendingDeliveries.some((d) => Boolean(d.offerExpiresAt));
   useEffect(() => {
-    if (!activeOrder || !courierSettings.isAvailable) return;
-    if (typeof window === 'undefined' || !navigator.geolocation) return;
-
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const lat = Math.round(pos.coords.latitude * 10000) / 10000;
-        const lng = Math.round(pos.coords.longitude * 10000) / 10000;
-        updateDeliveryDetails(activeOrder.id, {
-          courierLat: lat,
-          courierLng: lng,
-          courierLocationUpdatedAt: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-        });
-      },
-      (err) => {
-        console.warn('Suivi GPS livreur en arrière-plan:', err.message);
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
-    );
-
-    return () => {
-      navigator.geolocation.clearWatch(watchId);
-    };
-  }, [activeOrder?.id, courierSettings.isAvailable, updateDeliveryDetails]);
+    if (!hasTimedPendingOffer) return;
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [hasTimedPendingOffer]);
 
   // GPS coordinates for map
   const activeOriginCoords = activeOrder?.pickupLocation?.coordinates
@@ -250,6 +237,27 @@ export const LivreurDashboard: React.FC = () => {
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
+                onClick={() => void syncCourierGpsPosition()}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                  gpsTrackingStatus === 'active'
+                    ? 'bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800'
+                    : gpsTrackingStatus === 'denied'
+                    ? 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800'
+                    : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                }`}
+                title="Actualiser votre position GPS pour recevoir les livraisons les plus proches"
+              >
+                <span className="material-symbols-outlined text-sm">my_location</span>
+                <span>
+                  {gpsTrackingStatus === 'active'
+                    ? 'GPS Actif'
+                    : gpsTrackingStatus === 'denied'
+                    ? 'GPS Refusé'
+                    : 'Actualiser GPS'}
+                </span>
+              </button>
+              <button
+                type="button"
                 onClick={openKYCModal}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium border cursor-pointer ${
                   kycStatus === 'valide'
@@ -360,15 +368,15 @@ export const LivreurDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Available Vendor Missions */}
+          {/* Propositions Exclusives pour ce Livreur */}
           <section className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
               <div>
                 <h2 className="text-base font-bold text-slate-900 dark:text-white">
-                  Missions Vendeurs Disponibles ({pendingDeliveries.length})
+                  Propositions Exclusives pour Vous ({pendingDeliveries.length})
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Choisissez vos courses à exécuter à 100 FCFA/km
+                  Attribution intelligente selon votre proximité GPS • 100 FCFA/km
                 </p>
               </div>
 
@@ -382,8 +390,8 @@ export const LivreurDashboard: React.FC = () => {
 
             {pendingDeliveries.length === 0 ? (
               <div className="py-8 text-center text-xs text-slate-500 space-y-2">
-                <p>Aucune course vendeur en attente pour le moment.</p>
-                <p className="text-[11px] text-slate-400">Restez en ligne pour recevoir les nouvelles commandes dès publication par les vendeurs.</p>
+                <p>Aucune proposition ciblée pour vous en ce moment.</p>
+                <p className="text-[11px] text-slate-400">Restez en ligne avec votre GPS actif pour recevoir en priorité les courses proches de votre position.</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -399,17 +407,37 @@ export const LivreurDashboard: React.FC = () => {
                   const distKm = calculateDistanceKm(pOrigin, pDropoff);
                   const price = order.deliveryFee || calculateDeliveryPrice(distKm);
                   const isMapExpanded = expandedMapOrderId === order.id;
+                  const expMs = typeof order.offerExpiresAt === 'number'
+                    ? order.offerExpiresAt
+                    : order.offerExpiresAt
+                    ? Date.parse(String(order.offerExpiresAt))
+                    : NaN;
+                  const remainingSec = Number.isFinite(expMs) ? Math.max(0, Math.ceil((expMs - nowMs) / 1000)) : null;
 
                   return (
                     <div
                       key={order.id}
-                      className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3 hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
+                      className="p-4 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/30 dark:bg-amber-950/10 space-y-3 transition-colors"
                     >
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                        <div>
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{order.id}</span>
-                          <span className="text-slate-400 mx-1.5">·</span>
-                          <span className="text-slate-700 dark:text-slate-200 font-medium">{order.itemDescription} ({order.itemWeightKg} kg)</span>
+                          {order.targetIsPreferred && (
+                            <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold text-[10px]">
+                              ⭐ Client vous préfère
+                            </span>
+                          )}
+                          {typeof order.targetCourierDistanceKm === 'number' && (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px]">
+                              À {order.targetCourierDistanceKm} km de vous
+                            </span>
+                          )}
+                          {remainingSec !== null && (
+                            <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 font-black text-[10px] font-mono">
+                              ⏳ {remainingSec}s
+                            </span>
+                          )}
+                          <span className="text-slate-700 dark:text-slate-200 font-medium">{order.itemDescription} ({order.itemWeightKg || 1} kg)</span>
                         </div>
                         <div className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-sm sm:text-right">
                           {price.toLocaleString('fr-FR')} FCFA <span className="text-xs font-normal text-slate-400">({distKm} km)</span>

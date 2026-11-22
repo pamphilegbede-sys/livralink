@@ -25,6 +25,14 @@ import {
   sanitizeSmtpConfigForApi,
   SentEmailRecord,
 } from './src/server/p1EmailAndConfig';
+import {
+  advanceExpiredOrUnavailableOffer,
+  DispatchActionError,
+  listSanitizedCouriersForVendors,
+  respondToDeliveryOffer,
+  startOrRelaunchDeliveryDispatch,
+  updateCourierAvailabilityAndGps,
+} from './src/server/dispatchService';
 
 const envPath = path.resolve(process.cwd(), '.env');
 if (fs.existsSync(envPath)) {
@@ -4780,6 +4788,9 @@ app.post('/api/admin/deliveries/:orderId/assign', requireVerifiedUser as any, as
       courierName,
       courier: courierObj,
       status: 'assignee',
+      dispatchState: 'assigned',
+      targetCourierId: null,
+      targetCourierName: null,
       assignedAt: nowIso,
       updatedAt: nowIso,
       statusNote: `Assignée à ${courierName}`,
@@ -4790,6 +4801,9 @@ app.post('/api/admin/deliveries/:orderId/assign', requireVerifiedUser as any, as
         courierId: cleanCourierId,
         courierName,
         status: 'assignee',
+        dispatchState: 'assigned',
+        targetCourierId: null,
+        targetCourierName: null,
         assignedAt: nowIso,
         updatedAt: nowIso,
       });
@@ -4822,6 +4836,210 @@ app.post('/api/admin/deliveries/:orderId/assign', requireVerifiedUser as any, as
   } catch (err: any) {
     console.error('[ASSIGN DELIVERY ERROR]:', err?.message || err);
     return res.status(500).json({ success: false, error: 'Erreur lors de l\'assignation de la course.' });
+  }
+});
+
+// =========================================================================
+// INTELLIGENT GPS PROXIMITY & PREFERRED-COURIER DISPATCH ROUTES
+// =========================================================================
+app.get('/api/couriers/eligible', requireVerifiedUser as any, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+    if (!activeDb) {
+      return res.status(503).json({ success: false, code: 'FIRESTORE_UNAVAILABLE', error: 'Firestore Admin SDK indisponible.' });
+    }
+    const couriers = await listSanitizedCouriersForVendors(activeDb);
+    return res.json({ success: true, couriers });
+  } catch (err: any) {
+    if (isFirestoreIamDeniedError(err)) {
+      return res.status(503).json({
+        success: false,
+        code: 'IAM_PERMISSION_DENIED',
+        error: 'Droits IAM Firestore Admin requis pour lister les livreurs.',
+      });
+    }
+    console.error('[ELIGIBLE COURIERS ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors du chargement des livreurs disponibles.' });
+  }
+});
+
+app.post('/api/couriers/availability', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+    if (!activeDb) {
+      return res.status(503).json({ success: false, code: 'FIRESTORE_UNAVAILABLE', error: 'Firestore Admin SDK indisponible.' });
+    }
+    const body = req.body || {};
+    const status =
+      body.status === 'en_ligne' || body.status === 'hors_ligne'
+        ? body.status
+        : undefined;
+    const result = await updateCourierAvailabilityAndGps(activeDb, {
+      courierUid: req.user!.uid,
+      isAvailable: typeof body.isAvailable === 'boolean' ? body.isAvailable : undefined,
+      status,
+      lat: typeof body.lat === 'number' ? body.lat : undefined,
+      lng: typeof body.lng === 'number' ? body.lng : undefined,
+      accuracyMeters: typeof body.accuracyMeters === 'number' ? body.accuracyMeters : undefined,
+      locationSource:
+        body.locationSource === 'browser_gps' ||
+        body.locationSource === 'live_watch' ||
+        body.locationSource === 'manual' ||
+        body.locationSource === 'benin_default'
+          ? body.locationSource
+          : undefined,
+      zone: typeof body.zone === 'string' ? body.zone : undefined,
+    });
+    return res.json(result);
+  } catch (err: any) {
+    if (typeof err?.statusCode === 'number') {
+      const dispatchErr = err as DispatchActionError;
+      return res.status(dispatchErr.statusCode).json({
+        success: false,
+        code: dispatchErr.code,
+        error: dispatchErr.message,
+      });
+    }
+    if (isFirestoreIamDeniedError(err)) {
+      return res.status(503).json({
+        success: false,
+        code: 'IAM_PERMISSION_DENIED',
+        error: 'Droits IAM Firestore Admin requis pour synchroniser votre disponibilité GPS.',
+      });
+    }
+    console.error('[COURIER AVAILABILITY ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la mise à jour de disponibilité.' });
+  }
+});
+
+app.post('/api/deliveries/:orderId/dispatch/start', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+    if (!activeDb) {
+      return res.status(503).json({ success: false, code: 'FIRESTORE_UNAVAILABLE', error: 'Firestore Admin SDK indisponible.' });
+    }
+    const cleanDocId = String(req.params.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!cleanDocId) {
+      return res.status(400).json({ success: false, error: 'Identifiant de livraison invalide.' });
+    }
+    const isAdmin = await checkCallerIsAdmin(req.user);
+    const body = req.body || {};
+    const preferredCourierId =
+      body.preferredCourierId === null
+        ? null
+        : typeof body.preferredCourierId === 'string'
+        ? body.preferredCourierId.trim().replace(/[^a-zA-Z0-9_-]/g, '')
+        : undefined;
+
+    const result = await startOrRelaunchDeliveryDispatch(activeDb, {
+      orderDocId: cleanDocId,
+      callerUid: req.user!.uid,
+      isAdmin,
+      preferredCourierId,
+      offerTimeoutSeconds: typeof body.offerTimeoutSeconds === 'number' ? body.offerTimeoutSeconds : undefined,
+      relaunch: Boolean(body.relaunch),
+    });
+    return res.json(result);
+  } catch (err: any) {
+    if (typeof err?.statusCode === 'number') {
+      const dispatchErr = err as DispatchActionError;
+      return res.status(dispatchErr.statusCode).json({
+        success: false,
+        code: dispatchErr.code,
+        error: dispatchErr.message,
+      });
+    }
+    if (isFirestoreIamDeniedError(err)) {
+      return res.status(503).json({
+        success: false,
+        code: 'IAM_PERMISSION_DENIED',
+        error: 'Droits IAM Firestore Admin requis pour orchestrer le dispatching.',
+      });
+    }
+    console.error('[DISPATCH START ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors du lancement de la recherche de livreur.' });
+  }
+});
+
+app.post('/api/deliveries/:orderId/dispatch/respond', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+    if (!activeDb) {
+      return res.status(503).json({ success: false, code: 'FIRESTORE_UNAVAILABLE', error: 'Firestore Admin SDK indisponible.' });
+    }
+    const cleanDocId = String(req.params.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    const action = req.body?.action;
+    if (!cleanDocId || (action !== 'accept' && action !== 'refuse')) {
+      return res.status(400).json({ success: false, error: 'Identifiant de course et action valide (accept/refuse) requis.' });
+    }
+    const result = await respondToDeliveryOffer(activeDb, {
+      orderDocId: cleanDocId,
+      courierUid: req.user!.uid,
+      action,
+      reason: typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : undefined,
+    });
+    return res.json(result);
+  } catch (err: any) {
+    if (typeof err?.statusCode === 'number') {
+      const dispatchErr = err as DispatchActionError;
+      return res.status(dispatchErr.statusCode).json({
+        success: false,
+        code: dispatchErr.code,
+        error: dispatchErr.message,
+      });
+    }
+    if (isFirestoreIamDeniedError(err)) {
+      return res.status(503).json({
+        success: false,
+        code: 'IAM_PERMISSION_DENIED',
+        error: 'Droits IAM Firestore Admin requis pour traiter la réponse.',
+      });
+    }
+    console.error('[DISPATCH RESPOND ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors du traitement de la réponse livreur.' });
+  }
+});
+
+app.post('/api/deliveries/:orderId/dispatch/advance', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+    if (!activeDb) {
+      return res.status(503).json({ success: false, code: 'FIRESTORE_UNAVAILABLE', error: 'Firestore Admin SDK indisponible.' });
+    }
+    const cleanDocId = String(req.params.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!cleanDocId) {
+      return res.status(400).json({ success: false, error: 'Identifiant de course invalide.' });
+    }
+    const isAdmin = await checkCallerIsAdmin(req.user);
+    const forceReason =
+      req.body?.reason === 'target_unavailable' || req.body?.reason === 'timeout'
+        ? req.body.reason
+        : undefined;
+    const result = await advanceExpiredOrUnavailableOffer(activeDb, {
+      orderDocId: cleanDocId,
+      callerUid: req.user!.uid,
+      isAdmin,
+      forceReason,
+    });
+    return res.json(result);
+  } catch (err: any) {
+    if (typeof err?.statusCode === 'number') {
+      const dispatchErr = err as DispatchActionError;
+      return res.status(dispatchErr.statusCode).json({
+        success: false,
+        code: dispatchErr.code,
+        error: dispatchErr.message,
+      });
+    }
+    if (isFirestoreIamDeniedError(err)) {
+      return res.status(503).json({
+        success: false,
+        code: 'IAM_PERMISSION_DENIED',
+        error: 'Droits IAM Firestore Admin requis pour avancer le dispatching.',
+      });
+    }
+    console.error('[DISPATCH ADVANCE ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la progression du dispatching.' });
   }
 });
 

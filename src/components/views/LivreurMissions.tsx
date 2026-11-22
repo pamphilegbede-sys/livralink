@@ -37,6 +37,8 @@ export const LivreurMissions: React.FC = () => {
     firebaseUser,
     isAdminAuthenticated,
     isUserMasterAdmin,
+    gpsTrackingStatus,
+    syncCourierGpsPosition,
   } = useApp();
 
   const activeUid = userProfile?.uid || firebaseUser?.uid || '';
@@ -44,8 +46,12 @@ export const LivreurMissions: React.FC = () => {
 
   const isolatedDeliveries = deliveries.filter((d) => {
     if (isSupervisory) return true;
-    const isAvailable = d.status === 'en_attente' && !d.courier && !d.courierId;
-    if (isAvailable) return true;
+    const isTargetedOffer =
+      d.status === 'en_attente' &&
+      !d.courier &&
+      !d.courierId &&
+      Boolean(activeUid && d.targetCourierId === activeUid);
+    if (isTargetedOffer) return true;
     return Boolean(activeUid && (d.courier?.id === activeUid || d.courierId === activeUid));
   });
 
@@ -56,7 +62,18 @@ export const LivreurMissions: React.FC = () => {
   const [expandedMapOrderId, setExpandedMapOrderId] = useState<string | null>(null);
   const [hasAutoExpanded, setHasAutoExpanded] = useState(false);
   const [routeEstimates, setRouteEstimates] = useState<Record<string, RouteEstimationResult>>({});
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const itemsPerPage = 5;
+
+  const hasTimedOffer = isolatedDeliveries.some(
+    (d) => d.status === 'en_attente' && !d.courier && Boolean(d.offerExpiresAt)
+  );
+  React.useEffect(() => {
+    if (!hasTimedOffer) return;
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [hasTimedOffer]);
 
   React.useEffect(() => {
     setActiveTab(courierMissionsFilter || 'all');
@@ -168,7 +185,19 @@ export const LivreurMissions: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => void syncCourierGpsPosition()}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                  gpsTrackingStatus === 'active'
+                    ? 'bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                <span className="material-symbols-outlined text-sm">my_location</span>
+                <span>{gpsTrackingStatus === 'active' ? 'GPS Actif' : 'Actualiser GPS'}</span>
+              </button>
               <button
                 type="button"
                 onClick={toggleCourierAvailability}
@@ -252,7 +281,7 @@ export const LivreurMissions: React.FC = () => {
                   activeTab === 'en_attente' ? 'bg-blue-600 text-white font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Disponibles ({isolatedDeliveries.filter((d) => d.status === 'en_attente' && !d.courier && !d.courierId).length})
+                Propositions ({isolatedDeliveries.filter((d) => d.status === 'en_attente' && !d.courier && !d.courierId).length})
               </button>
               <button
                 type="button"
@@ -323,6 +352,15 @@ export const LivreurMissions: React.FC = () => {
                   const displayKm = cachedRoute?.distanceKm ?? fallbackKm;
                   const displayDuration = cachedRoute?.durationText ?? fallbackDurationText;
                   const isMapExpanded = expandedMapOrderId === order.id;
+                  const offerExpMs = typeof order.offerExpiresAt === 'number'
+                    ? order.offerExpiresAt
+                    : order.offerExpiresAt
+                    ? Date.parse(String(order.offerExpiresAt))
+                    : NaN;
+                  const offerRemainingSec =
+                    order.status === 'en_attente' && !order.courier && Number.isFinite(offerExpMs)
+                      ? Math.max(0, Math.ceil((offerExpMs - nowMs) / 1000))
+                      : null;
 
                   return (
                   <div
@@ -344,8 +382,23 @@ export const LivreurMissions: React.FC = () => {
                            order.status === 'en_cours' ? 'En transit' :
                            order.status === 'colis_recupere' ? 'Colis récupéré' :
                            order.status === 'acceptee' ? 'Acceptée' :
-                           order.status === 'echec' ? 'Échec' : 'En attente coursier'}
+                           order.status === 'echec' ? 'Échec' : 'Proposition exclusive'}
                         </span>
+                        {order.status === 'en_attente' && !order.courier && order.targetIsPreferred && (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[11px] font-bold">
+                            ⭐ Livreur préféré
+                          </span>
+                        )}
+                        {order.status === 'en_attente' && !order.courier && typeof order.targetCourierDistanceKm === 'number' && (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold">
+                            À {order.targetCourierDistanceKm} km du retrait
+                          </span>
+                        )}
+                        {offerRemainingSec !== null && (
+                          <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[11px] font-black font-mono">
+                            ⏳ {offerRemainingSec}s restantes
+                          </span>
+                        )}
                         <span className="text-xs text-slate-500 font-medium">
                           Créée à {order.createdAt?.length <= 8 ? order.createdAt : isNaN(new Date(order.createdAt).getTime()) ? order.createdAt : new Date(order.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
                         </span>

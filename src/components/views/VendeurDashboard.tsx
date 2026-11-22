@@ -33,6 +33,7 @@ export const VendeurDashboard: React.FC = () => {
     openLivreurSearchModal,
     openRateLivreurModal,
     openChatModal,
+    relaunchDeliveryDispatch,
   } = useApp();
 
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
@@ -128,8 +129,7 @@ export const VendeurDashboard: React.FC = () => {
   };
 
   const handleRelaunchSearch = (orderId: string) => {
-    updateDeliveryStatus(orderId, 'en_attente', 'Recherche coursier relancée (Rayon 4 km)');
-    showToast(`Recherche de coursier relancée pour ${orderId}`, 'info');
+    void relaunchDeliveryDispatch(orderId);
   };
 
   const handleReschedule = (orderId: string) => {
@@ -467,8 +467,19 @@ export const VendeurDashboard: React.FC = () => {
                                 <span className="text-slate-400">·</span>
                                 <span className="text-amber-600 dark:text-amber-400 font-mono text-[11px]">★ {order.courier.rating}</span>
                               </div>
+                            ) : order.targetCourierName ? (
+                              <div className="flex flex-col">
+                                <span className="text-amber-700 dark:text-amber-300 font-semibold">
+                                  Proposé à {order.targetCourierName}
+                                </span>
+                                {typeof order.targetCourierDistanceKm === 'number' && (
+                                  <span className="text-[10px] text-slate-400">{order.targetCourierDistanceKm} km • Tour #{order.offerAttempt || 1}</span>
+                                )}
+                              </div>
+                            ) : order.dispatchState === 'exhausted' ? (
+                              <span className="text-red-600 dark:text-red-400 font-medium">Aucun livreur disponible</span>
                             ) : (
-                              <span className="text-slate-400 italic">Non assigné</span>
+                              <span className="text-slate-400 italic">Recherche GPS...</span>
                             )}
                           </td>
                           <td className="py-3 px-4">
@@ -491,9 +502,15 @@ export const VendeurDashboard: React.FC = () => {
                               </span>
                             )}
                             {order.status === 'en_attente' && (
-                              <span className="text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                                En attente
+                              <span className={`font-medium flex items-center gap-1 ${
+                                order.dispatchState === 'exhausted'
+                                  ? 'text-red-600 dark:text-red-400'
+                                  : 'text-amber-600 dark:text-amber-400'
+                              }`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${
+                                  order.dispatchState === 'exhausted' ? 'bg-red-500' : 'bg-amber-500'
+                                }`}></span>
+                                {order.dispatchState === 'exhausted' ? 'Aucun livreur' : 'En attente'}
                               </span>
                             )}
                             {order.status === 'livree' && (
@@ -634,12 +651,20 @@ export const VendeurDashboard: React.FC = () => {
                         )}
 
                         {order.status === 'en_attente' && (
-                          <button
-                            onClick={() => openLivreurSearchModal(order.id)}
-                            className="px-3 py-1 rounded-md bg-blue-600 text-white text-xs font-medium"
-                          >
-                            Assigner
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleRelaunchSearch(order.id)}
+                              className="px-2.5 py-1 rounded-md bg-amber-500 text-white text-xs font-medium"
+                            >
+                              Relancer
+                            </button>
+                            <button
+                              onClick={() => openLivreurSearchModal(order.id)}
+                              className="px-2.5 py-1 rounded-md bg-blue-600 text-white text-xs font-medium"
+                            >
+                              Assigner
+                            </button>
+                          </div>
                         )}
 
                         {order.status === 'livree' && (

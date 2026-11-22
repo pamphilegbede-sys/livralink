@@ -733,8 +733,8 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
     );
   });
 
-  // 21. Statically provable allow list queries on deliveries and priority_missions
-  test('21. KYC courier can run allow list queries on pending and own assigned deliveries/missions', async () => {
+  // 21. Statically provable allow list queries on deliveries and priority_missions (targeted dispatch only)
+  test('21. KYC courier can run allow list queries only on targeted or own assigned deliveries/missions', async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       await context.firestore().doc('users/courier_list').set({
         uid: 'courier_list',
@@ -751,6 +751,8 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
         clientPhone: '+22997000022',
         deliveryFee: 1500,
         status: 'en_attente',
+        dispatchState: 'offered',
+        targetCourierId: 'courier_list',
       });
       await context.firestore().doc('priority_missions/mission_open_1').set({
         id: 'mission_open_1',
@@ -758,6 +760,8 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
         merchantId: 'vendor_1',
         fee: 1500,
         status: 'en_attente',
+        dispatchState: 'offered',
+        targetCourierId: 'courier_list',
       });
     });
 
@@ -767,9 +771,11 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
     });
     const db = courierCtx.firestore();
 
-    await assertSucceeds(db.collection('deliveries').where('status', '==', 'en_attente').get());
+    await assertSucceeds(db.collection('deliveries').where('targetCourierId', '==', 'courier_list').get());
     await assertSucceeds(db.collection('deliveries').where('courierId', '==', 'courier_list').get());
-    await assertSucceeds(db.collection('priority_missions').where('status', '==', 'en_attente').get());
+    await assertSucceeds(db.collection('priority_missions').where('targetCourierId', '==', 'courier_list').get());
+    await assertFails(db.collection('deliveries').where('status', '==', 'en_attente').get());
+    await assertFails(db.collection('priority_missions').where('status', '==', 'en_attente').get());
     await assertFails(db.collection('deliveries').get());
   });
 
@@ -1527,6 +1533,82 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
       })
     );
     await assertFails(outsiderDb.doc('conversations/order_LL-3400/messages/chat_msg_1').get());
+  });
+
+  // 35. Targeted Sequential Dispatch Isolation: non-targeted courier cannot read or claim another courier's offer
+  test('35. Targeted dispatch strictly isolates pending offers to targetCourierId only', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/courier_target_a').set({
+        uid: 'courier_target_a',
+        email: 'ca@test.com',
+        fullName: 'Courier A',
+        phone: '+22997000031',
+        role: 'livreur',
+        isKycVerified: true,
+        status: 'en_ligne',
+        isAvailable: true,
+      });
+      await context.firestore().doc('users/courier_target_b').set({
+        uid: 'courier_target_b',
+        email: 'cb@test.com',
+        fullName: 'Courier B',
+        phone: '+22997000032',
+        role: 'livreur',
+        isKycVerified: true,
+        status: 'en_ligne',
+        isAvailable: true,
+      });
+      await context.firestore().doc('deliveries/deliv_targeted_35').set({
+        id: 'deliv_targeted_35',
+        merchantId: 'vendor_35',
+        clientName: 'Client 35',
+        clientPhone: '+22997000033',
+        deliveryFee: 2000,
+        status: 'en_attente',
+        dispatchMode: 'auto',
+        dispatchState: 'offered',
+        targetCourierId: 'courier_target_a',
+      });
+    });
+
+    const courierACtx = testEnv.authenticatedContext('courier_target_a', {
+      email: 'ca@test.com',
+      email_verified: true,
+    });
+    const courierBCtx = testEnv.authenticatedContext('courier_target_b', {
+      email: 'cb@test.com',
+      email_verified: true,
+    });
+
+    // Non-targeted Courier B CANNOT read or claim Courier A's offer
+    await assertFails(courierBCtx.firestore().doc('deliveries/deliv_targeted_35').get());
+    await assertFails(
+      courierBCtx.firestore().doc('deliveries/deliv_targeted_35').update({
+        status: 'assignee',
+        courierId: 'courier_target_b',
+        dispatchState: 'assigned',
+        targetCourierId: null,
+      })
+    );
+
+    // Targeted Courier A CAN read, toggle own online status, and claim the offer
+    await assertSucceeds(courierACtx.firestore().doc('deliveries/deliv_targeted_35').get());
+    await assertSucceeds(
+      courierACtx.firestore().doc('users/courier_target_a').update({
+        status: 'hors_ligne',
+        isAvailable: false,
+      })
+    );
+    await assertSucceeds(
+      courierACtx.firestore().doc('deliveries/deliv_targeted_35').update({
+        status: 'assignee',
+        courierId: 'courier_target_a',
+        courierName: 'Courier A',
+        dispatchState: 'assigned',
+        targetCourierId: null,
+        updatedAt: Date.now(),
+      })
+    );
   });
 });
 
