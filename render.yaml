@@ -14,6 +14,22 @@ services:
         value: 10000
       - key: OTP_SECRET_SALT
         generateValue: true
+      - key: POD_OTP_HMAC_SECRET
+        sync: false
+      - key: EMAIL_ENCRYPTION_SECRET
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: FIREBASE_DATABASE_ID
+        value: ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6
+      - key: PAYOUT_PROVIDER_MODE
+        value: simulator
+      - key: FIREBASE_SERVICE_ACCOUNT_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: VITE_GOOGLE_MAPS_API_KEY
+        sync: false
       # Configuration Firebase (copiées depuis votre projet Firebase)
       - key: VITE_FIREBASE_API_KEY
         sync: false

@@ -288,11 +288,19 @@ export function createNodemailerTransportFromConfig(cfg: SmtpRuntimeConfig) {
   if (!cfg.user || !cfg.pass) {
     return null;
   }
+  const host = (cfg.host || 'smtp.gmail.com').trim();
   const port = Number(cfg.port) || 587;
+  const lowerHost = host.toLowerCase();
+  const isLoopback = lowerHost === '127.0.0.1' || lowerHost === 'localhost' || lowerHost === '::1';
+
   return nodemailer.createTransport({
-    host: cfg.host || 'smtp.gmail.com',
+    host,
     port,
     secure: port === 465,
+    requireTLS: port === 587 && !isLoopback,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
     auth: {
       user: cfg.user,
       pass: cfg.pass,

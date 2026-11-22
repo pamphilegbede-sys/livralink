@@ -1764,5 +1764,127 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
       })
     );
   });
+
+  // 38. system_backups collection is strictly inaccessible to all clients (including Super-Admin client SDK)
+  test('38. system_backups denies all client reads and writes even for Super-Admin', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('system_backups/latest').set({
+        backupId: 'bkp_38',
+        checksum: 'a'.repeat(64),
+        mode: 'payload_snapshot',
+        payloadJson: '{}',
+      });
+    });
+
+    const superAdminDb = testEnv.authenticatedContext('super_admin_38', {
+      email: 'Pamphile.gbede@gmail.com',
+      email_verified: true,
+    }).firestore();
+
+    const vendorDb = testEnv.authenticatedContext('vendor_38', {
+      email: 'v38@test.com',
+      email_verified: true,
+    }).firestore();
+
+    await assertFails(superAdminDb.doc('system_backups/latest').get());
+    await assertFails(superAdminDb.doc('system_backups/bkp_new').set({ backupId: 'bkp_new' }));
+    await assertFails(vendorDb.doc('system_backups/latest').get());
+    await assertFails(vendorDb.doc('system_backups/bkp_new').set({ backupId: 'bkp_new' }));
+  });
+
+  // 39. Optimized single-read delivery and priority_mission update helpers preserve strict RBAC
+  test('39. Optimized delivery & mission update rules block privilege/KYC spoofing and allow valid transitions', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await db.doc('users/vendor_39').set({
+        uid: 'vendor_39',
+        email: 'v39@test.com',
+        fullName: 'Vendeur 39',
+        phone: '+22997000039',
+        role: 'vendeur',
+      });
+      await db.doc('users/courier_39').set({
+        uid: 'courier_39',
+        email: 'c39@test.com',
+        fullName: 'Livreur 39',
+        phone: '+22997000139',
+        role: 'livreur',
+        isKycVerified: true,
+      });
+      await db.doc('users/courier_unverified_39').set({
+        uid: 'courier_unverified_39',
+        email: 'cu39@test.com',
+        fullName: 'Livreur Non Verifie 39',
+        phone: '+22997000239',
+        role: 'livreur',
+        isKycVerified: false,
+      });
+      await db.doc('deliveries/deliv_39').set({
+        id: 'deliv_39',
+        clientName: 'Client 39',
+        clientPhone: '+22997000339',
+        status: 'en_attente',
+        deliveryFee: 1500,
+        merchantId: 'vendor_39',
+        targetCourierId: 'courier_39',
+      });
+      await db.doc('priority_missions/mission_39').set({
+        id: 'mission_39',
+        orderId: 'deliv_39',
+        merchantId: 'vendor_39',
+        status: 'en_attente',
+        fee: 1500,
+        targetCourierId: 'courier_39',
+      });
+    });
+
+    const unverifiedCourierDb = testEnv.authenticatedContext('courier_unverified_39', {
+      email: 'cu39@test.com',
+      email_verified: true,
+    }).firestore();
+
+    const verifiedCourierDb = testEnv.authenticatedContext('courier_39', {
+      email: 'c39@test.com',
+      email_verified: true,
+    }).firestore();
+
+    // Unverified courier cannot claim delivery or mission
+    await assertFails(
+      unverifiedCourierDb.doc('deliveries/deliv_39').update({
+        courierId: 'courier_unverified_39',
+        status: 'assignee',
+      })
+    );
+    await assertFails(
+      unverifiedCourierDb.doc('priority_missions/mission_39').update({
+        courierId: 'courier_unverified_39',
+        status: 'assignee',
+      })
+    );
+
+    // Verified targeted courier can claim delivery and mission, but cannot jump straight to 'livree'
+    await assertSucceeds(
+      verifiedCourierDb.doc('deliveries/deliv_39').update({
+        courierId: 'courier_39',
+        status: 'acceptee',
+        dispatchState: 'assigned',
+        targetCourierId: null,
+      })
+    );
+    await assertFails(
+      verifiedCourierDb.doc('deliveries/deliv_39').update({
+        status: 'livree',
+      })
+    );
+    await assertSucceeds(
+      verifiedCourierDb.doc('priority_missions/mission_39').update({
+        courierId: 'courier_39',
+        status: 'acceptee',
+        dispatchState: 'assigned',
+        targetCourierId: null,
+      })
+    );
+  });
 });
+
 

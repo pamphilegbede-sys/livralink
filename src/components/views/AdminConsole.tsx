@@ -10,6 +10,7 @@ import { auth } from '../../firebase/config';
 import { fetchAuthorizedKYCDocumentBlob, normalizeMimeType, formatFileSizeFr } from '../../firebase/storageService';
 import { getKycDocumentSlots } from '../../utils/adminReconciliation';
 import { downloadCsvFile } from '../../utils/csvExport';
+import { buildSandboxedEmailPreviewDocument } from '../../utils/htmlSanitizer';
 import { AdminOverviewDashboard } from './AdminOverviewDashboard';
 import { AdminCommunicationsSection } from '../admin/AdminCommunicationsSection';
 import { ResetUserAccessModal, TargetResetUser } from '../modals/ResetUserAccessModal';
@@ -269,8 +270,6 @@ export const AdminConsole: React.FC = () => {
   const [testUnauthorizedEmail, setTestUnauthorizedEmail] = useState('pirate.inconnu@gmail.com');
   const [securityTestResult, setSecurityTestResult] = useState<string | null>(null);
   const [adminLoginEmailInput, setAdminLoginEmailInput] = useState('');
-  const [adminPasswordInput, setAdminPasswordInput] = useState('');
-  const [adminLoginStep, setAdminLoginStep] = useState<'email' | 'password'>('email');
   const [adminLoginError, setAdminLoginError] = useState<string | null>(null);
   const [isLoggingInWithGoogle, setIsLoggingInWithGoogle] = useState(false);
 
@@ -4946,9 +4945,11 @@ export const AdminConsole: React.FC = () => {
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-100 dark:bg-slate-950">
-                      <div
-                        className="bg-white p-4 rounded-xl shadow-xs"
-                        dangerouslySetInnerHTML={{ __html: previewModalEmail.htmlContent }}
+                      <iframe
+                        title={`Aperçu sécurisé du modèle HTML ${previewModalEmail.id}`}
+                        sandbox=""
+                        srcDoc={buildSandboxedEmailPreviewDocument(previewModalEmail.htmlContent)}
+                        className="w-full min-h-[420px] bg-white rounded-xl shadow-xs border-0 block"
                       />
                     </div>
                   </div>

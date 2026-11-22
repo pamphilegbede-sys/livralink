@@ -41,6 +41,17 @@ import {
   runKycGeminiAnalysis,
   setGeminiGeneratorForTests,
 } from './src/server/kycGeminiAnalysis';
+import {
+  BackupFirestoreLike,
+  createSystemBackup,
+  listSystemBackups,
+  restoreSystemBackup,
+  SystemBackupError,
+} from './src/server/systemBackupService';
+import {
+  evaluatePayoutProviderConfig,
+  resolvePayoutProviderAdapter,
+} from './src/server/mobileMoneyProvider';
 
 const envPath = path.resolve(process.cwd(), '.env');
 if (fs.existsSync(envPath)) {
@@ -90,6 +101,7 @@ app.use((req, res, next) => {
 // Defense against large payload DOS: enforce strict 10kb limit on standard JSON bodies
 // and permit up to 22mb solely on authenticated, participant-checked media upload routes.
 const standardJsonParser = express.json({ limit: '10kb' });
+const backupJsonParser = express.json({ limit: '512kb' });
 const mediaUploadJsonParser = express.json({ limit: '22mb' });
 app.use((req, res, next) => {
   if (
@@ -99,6 +111,12 @@ app.use((req, res, next) => {
       req.path === '/api/courier/kyc/upload')
   ) {
     return mediaUploadJsonParser(req, res, next);
+  }
+  if (
+    req.method === 'POST' &&
+    (req.path === '/api/system/backup' || req.path === '/api/system/restore')
+  ) {
+    return backupJsonParser(req, res, next);
   }
   return standardJsonParser(req, res, next);
 });
@@ -652,6 +670,7 @@ const getP0Security = (req?: Request): P0SecurityService | null => {
   if (!cachedP0Security) {
     cachedP0Security = createP0SecurityService(firestoreAdmin as unknown as P0FirestoreLike, {
       getSecretSalt: () => evaluateHmacSecretConfig().secret,
+      payoutProvider: (payoutReq) => resolvePayoutProviderAdapter()(payoutReq),
       onAnomaly: (type, details) => {
         recordSecurityAnomaly(req ? getClientIp(req) : 'internal', type, details);
       },
@@ -726,6 +745,14 @@ const escapeHtml = (unsafe: any): string => {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+};
+
+const sanitizeEmailHeaderText = (unsafe: any, maxLen = 140): string => {
+  return String(unsafe ?? '')
+    .replace(/[\r\n\u0000-\u001F\u007F]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
 };
 
 /**
@@ -1204,7 +1231,8 @@ const handleWelcomeEmailRequest = async (req: AuthenticatedRequest, res: Respons
     const roleBadgeBg = isVendeur ? '#eff6ff' : '#f0fdf4';
     const roleBadgeText = isVendeur ? '#1d4ed8' : '#15803d';
 
-    const subject = `Bienvenue sur LivraLink, ${safeName} ! 🚀 Votre compte ${roleLabel} est prêt`;
+    const headerName = sanitizeEmailHeaderText(cleanName, 100);
+    const subject = `Bienvenue sur LivraLink, ${headerName} ! 🚀 Votre compte ${roleLabel} est prêt`;
     const previewText = `Félicitations ! Votre compte LivraLink ${roleLabel} a été créé avec succès. Découvrez comment utiliser votre espace.`;
 
     const appBaseUrl = escapeHtml(getAppPublicBaseUrl(req));
@@ -1443,8 +1471,9 @@ app.post('/api/email/kyc-approved', requireAdminAuthorization as any, async (req
     const isApproved = status === 'approved';
     const roleLabel = role === 'vendeur' ? 'Vendeur / Marchand' : 'Livreur Partenaire';
 
+    const headerName = sanitizeEmailHeaderText(cleanName, 100);
     const subject = isApproved
-      ? `🎉 Compte Activé ! Votre vérification KYC LivraLink est confirmée, ${safeName}`
+      ? `🎉 Compte Activé ! Votre vérification KYC LivraLink est confirmée, ${headerName}`
       : `⚠️ Dossier KYC LivraLink : Action requise pour la validation de votre compte`;
 
     const previewText = isApproved
@@ -1632,8 +1661,10 @@ app.post('/api/email/priority-mission', requireVerifiedUser as any, async (req: 
     const safeFee = Math.min(100000, Math.max(0, parseInt(String(feeFCFA), 10) || 2000));
     const safeCod = codFCFA ? Math.min(5000000, Math.max(0, parseInt(String(codFCFA), 10) || 0)) : 0;
 
-    const subject = `⚡ Mission Prioritaire Disponible : ${safeOrderId} (${safeFee} FCFA)`;
-    const previewText = `Nouvelle livraison express disponible à ${safePickup}. Tarif : ${safeFee} FCFA.`;
+    const plainOrderId = sanitizeEmailHeaderText(orderId || '#LL-4200', 32);
+    const plainPickup = sanitizeEmailHeaderText(pickupName || 'Boutique', 100);
+    const subject = `⚡ Mission Prioritaire Disponible : ${plainOrderId} (${safeFee} FCFA)`;
+    const previewText = `Nouvelle livraison express disponible à ${plainPickup}. Tarif : ${safeFee} FCFA.`;
 
     const htmlContent = `
       <div style="font-family: 'Plus Jakarta Sans', sans-serif; max-width: 560px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; color: #0f172a;">
@@ -1784,14 +1815,17 @@ app.post('/api/email/notification', requireVerifiedUser as any, async (req: Auth
 
     switch (eventType) {
       case 'delivery_created': {
-        const orderId = escapeHtml(String(d.orderId || '#LL-0000'));
-        const pickup = escapeHtml(String(d.pickupName || 'Point de collecte'));
-        const dropoff = escapeHtml(String(d.dropoffCommune || 'Destination'));
+        const plainOrderId = sanitizeEmailHeaderText(d.orderId || '#LL-0000', 40);
+        const plainPickup = sanitizeEmailHeaderText(d.pickupName || 'Point de collecte', 100);
+        const plainDropoff = sanitizeEmailHeaderText(d.dropoffCommune || 'Destination', 100);
+        const orderId = escapeHtml(plainOrderId);
+        const pickup = escapeHtml(plainPickup);
+        const dropoff = escapeHtml(plainDropoff);
         const fee = Math.max(0, parseInt(String(d.feeFCFA), 10) || 1500);
         const cod = Math.max(0, parseInt(String(d.codFCFA), 10) || 0);
 
-        subject = `📦 LivraLink : Nouvelle course créée (${orderId})`;
-        previewText = `Votre livraison ${orderId} de ${pickup} vers ${dropoff} est enregistrée.`;
+        subject = `📦 LivraLink : Nouvelle course créée (${plainOrderId})`;
+        previewText = `Votre livraison ${plainOrderId} de ${plainPickup} vers ${plainDropoff} est enregistrée.`;
         eventBadgeText = '📦 COURSE CRÉÉE';
         eventBadgeBg = '#eff6ff';
         eventBadgeColor = '#1d4ed8';
@@ -1813,12 +1847,14 @@ app.post('/api/email/notification', requireVerifiedUser as any, async (req: Auth
       }
 
       case 'delivery_accepted': {
-        const orderId = escapeHtml(String(d.orderId || '#LL-0000'));
-        const courierName = escapeHtml(String(d.courierName || 'Un coursier partenaire'));
+        const plainOrderId = sanitizeEmailHeaderText(d.orderId || '#LL-0000', 40);
+        const plainCourierName = sanitizeEmailHeaderText(d.courierName || 'Un coursier partenaire', 100);
+        const orderId = escapeHtml(plainOrderId);
+        const courierName = escapeHtml(plainCourierName);
         const courierPhone = escapeHtml(String(d.courierPhone || 'Non renseigné'));
 
-        subject = `🛵 LivraLink : Course ${orderId} acceptée par ${courierName}`;
-        previewText = `Le coursier ${courierName} a pris en charge votre livraison.`;
+        subject = `🛵 LivraLink : Course ${plainOrderId} acceptée par ${plainCourierName}`;
+        previewText = `Le coursier ${plainCourierName} a pris en charge votre livraison.`;
         eventBadgeText = '🛵 LIVREUR EN ROUTE';
         eventBadgeBg = '#f0fdf4';
         eventBadgeColor = '#15803d';
@@ -1838,11 +1874,13 @@ app.post('/api/email/notification', requireVerifiedUser as any, async (req: Auth
       }
 
       case 'delivery_picked_up': {
-        const orderId = escapeHtml(String(d.orderId || '#LL-0000'));
-        const pickup = escapeHtml(String(d.pickupName || 'Point de collecte'));
+        const plainOrderId = sanitizeEmailHeaderText(d.orderId || '#LL-0000', 40);
+        const plainPickup = sanitizeEmailHeaderText(d.pickupName || 'Point de collecte', 100);
+        const orderId = escapeHtml(plainOrderId);
+        const pickup = escapeHtml(plainPickup);
 
-        subject = `🏷️ LivraLink : Colis récupéré pour la course ${orderId}`;
-        previewText = `Le colis a été récupéré à ${pickup} et est en cours d'acheminement.`;
+        subject = `🏷️ LivraLink : Colis récupéré pour la course ${plainOrderId}`;
+        previewText = `Le colis a été récupéré à ${plainPickup} et est en cours d'acheminement.`;
         eventBadgeText = '🏷️ COLIS EN ROUTE';
         eventBadgeBg = '#fef3c7';
         eventBadgeColor = '#b45309';
@@ -1857,11 +1895,12 @@ app.post('/api/email/notification', requireVerifiedUser as any, async (req: Auth
       }
 
       case 'delivery_completed': {
-        const orderId = escapeHtml(String(d.orderId || '#LL-0000'));
+        const plainOrderId = sanitizeEmailHeaderText(d.orderId || '#LL-0000', 40);
+        const orderId = escapeHtml(plainOrderId);
         const otpVerified = d.otpVerified ? 'Oui (Code secret certifié)' : 'Oui';
 
-        subject = `✅ LivraLink : Livraison ${orderId} effectuée avec succès !`;
-        previewText = `La livraison ${orderId} a été remise au destinataire et certifiée.`;
+        subject = `✅ LivraLink : Livraison ${plainOrderId} effectuée avec succès !`;
+        previewText = `La livraison ${plainOrderId} a été remise au destinataire et certifiée.`;
         eventBadgeText = '✅ LIVRAISON EFFECTUÉE';
         eventBadgeBg = '#dcfce7';
         eventBadgeColor = '#15803d';
@@ -1881,11 +1920,13 @@ app.post('/api/email/notification', requireVerifiedUser as any, async (req: Auth
       }
 
       case 'delivery_cancelled': {
-        const orderId = escapeHtml(String(d.orderId || '#LL-0000'));
-        const reason = escapeHtml(String(d.reason || 'Annulation par l\'utilisateur ou le destinataire'));
+        const plainOrderId = sanitizeEmailHeaderText(d.orderId || '#LL-0000', 40);
+        const plainReason = sanitizeEmailHeaderText(d.reason || 'Annulation par l\'utilisateur ou le destinataire', 140);
+        const orderId = escapeHtml(plainOrderId);
+        const reason = escapeHtml(plainReason);
 
-        subject = `⚠️ LivraLink : Annulation de la course ${orderId}`;
-        previewText = `La course ${orderId} a été annulée. Motif : ${reason}`;
+        subject = `⚠️ LivraLink : Annulation de la course ${plainOrderId}`;
+        previewText = `La course ${plainOrderId} a été annulée. Motif : ${plainReason}`;
         eventBadgeText = '⚠️ COURSE ANNULÉE';
         eventBadgeBg = '#fef2f2';
         eventBadgeColor = '#b91c1c';
@@ -1928,11 +1969,13 @@ app.post('/api/email/notification', requireVerifiedUser as any, async (req: Auth
       }
 
       case 'security_alert': {
-        const title = escapeHtml(String(d.alertTitle || 'Alerte de sécurité'));
-        const desc = escapeHtml(String(d.alertDesc || 'Une modification est survenue sur vos accès.'));
+        const plainTitle = sanitizeEmailHeaderText(d.alertTitle || 'Alerte de sécurité', 120);
+        const plainDesc = sanitizeEmailHeaderText(d.alertDesc || 'Une modification est survenue sur vos accès.', 220);
+        const title = escapeHtml(plainTitle);
+        const desc = escapeHtml(plainDesc);
 
-        subject = `🛡️ LivraLink : ${title}`;
-        previewText = desc;
+        subject = `🛡️ LivraLink : ${plainTitle}`;
+        previewText = plainDesc;
         eventBadgeText = '🛡️ ALERTE DE SÉCURITÉ';
         eventBadgeBg = '#fff7ed';
         eventBadgeColor = '#c2410c';
@@ -2515,7 +2558,17 @@ app.get(['/api/version', '/version.json'], (_req: Request, res: Response) => {
 });
 
 // Security configuration & defensive audit status endpoint
-app.get('/api/security/audit', requireAdminAuthorization as any, (_req: Request, res: Response) => {
+app.get('/api/security/audit', requireAdminAuthorization as any, async (_req: Request, res: Response) => {
+  const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+  const payoutReadiness = evaluatePayoutProviderConfig();
+  let smtpConfigured = false;
+  try {
+    const smtpCfg = await getP1EmailService().getEffectiveSmtpConfig();
+    smtpConfigured = Boolean(smtpCfg.user && smtpCfg.pass && !smtpCfg.decryptionError);
+  } catch {
+    smtpConfigured = false;
+  }
+
   res.json({
     securityStatus: 'FORTIFIED',
     timestamp: new Date().toISOString(),
@@ -2526,6 +2579,23 @@ app.get('/api/security/audit', requireAdminAuthorization as any, (_req: Request,
       etape4_renforcementFirebaseExpress: { status: 'PASSED', details: 'Règles Firestore ABAC zéro-trust déployées & En-têtes HTTP de sécurité renforcés' },
       etape5_protectionAPIs: { status: 'PASSED', details: 'Rate limiting par IP/endpoint, validation stricte des payloads JSON & contrôle d\'accès' }
     },
+    readiness: {
+      firestoreAdminInitialized: Boolean(activeDb),
+      hmacSecretConfigured: evaluateHmacSecretConfig().valid,
+      emailEncryptionReady: evaluateEmailEncryptionSecret().valid,
+      smtpConfigured,
+      geminiApiKeyConfigured: Boolean(process.env.GEMINI_API_KEY?.trim()),
+      appUrlConfigured: Boolean(
+        process.env.APP_URL?.trim() ||
+        process.env.PUBLIC_SITE_URL?.trim() ||
+        process.env.APP_PUBLIC_URL?.trim()
+      ),
+      backupPersistence: activeDb ? 'FIRESTORE_SYSTEM_BACKUPS_SHA256' : 'FIRESTORE_UNAVAILABLE',
+      payoutProviderMode: payoutReadiness.mode,
+      liveMobileMoneyConfigured: payoutReadiness.liveConfigured,
+      payoutProviderReady: payoutReadiness.ready,
+      payoutMissingEnvVars: payoutReadiness.missingEnvVars,
+    },
     protections: {
       httpSecurityHeaders: {
         active: true,
@@ -2533,6 +2603,8 @@ app.get('/api/security/audit', requireAdminAuthorization as any, (_req: Request,
       },
       payloadDefense: {
         jsonLimit: '10kb',
+        backupJsonLimit: '512kb',
+        mediaJsonLimit: '22mb',
         dosProtection: 'ENABLED',
       },
       rateLimiting: {
@@ -2549,9 +2621,14 @@ app.get('/api/security/audit', requireAdminAuthorization as any, (_req: Request,
         hmacSecretConfigured: evaluateHmacSecretConfig().valid,
         minHmacSecretLength: MIN_OTP_HMAC_SECRET_LENGTH,
         emailEncryptionReady: evaluateEmailEncryptionSecret().valid,
-        smtpConfigPersistence: firestoreAdmin ? 'FIRESTORE_AES256_GCM_SHARED' : 'ENV_ONLY',
-        emailQueuePersistence: firestoreAdmin ? 'FIRESTORE_LEASE_LOCKED' : 'IN_MEMORY_FALLBACK',
-        payoutProviderMode: 'SIMULATOR_DEFAULT_NO_LIVE_AGGREGATOR',
+        smtpConfigPersistence: activeDb ? 'FIRESTORE_AES256_GCM_SHARED' : 'ENV_ONLY',
+        emailQueuePersistence: activeDb ? 'FIRESTORE_LEASE_LOCKED' : 'IN_MEMORY_FALLBACK',
+        backupPersistence: activeDb ? 'FIRESTORE_SYSTEM_BACKUPS_SHA256' : 'FIRESTORE_UNAVAILABLE',
+        payoutProviderMode: payoutReadiness.liveConfigured
+          ? `LIVE_PSP_${payoutReadiness.mode.toUpperCase()}`
+          : payoutReadiness.isSimulated
+            ? 'SIMULATOR_DEFAULT_NO_LIVE_AGGREGATOR'
+            : `LIVE_PSP_${payoutReadiness.mode.toUpperCase()}_UNCONFIGURED`,
         rateLimitPerEmailSeconds: 60,
         maxVerifyAttempts: 3,
         accountEnumerationProtection: 'SILENT_CONSISTENT_RESPONSE',
@@ -3241,39 +3318,95 @@ app.get('/api/monitoring/status', requireAdminAuthorization as any, (_req: Reque
 });
 
 // =========================================================================
-// POINT 20: SYSTÈME DE SAUVEGARDE & RESTAURATION VÉRIFIÉE (PROTECTION ADMIN)
+// POINT 20: SYSTÈME DE SAUVEGARDE & RESTAURATION PERSISTANTE FIRESTORE (ADMIN)
 // =========================================================================
-let testBackupSnapshot: any = null;
-
-app.post('/api/system/backup', requireAdminAuthorization as any, (req: Request, res: Response) => {
-  const { data } = req.body || {};
-  testBackupSnapshot = {
-    timestamp: new Date().toISOString(),
-    checksum: crypto.createHash('sha256').update(JSON.stringify(data || {})).digest('hex'),
-    data: data || {},
-  };
-  res.json({
-    success: true,
-    message: 'Sauvegarde instantanée d\'état générée avec succès par l\'administrateur.',
-    snapshotChecksum: testBackupSnapshot.checksum,
-    timestamp: testBackupSnapshot.timestamp,
-  });
+app.get('/api/system/backups', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  const activeDb = (process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin) as BackupFirestoreLike | null;
+  const limitParam = parseInt(String(req.query?.limit || '20'), 10);
+  try {
+    const backups = await listSystemBackups(activeDb, Number.isFinite(limitParam) ? limitParam : 20);
+    return res.json({
+      success: true,
+      storage: 'firestore_persistent',
+      backups,
+    });
+  } catch (err: any) {
+    const status = err instanceof SystemBackupError ? err.status : 500;
+    return res.status(status).json({
+      success: false,
+      error: err?.message || 'Impossible de lister les sauvegardes système.',
+      code: err instanceof SystemBackupError ? err.code : 'BACKUP_LIST_ERROR',
+    });
+  }
 });
 
-app.post('/api/system/restore', requireAdminAuthorization as any, (_req: Request, res: Response) => {
-  if (!testBackupSnapshot) {
-    return res.status(404).json({ success: false, error: 'Aucun instantané de sauvegarde disponible.' });
-  }
-  const currentChecksum = crypto.createHash('sha256').update(JSON.stringify(testBackupSnapshot.data)).digest('hex');
-  const integrityVerified = currentChecksum === testBackupSnapshot.checksum;
+app.post('/api/system/backup', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  const activeDb = (process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin) as BackupFirestoreLike | null;
+  const { data, includeCollections, note } = req.body || {};
 
-  res.json({
-    success: true,
-    integrityVerified,
-    message: 'Restauration complète exécutée avec intégrité cryptographique validée.',
-    restoredData: testBackupSnapshot.data,
-    checksum: currentChecksum,
-  });
+  try {
+    const result = await createSystemBackup(activeDb, {
+      data,
+      includeCollections: Array.isArray(includeCollections) ? includeCollections : undefined,
+      note: typeof note === 'string' ? note : undefined,
+      requestedByUid: req.user?.uid,
+      requestedByEmail: req.user?.email,
+    });
+    return res.json({
+      success: true,
+      message: 'Sauvegarde persistante multi-instance enregistrée dans Firestore avec empreinte SHA-256.',
+      backupId: result.backupId,
+      snapshotChecksum: result.snapshotChecksum,
+      checksum: result.checksum,
+      timestamp: result.timestamp,
+      mode: result.mode,
+      sizeBytes: result.sizeBytes,
+      storage: result.storage,
+      ...(result.collectionsSummary ? { collectionsSummary: result.collectionsSummary } : {}),
+    });
+  } catch (err: any) {
+    const status = err instanceof SystemBackupError ? err.status : 500;
+    return res.status(status).json({
+      success: false,
+      error: err?.message || 'Erreur lors de la création de la sauvegarde.',
+      code: err instanceof SystemBackupError ? err.code : 'BACKUP_CREATE_ERROR',
+    });
+  }
+});
+
+app.post('/api/system/restore', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  const activeDb = (process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin) as BackupFirestoreLike | null;
+  const { backupId, applyToFirestore } = req.body || {};
+
+  try {
+    const result = await restoreSystemBackup(activeDb, {
+      backupId: typeof backupId === 'string' ? backupId : undefined,
+      applyToFirestore: applyToFirestore === true,
+    });
+    return res.json({
+      success: true,
+      integrityVerified: result.integrityVerified,
+      message: result.appliedToFirestore
+        ? `Restauration Firestore complète exécutée (${result.restoredDocCount} documents restaurés, SHA-256 vérifié).`
+        : 'Restauration lue et vérifiée avec intégrité cryptographique SHA-256.',
+      backupId: result.backupId,
+      timestamp: result.timestamp,
+      mode: result.mode,
+      storage: result.storage,
+      appliedToFirestore: result.appliedToFirestore,
+      restoredDocCount: result.restoredDocCount,
+      restoredData: result.restoredData,
+      checksum: result.checksum,
+    });
+  } catch (err: any) {
+    const status = err instanceof SystemBackupError ? err.status : 500;
+    return res.status(status).json({
+      success: false,
+      integrityVerified: err instanceof SystemBackupError && err.code === 'BACKUP_CHECKSUM_MISMATCH' ? false : undefined,
+      error: err?.message || 'Erreur lors de la restauration de la sauvegarde.',
+      code: err instanceof SystemBackupError ? err.code : 'BACKUP_RESTORE_ERROR',
+    });
+  }
 });
 
 // =========================================================================
@@ -6043,6 +6176,14 @@ app.get('/sitemap.xml', (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/xml; charset=utf-8');
   res.setHeader('Cache-Control', 'public, max-age=3600');
   res.status(200).send(xml);
+});
+
+// Explicit JSON 404 for unknown /api/* routes so API requests never leak into HTML catch-all
+app.use('/api', (req: Request, res: Response) => {
+  res.status(404).json({
+    success: false,
+    error: `Route API introuvable (${req.method} ${req.originalUrl.split('?')[0]}).`,
+  });
 });
 
 async function startServer() {

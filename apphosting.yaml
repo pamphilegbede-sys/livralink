@@ -1,13 +1,17 @@
 runConfig:
   cpu: 1
-  memoryMiB: 512
+  memoryMiB: 1024
   minInstances: 0
   maxInstances: 5
-  concurrency: 80
+  concurrency: 20
 
 env:
   - variable: NODE_ENV
     value: production
+  - variable: FIREBASE_DATABASE_ID
+    value: ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6
+  - variable: PAYOUT_PROVIDER_MODE
+    value: simulator
   - variable: SMTP_HOST
     value: smtp.gmail.com
   - variable: SMTP_PORT
@@ -22,8 +26,15 @@ env:
     secret: GEMINI_API_KEY
     availability:
       - RUNTIME
-# Secrets RUNTIME requis / recommandés dans Google Cloud Secret Manager (provisionner manuellement via
-# `firebase apphosting:secrets:set <NOM>` puis accorder l'accès au backend App Hosting via `firebase apphosting:secrets:grantaccess <NOM>`) :
-# - GEMINI_API_KEY (clé serveur API Google Gemini pour l'analyse KYC administrateur uniquement)
-# - EMAIL_ENCRYPTION_SECRET (>= 32 caractères ; sinon OTP_SECRET_SALT dérive la clé AES-256-GCM SMTP via HKDF)
-# - GMAIL_SMTP_USER / GMAIL_SMTP_PASS (repli serveur si la configuration SMTP partagée Firestore n'est pas définie)
+# Architecture unifiée App Hosting / Cloud Run :
+# Le serveur Express/Node (`npm start` -> `tsx server.ts`) sert directement les routes `/api/*`,
+# `/healthz`, `/version.json` ainsi que le SPA compilé (`dist/`), sans Cloud Function séparée.
+#
+# Secrets RUNTIME & variables complémentaires à provisionner manuellement dans Google Cloud Secret Manager
+# (`firebase apphosting:secrets:set <NOM>` puis `firebase apphosting:secrets:grantaccess <NOM> --backend <BACKEND>`) :
+# - APP_URL : URL publique canonique HTTPS (ex: https://livralink.oxy-dev.cc)
+# - POD_OTP_HMAC_SECRET : optionnel si OTP_SECRET_SALT est déjà défini (sinon même format >= 32 octets hex)
+# - EMAIL_ENCRYPTION_SECRET : recommandé (>= 32 caractères ; sinon dérivé via HKDF depuis OTP_SECRET_SALT)
+# - GMAIL_SMTP_USER / GMAIL_SMTP_PASS : identifiants SMTP réels si la configuration Firestore chiffrée n'est pas utilisée
+# - VITE_GOOGLE_MAPS_API_KEY : clé Google Maps navigateur restreinte par référents HTTP (BUILD/RUNTIME si rebuild)
+# - MOBILE_MONEY_API_BASE_URL / MOBILE_MONEY_API_KEY / MOBILE_MONEY_WEBHOOK_SECRET : uniquement si PAYOUT_PROVIDER_MODE != simulator

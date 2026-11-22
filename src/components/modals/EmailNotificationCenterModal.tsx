@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { fetchSentEmailsHistory, SentEmailItem, sendWelcomeEmail, sendPasswordChangedConfirmationEmail } from '../../services/emailService';
+import { buildSandboxedEmailPreviewDocument } from '../../utils/htmlSanitizer';
 
 interface EmailNotificationCenterModalProps {
   isOpen: boolean;
@@ -319,9 +320,11 @@ export const EmailNotificationCenterModal: React.FC<EmailNotificationCenterModal
                 {/* Email HTML Render Frame */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-6 bg-[#f8fafc] dark:bg-slate-950/40">
                   <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                    <div
-                      className="p-4 sm:p-6 prose prose-slate max-w-none"
-                      dangerouslySetInnerHTML={{ __html: selectedEmail.htmlContent }}
+                    <iframe
+                      title={`Aperçu sécurisé de l'e-mail ${selectedEmail.id}`}
+                      sandbox=""
+                      srcDoc={buildSandboxedEmailPreviewDocument(selectedEmail.htmlContent)}
+                      className="w-full min-h-[420px] border-0 bg-white block"
                     />
                   </div>
                 </div>

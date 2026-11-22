@@ -1,4 +1,5 @@
 import { auth } from '../firebase/config';
+import { escapeHtmlText } from '../utils/htmlSanitizer';
 
 const createLocalEmailId = (prefix: string): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -89,11 +90,11 @@ export const sendWelcomeEmail = async (payload: {
     previewText: `Félicitations pour votre inscription sur LivraLink Bénin. Votre espace est prêt.`,
     htmlContent: `
       <div style="font-family: sans-serif; padding: 20px; color: #0f172a;">
-        <h2 style="color: #2563eb;">Bienvenue sur LivraLink, ${payload.fullName} !</h2>
+        <h2 style="color: #2563eb;">Bienvenue sur LivraLink, ${escapeHtmlText(payload.fullName)} !</h2>
         <p>Votre compte <strong>${payload.role === 'vendeur' ? 'Vendeur' : 'Livreur'}</strong> a été créé avec succès.</p>
-        <p>Identifiant de connexion : <strong>${payload.email}</strong></p>
-        ${payload.storeName ? `<p>Boutique : <strong>${payload.storeName}</strong></p>` : ''}
-        ${payload.vehicleType ? `<p>Véhicule : <strong>${payload.vehicleType}</strong></p>` : ''}
+        <p>Identifiant de connexion : <strong>${escapeHtmlText(payload.email)}</strong></p>
+        ${payload.storeName ? `<p>Boutique : <strong>${escapeHtmlText(payload.storeName)}</strong></p>` : ''}
+        ${payload.vehicleType ? `<p>Véhicule : <strong>${escapeHtmlText(payload.vehicleType)}</strong></p>` : ''}
         <p style="margin-top: 20px; font-size: 12px; color: #64748b;">© LivraLink Bénin - Logistique urbaine sécurisée</p>
       </div>
     `,
@@ -139,7 +140,7 @@ export const sendPasswordChangedConfirmationEmail = async (payload: {
     htmlContent: `
       <div style="font-family: sans-serif; padding: 20px; color: #0f172a;">
         <h2 style="color: #16a34a;">Mot de passe mis à jour</h2>
-        <p>Le mot de passe de votre compte LivraLink (<strong>${payload.email}</strong>) a été modifié avec succès.</p>
+        <p>Le mot de passe de votre compte LivraLink (<strong>${escapeHtmlText(payload.email)}</strong>) a été modifié avec succès.</p>
         <p style="color: #dc2626; font-size: 13px;">Si vous n'êtes pas à l'origine de cette action, veuillez contacter le support immédiatement.</p>
       </div>
     `,
@@ -196,13 +197,13 @@ export const sendKycConfirmationEmail = async (payload: {
     htmlContent: `
       <div style="font-family: sans-serif; padding: 20px; color: #0f172a;">
         <h2 style="color: ${isApproved ? '#16a34a' : '#dc2626'};">${isApproved ? '🎉 Votre compte est activé !' : '⚠️ Mise à jour de votre dossier KYC'}</h2>
-        <p>Bonjour <strong>${payload.fullName}</strong>,</p>
+        <p>Bonjour <strong>${escapeHtmlText(payload.fullName)}</strong>,</p>
         ${
           isApproved
             ? `<p>Nous avons le plaisir de vous informer que votre dossier d'identification et vos pièces justificatives KYC ont été vérifiés et <strong>approuvés</strong> par notre équipe d'administration.</p>
                <p>Votre compte <strong>${roleLabel}</strong> est désormais pleinement actif et accrédité sur la plateforme LivraLink Bénin.</p>`
             : `<p>Votre dossier KYC a été examiné par notre équipe. Malheureusement, il ne peut pas être validé en l'état pour la raison suivante :</p>
-               <blockquote style="background: #fef2f2; border-left: 4px solid #ef4444; padding: 12px; color: #991b1b;">${payload.reason || 'Documents d\'identité non conformes ou illisibles.'}</blockquote>
+               <blockquote style="background: #fef2f2; border-left: 4px solid #ef4444; padding: 12px; color: #991b1b;">${escapeHtmlText(payload.reason || 'Documents d\'identité non conformes ou illisibles.')}</blockquote>
                <p>Veuillez vous connecter à votre espace pour soumettre à nouveau vos cartes et documents mis à jour.</p>`
         }
       </div>
@@ -255,9 +256,9 @@ export const sendKycSubmissionEmail = async (payload: {
     htmlContent: `
       <div style="font-family: sans-serif; padding: 20px; color: #0f172a;">
         <h2 style="color: #2563eb;">Dossier KYC bien reçu !</h2>
-        <p>Bonjour <strong>${payload.fullName}</strong>,</p>
+        <p>Bonjour <strong>${escapeHtmlText(payload.fullName)}</strong>,</p>
         <p>Nous vous confirmons la réception de vos pièces d'identité pour la vérification KYC de votre compte <strong>${roleLabel}</strong>.</p>
-        <p>Nos équipes procèdent à la vérification de vos documents (${payload.idType || 'Pièce'} #${payload.idNumber || ''}). Vous recevrez une notification par email dès la validation administrative.</p>
+        <p>Nos équipes procèdent à la vérification de vos documents (${escapeHtmlText(payload.idType || 'Pièce')} #${escapeHtmlText(payload.idNumber || '')}). Vous recevrez une notification par email dès la validation administrative.</p>
       </div>
     `,
     sentAt: new Date().toISOString(),

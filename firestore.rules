@@ -36,42 +36,66 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-#]+$');
     }
 
-    // Strict Super-Admin & Authorized Admin Check (requires verified email)
-    function isSuperAdmin() {
-      return hasVerifiedEmail() &&
-             request.auth.token.email != null &&
+    // Strict Super-Admin & Authorized Admin Check (Fast helpers assume hasVerifiedEmail() already validated)
+    function isSuperAdminFast() {
+      return request.auth.token.email != null &&
              request.auth.token.email.matches('(?i)^pamphile\\.gbede@gmail\\.com$');
     }
 
+    function isSuperAdmin() {
+      return hasVerifiedEmail() && isSuperAdminFast();
+    }
+
+    function callerUserExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function callerUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdminFast() {
+      return isSuperAdminFast() ||
+             exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+             (callerUserExists() && callerUserData().role == 'admin');
+    }
+
     function isAdmin() {
-      return hasVerifiedEmail() && (
-        isSuperAdmin() ||
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
-      );
+      return hasVerifiedEmail() && isAdminFast();
+    }
+
+    function isVendeurFast() {
+      return callerUserExists() && callerUserData().role == 'vendeur';
     }
 
     function isVendeur() {
-      return hasVerifiedEmail() &&
-             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'vendeur';
+      return hasVerifiedEmail() && isVendeurFast();
+    }
+
+    function isLivreurFast() {
+      return callerUserExists() && callerUserData().role == 'livreur';
     }
 
     function isLivreur() {
-      return hasVerifiedEmail() &&
-             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'livreur';
+      return hasVerifiedEmail() && isLivreurFast();
+    }
+
+    function isKycVerifiedLivreurFast() {
+      return callerUserExists() &&
+             callerUserData().role == 'livreur' &&
+             callerUserData().isKycVerified == true;
     }
 
     function isKycVerifiedLivreur() {
-      return isLivreur() &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isKycVerified == true;
+      return hasVerifiedEmail() && isKycVerifiedLivreurFast();
+    }
+
+    function isClientFast() {
+      return callerUserExists() && callerUserData().role == 'client';
     }
 
     function isClient() {
-      return hasVerifiedEmail() &&
-             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'client';
+      return hasVerifiedEmail() && isClientFast();
     }
 
     // Safe Courier Assignment Helpers (supports both courierId and courier.id without trusting empty strings)
@@ -232,9 +256,7 @@ service cloud.firestore {
              data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 128 &&
              data.phone is string && data.phone.size() <= 32 &&
              data.status in ['en_attente', 'valide', 'refuse'] &&
-             (!('documents' in data) || isValidKycDocumentsMap(data.documents, data.userId)) &&
-             (!('isApproved' in data) || data.isApproved == false || isAdmin()) &&
-             (!('verified' in data) || data.verified == false || isAdmin());
+             (!('documents' in data) || isValidKycDocumentsMap(data.documents, data.userId));
     }
 
     // -------------------------------------------------------------------------
@@ -252,87 +274,212 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     // 1. Users Collection (/users)
     // -------------------------------------------------------------------------
+    function canOwnerUpdateUserDoc(userId, oldData, newData) {
+      let affected = newData.diff(oldData).affectedKeys();
+      return isOwner(userId) &&
+             isValidUserTypes(newData) &&
+             (!('uid' in oldData) || oldData.uid == '' || newData.uid == oldData.uid) &&
+             newData.uid == userId &&
+             (!('email' in oldData) || oldData.email == '' || newData.email == oldData.email) &&
+             (!('email' in affected) || (
+               (!('email' in oldData) || oldData.email == '') &&
+               request.auth.token.email != null &&
+               newData.email == request.auth.token.email
+             )) &&
+             (!('role' in oldData) || oldData.role == '' || newData.role == oldData.role) &&
+             (!('role' in affected) || (
+               (!('role' in oldData) || oldData.role == '') &&
+               newData.role in ['client', 'vendeur', 'livreur']
+             )) &&
+             (
+               !('status' in newData) ||
+               ('status' in oldData && newData.status == oldData.status) ||
+               (hasVerifiedEmail() && 'role' in oldData && oldData.role == 'livreur' && (!('status' in oldData) || oldData.status in ['en_ligne', 'hors_ligne', 'actif']) && newData.status in ['en_ligne', 'hors_ligne'])
+             ) &&
+             (!('isKycVerified' in newData) || ('isKycVerified' in oldData && newData.isKycVerified == oldData.isKycVerified) || (!('isKycVerified' in oldData) && newData.isKycVerified == false)) &&
+             (!('preferredRateDiscountPercent' in newData) || ('preferredRateDiscountPercent' in oldData && newData.preferredRateDiscountPercent == oldData.preferredRateDiscountPercent) || (!('preferredRateDiscountPercent' in oldData) && newData.preferredRateDiscountPercent == 0)) &&
+             (
+               !('kycStatus' in newData) ||
+               ('kycStatus' in oldData && newData.kycStatus == oldData.kycStatus) ||
+               (newData.kycStatus == 'en_attente' && (!('kycStatus' in oldData) || oldData.kycStatus in ['non_soumis', 'refuse', '']))
+             ) &&
+             affected.hasOnly([
+               'uid', 'email', 'role', 'fullName', 'phone', 'channel', 'avatarUrl',
+               'storeName', 'storeCommune', 'storeAddress', 'storeCoordinates',
+               'vehicleType', 'gpsCoordinates', 'locationCommune', 'locationAddress',
+               'locationLat', 'locationLng', 'locationUpdatedAt',
+               'locationSource', 'locationAccuracyMeters', 'status', 'isAvailable',
+               'preferredCourierId', 'preferredCourierName', 'dispatchOfferTimeoutSeconds',
+               'kycStatus', 'kycSubmittedAt',
+               'mfaEnabled', 'mfaMethod', 'updatedAt'
+             ]);
+    }
+
     match /users/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
       allow list: if isAdmin();
-      allow create: if isValidId(userId) && (isAdmin() || (isOwner(userId) && isValidUserOnCreate(incoming())));
-      allow update: if isValidId(userId) && (
-        isAdmin() ||
-        (
-          isOwner(userId) &&
-          isValidUserTypes(incoming()) &&
-          (!('uid' in existing()) || existing().uid == '' || incoming().uid == existing().uid) &&
-          incoming().uid == userId &&
-          (!('email' in existing()) || existing().email == '' || incoming().email == existing().email) &&
-          (!('email' in incoming().diff(existing()).affectedKeys()) || (
-            (!('email' in existing()) || existing().email == '') &&
-            request.auth.token.email != null &&
-            incoming().email == request.auth.token.email
-          )) &&
-          (!('role' in existing()) || existing().role == '' || incoming().role == existing().role) &&
-          (!('role' in incoming().diff(existing()).affectedKeys()) || (
-            (!('role' in existing()) || existing().role == '') &&
-            incoming().role in ['client', 'vendeur', 'livreur']
-          )) &&
-          (
-            !('status' in incoming()) ||
-            ('status' in existing() && incoming().status == existing().status) ||
-            (isLivreur() && (!('status' in existing()) || existing().status in ['en_ligne', 'hors_ligne', 'actif']) && incoming().status in ['en_ligne', 'hors_ligne'])
-          ) &&
-          (!('isKycVerified' in incoming()) || ('isKycVerified' in existing() && incoming().isKycVerified == existing().isKycVerified) || (!('isKycVerified' in existing()) && incoming().isKycVerified == false)) &&
-          (!('preferredRateDiscountPercent' in incoming()) || ('preferredRateDiscountPercent' in existing() && incoming().preferredRateDiscountPercent == existing().preferredRateDiscountPercent) || (!('preferredRateDiscountPercent' in existing()) && incoming().preferredRateDiscountPercent == 0)) &&
-          (
-            !('kycStatus' in incoming()) ||
-            ('kycStatus' in existing() && incoming().kycStatus == existing().kycStatus) ||
-            (incoming().kycStatus == 'en_attente' && (!('kycStatus' in existing()) || existing().kycStatus in ['non_soumis', 'refuse', '']))
-          ) &&
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'uid', 'email', 'role', 'fullName', 'phone', 'channel', 'avatarUrl',
-            'storeName', 'storeCommune', 'storeAddress', 'storeCoordinates',
-            'vehicleType', 'gpsCoordinates', 'locationCommune', 'locationAddress',
-            'locationLat', 'locationLng', 'locationUpdatedAt',
-            'locationSource', 'locationAccuracyMeters', 'status', 'isAvailable',
-            'preferredCourierId', 'preferredCourierName', 'dispatchOfferTimeoutSeconds',
-            'kycStatus', 'kycSubmittedAt',
-            'mfaEnabled', 'mfaMethod', 'updatedAt'
-          ])
-        )
-      );
+      allow create: if isValidId(userId) && ((isOwner(userId) && isValidUserOnCreate(incoming())) || isAdmin());
+      allow update: if isValidId(userId) && (isAdmin() || canOwnerUpdateUserDoc(userId, existing(), incoming()));
       allow delete: if isAdmin();
     }
 
     // -------------------------------------------------------------------------
     // 2. Deliveries Collection (/deliveries)
     // -------------------------------------------------------------------------
+    function canNonAdminUpdateDelivery(oldData, newData) {
+      let u = callerUserExists() ? callerUserData() : null;
+      let isVendorCaller = u != null && u.role == 'vendeur';
+      let isVerifiedCourierCaller = u != null && u.role == 'livreur' && u.isKycVerified == true;
+      let oldUnassigned = noCourierAssigned(oldData);
+      let oldCourier = getCourierId(oldData);
+      let newCourier = getCourierId(newData);
+      let diffKeys = newData.diff(oldData).affectedKeys();
+
+      return (
+        // Post-delivery rating by owning vendor (only once, immutable proof & status)
+        (
+          isVendorCaller &&
+          oldData.merchantId == request.auth.uid &&
+          oldData.status == 'livree' &&
+          newData.status == oldData.status &&
+          !('courierRating' in oldData) &&
+          'courierRating' in newData &&
+          diffKeys.hasOnly(['courierRating', 'updatedAt'])
+        ) ||
+        (
+          !(oldData.status in ['livree', 'echec']) &&
+          (
+            // Owning vendor edits or dispatches while still pending and unassigned
+            (
+              isVendorCaller &&
+              oldData.merchantId == request.auth.uid &&
+              oldData.status == 'en_attente' &&
+              oldUnassigned &&
+              noCourierAssigned(newData) &&
+              newData.status == oldData.status &&
+              diffKeys.hasOnly([
+                'clientName', 'clientPhone', 'clientNote', 'itemDescription',
+                'itemWeightKg', 'itemFormat', 'isFragile',
+                'itemValueCOD', 'deliveryFee', 'totalCustomerPayable',
+                'pickupLocation', 'dropoffLocation', 'statusNote', 'updatedAt',
+                'dispatchMode', 'dispatchState', 'preferredCourierId', 'preferredCourierName',
+                'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
+                'candidateQueue', 'rejectedCourierIds', 'expiredCourierIds',
+                'offerAttempt', 'offerTimeoutSeconds', 'offerStartedAt', 'offerExpiresAt',
+                'dispatchFailureReason'
+              ])
+            ) ||
+            // KYC-verified courier claiming an open or targeted unassigned mission
+            (
+              isVerifiedCourierCaller &&
+              oldData.status == 'en_attente' &&
+              oldUnassigned &&
+              (!('targetCourierId' in oldData) || oldData.targetCourierId == null || oldData.targetCourierId == request.auth.uid) &&
+              'courierId' in newData &&
+              newData.courierId is string &&
+              newData.courierId == request.auth.uid &&
+              (!('courier' in newData) || (newData.courier is map && newData.courier.id == request.auth.uid)) &&
+              (!('dispatchState' in newData) || newData.dispatchState == 'assigned') &&
+              (!('targetCourierId' in newData) || newData.targetCourierId == null) &&
+              newData.status in ['assignee', 'acceptee'] &&
+              diffKeys.hasOnly([
+                'courierId', 'courierName', 'courier', 'assignedAt', 'status', 'statusNote',
+                'dispatchState', 'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
+                'updatedAt'
+              ])
+            ) ||
+            // Targeted KYC-verified courier refusing or advancing own offer sequentially
+            (
+              isVerifiedCourierCaller &&
+              oldData.status == 'en_attente' &&
+              oldUnassigned &&
+              'targetCourierId' in oldData &&
+              oldData.targetCourierId == request.auth.uid &&
+              noCourierAssigned(newData) &&
+              newData.status == 'en_attente' &&
+              diffKeys.hasOnly([
+                'dispatchState', 'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
+                'candidateQueue', 'rejectedCourierIds', 'expiredCourierIds',
+                'offerAttempt', 'offerStartedAt', 'offerExpiresAt', 'dispatchFailureReason', 'statusNote', 'updatedAt'
+              ])
+            ) ||
+            // Assigned KYC-verified courier advancing pickup/transit/failure (NOT 'livree'!)
+            (
+              isVerifiedCourierCaller &&
+              hasValidCourierId(oldData) &&
+              oldCourier == request.auth.uid &&
+              newCourier == oldCourier &&
+              isCourierStatusTransition(oldData.status, newData.status) &&
+              diffKeys.hasOnly([
+                'status', 'statusNote', 'courierLat', 'courierLng', 'courierLocationUpdatedAt', 'updatedAt'
+              ])
+            ) ||
+            // Assigned KYC-verified courier updating live GPS coordinates during active delivery
+            (
+              isVerifiedCourierCaller &&
+              hasValidCourierId(oldData) &&
+              oldCourier == request.auth.uid &&
+              newCourier == oldCourier &&
+              oldData.status in ['assignee', 'acceptee', 'colis_recupere', 'en_cours'] &&
+              newData.status == oldData.status &&
+              diffKeys.hasOnly([
+                'courierLat', 'courierLng', 'courierLocationUpdatedAt', 'updatedAt'
+              ])
+            )
+          )
+        )
+      );
+    }
+
+    function canVendorReadPrivateOtp(deliveryId) {
+      return isVendeurFast() &&
+             exists(/databases/$(database)/documents/deliveries/$(deliveryId)) &&
+             get(/databases/$(database)/documents/deliveries/$(deliveryId)).data.merchantId == request.auth.uid;
+    }
+
+    function canVendorWritePrivateOtp(deliveryId, newData) {
+      let parentData = exists(/databases/$(database)/documents/deliveries/$(deliveryId))
+        ? get(/databases/$(database)/documents/deliveries/$(deliveryId)).data
+        : null;
+      return isVendeurFast() &&
+             parentData != null &&
+             parentData.merchantId == request.auth.uid &&
+             !(parentData.status in ['livree', 'echec']) &&
+             newData.keys().hasAll(['otpCode', 'merchantId']) &&
+             newData.keys().hasOnly(['otpCode', 'merchantId', 'generatedAt', 'updatedAt']) &&
+             newData.merchantId == request.auth.uid &&
+             newData.otpCode is string &&
+             newData.otpCode.matches('^[0-9]{4}$');
+    }
+
     match /deliveries/{deliveryId} {
       allow get: if isValidId(deliveryId) && hasVerifiedEmail() && (
-        isAdmin() ||
         resource.data.merchantId == request.auth.uid ||
         getCourierId(resource.data) == request.auth.uid ||
         ('clientId' in resource.data && resource.data.clientId == request.auth.uid) ||
+        isAdminFast() ||
         (
-          isKycVerifiedLivreur() &&
           resource.data.status == 'en_attente' &&
           noCourierAssigned(resource.data) &&
-          ('targetCourierId' in resource.data && resource.data.targetCourierId == request.auth.uid)
+          ('targetCourierId' in resource.data && resource.data.targetCourierId == request.auth.uid) &&
+          isKycVerifiedLivreurFast()
         )
       );
 
       allow list: if hasVerifiedEmail() && (
-        isAdmin() ||
-        (isVendeur() && resource.data.merchantId == request.auth.uid) ||
-        (isKycVerifiedLivreur() && (
+        isAdminFast() ||
+        (isVendeurFast() && resource.data.merchantId == request.auth.uid) ||
+        (isKycVerifiedLivreurFast() && (
           resource.data.courierId == request.auth.uid ||
           resource.data.targetCourierId == request.auth.uid
         )) ||
-        (isClient() && 'clientId' in resource.data && resource.data.clientId == request.auth.uid)
+        (isClientFast() && 'clientId' in resource.data && resource.data.clientId == request.auth.uid)
       );
 
       allow create: if isValidId(deliveryId) &&
                     hasVerifiedEmail() &&
-                    (isVendeur() || isAdmin()) &&
                     isValidDelivery(incoming()) &&
-                    (incoming().merchantId == request.auth.uid || isAdmin()) &&
+                    ((incoming().merchantId == request.auth.uid && isVendeurFast()) || isAdminFast()) &&
                     incoming().status == 'en_attente' &&
                     noCourierAssigned(incoming()) &&
                     !('podData' in incoming()) &&
@@ -356,127 +503,17 @@ service cloud.firestore {
                     isValidDelivery(incoming()) &&
                     incoming().id == existing().id &&
                     incoming().merchantId == existing().merchantId &&
-                    (
-                      isAdmin() ||
-                      (
-                        // Post-delivery rating by owning vendor (only once, immutable proof & status)
-                        isVendeur() &&
-                        existing().merchantId == request.auth.uid &&
-                        existing().status == 'livree' &&
-                        incoming().status == existing().status &&
-                        !('courierRating' in existing()) &&
-                        'courierRating' in incoming() &&
-                        incoming().diff(existing()).affectedKeys().hasOnly(['courierRating', 'updatedAt'])
-                      ) ||
-                      (
-                        !(existing().status in ['livree', 'echec']) &&
-                        (
-                          // Owning vendor edits or dispatches while still pending and unassigned
-                          (
-                            isVendeur() &&
-                            existing().merchantId == request.auth.uid &&
-                            existing().status == 'en_attente' &&
-                            noCourierAssigned(existing()) &&
-                            noCourierAssigned(incoming()) &&
-                            incoming().status == existing().status &&
-                            incoming().diff(existing()).affectedKeys().hasOnly([
-                              'clientName', 'clientPhone', 'clientNote', 'itemDescription',
-                              'itemWeightKg', 'itemFormat', 'isFragile',
-                              'itemValueCOD', 'deliveryFee', 'totalCustomerPayable',
-                              'pickupLocation', 'dropoffLocation', 'statusNote', 'updatedAt',
-                              'dispatchMode', 'dispatchState', 'preferredCourierId', 'preferredCourierName',
-                              'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
-                              'candidateQueue', 'rejectedCourierIds', 'expiredCourierIds',
-                              'offerAttempt', 'offerTimeoutSeconds', 'offerStartedAt', 'offerExpiresAt',
-                              'dispatchFailureReason'
-                            ])
-                          ) ||
-                          // KYC-verified courier claiming an open or targeted unassigned mission
-                          (
-                            isKycVerifiedLivreur() &&
-                            existing().status == 'en_attente' &&
-                            noCourierAssigned(existing()) &&
-                            (!('targetCourierId' in existing()) || existing().targetCourierId == null || existing().targetCourierId == request.auth.uid) &&
-                            'courierId' in incoming() &&
-                            incoming().courierId is string &&
-                            incoming().courierId == request.auth.uid &&
-                            (!('courier' in incoming()) || (incoming().courier is map && incoming().courier.id == request.auth.uid)) &&
-                            (!('dispatchState' in incoming()) || incoming().dispatchState == 'assigned') &&
-                            (!('targetCourierId' in incoming()) || incoming().targetCourierId == null) &&
-                            incoming().status in ['assignee', 'acceptee'] &&
-                            incoming().diff(existing()).affectedKeys().hasOnly([
-                              'courierId', 'courierName', 'courier', 'assignedAt', 'status', 'statusNote',
-                              'dispatchState', 'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
-                              'updatedAt'
-                            ])
-                          ) ||
-                          // Targeted KYC-verified courier refusing or advancing own offer sequentially
-                          (
-                            isKycVerifiedLivreur() &&
-                            existing().status == 'en_attente' &&
-                            noCourierAssigned(existing()) &&
-                            'targetCourierId' in existing() &&
-                            existing().targetCourierId == request.auth.uid &&
-                            noCourierAssigned(incoming()) &&
-                            incoming().status == 'en_attente' &&
-                            incoming().diff(existing()).affectedKeys().hasOnly([
-                              'dispatchState', 'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
-                              'candidateQueue', 'rejectedCourierIds', 'expiredCourierIds',
-                              'offerAttempt', 'offerStartedAt', 'offerExpiresAt', 'dispatchFailureReason', 'statusNote', 'updatedAt'
-                            ])
-                          ) ||
-                          // Assigned KYC-verified courier advancing pickup/transit/failure (NOT 'livree'!)
-                          (
-                            isKycVerifiedLivreur() &&
-                            hasValidCourierId(existing()) &&
-                            getCourierId(existing()) == request.auth.uid &&
-                            getCourierId(incoming()) == getCourierId(existing()) &&
-                            isCourierStatusTransition(existing().status, incoming().status) &&
-                            incoming().diff(existing()).affectedKeys().hasOnly([
-                              'status', 'statusNote', 'courierLat', 'courierLng', 'courierLocationUpdatedAt', 'updatedAt'
-                            ])
-                          ) ||
-                          // Assigned KYC-verified courier updating live GPS coordinates during active delivery
-                          (
-                            isKycVerifiedLivreur() &&
-                            hasValidCourierId(existing()) &&
-                            getCourierId(existing()) == request.auth.uid &&
-                            getCourierId(incoming()) == getCourierId(existing()) &&
-                            existing().status in ['assignee', 'acceptee', 'colis_recupere', 'en_cours'] &&
-                            incoming().status == existing().status &&
-                            incoming().diff(existing()).affectedKeys().hasOnly([
-                              'courierLat', 'courierLng', 'courierLocationUpdatedAt', 'updatedAt'
-                            ])
-                          )
-                        )
-                      )
-                    );
+                    (isAdminFast() || canNonAdminUpdateDelivery(existing(), incoming()));
 
       allow delete: if isAdmin();
 
       // Private delivery OTP storage (readable/writable ONLY by owning vendor or admin; NEVER readable by couriers)
       match /private/{privateDocId} {
         allow get, list: if isValidId(deliveryId) && hasVerifiedEmail() && (
-          isAdmin() ||
-          (
-            isVendeur() &&
-            exists(/databases/$(database)/documents/deliveries/$(deliveryId)) &&
-            get(/databases/$(database)/documents/deliveries/$(deliveryId)).data.merchantId == request.auth.uid
-          )
+          isAdminFast() || canVendorReadPrivateOtp(deliveryId)
         );
         allow create, update: if isValidId(deliveryId) && privateDocId == 'otp' && hasVerifiedEmail() && (
-          isAdmin() ||
-          (
-            isVendeur() &&
-            exists(/databases/$(database)/documents/deliveries/$(deliveryId)) &&
-            get(/databases/$(database)/documents/deliveries/$(deliveryId)).data.merchantId == request.auth.uid &&
-            !(get(/databases/$(database)/documents/deliveries/$(deliveryId)).data.status in ['livree', 'echec']) &&
-            incoming().keys().hasAll(['otpCode', 'merchantId']) &&
-            incoming().keys().hasOnly(['otpCode', 'merchantId', 'generatedAt', 'updatedAt']) &&
-            incoming().merchantId == request.auth.uid &&
-            incoming().otpCode is string &&
-            incoming().otpCode.matches('^[0-9]{4}$')
-          )
+          isAdminFast() || canVendorWritePrivateOtp(deliveryId, incoming())
         );
         allow delete: if isAdmin();
       }
@@ -487,10 +524,10 @@ service cloud.firestore {
     //    Business notifications MUST be created by trusted backend/Admin SDK.
     // -------------------------------------------------------------------------
     match /notifications/{notificationId} {
-      allow get, list: if hasVerifiedEmail() && (resource.data.recipientId == request.auth.uid || isAdmin());
+      allow get, list: if hasVerifiedEmail() && (resource.data.recipientId == request.auth.uid || isAdminFast());
       allow create: if isAdmin() && isValidId(notificationId) && isValidNotification(incoming());
       allow update: if hasVerifiedEmail() && isValidId(notificationId) && (
-        isAdmin() ||
+        isAdminFast() ||
         (
           resource.data.recipientId == request.auth.uid &&
           incoming().recipientId == existing().recipientId &&
@@ -501,7 +538,7 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'read', 'readAt', 'updatedAt'])
         )
       );
-      allow delete: if hasVerifiedEmail() && isValidId(notificationId) && (resource.data.recipientId == request.auth.uid || isAdmin());
+      allow delete: if hasVerifiedEmail() && isValidId(notificationId) && (resource.data.recipientId == request.auth.uid || isAdminFast());
     }
 
     // -------------------------------------------------------------------------
@@ -517,6 +554,8 @@ service cloud.firestore {
                     !('aiAnalysis' in incoming()) &&
                     !('reviewedAt' in incoming()) &&
                     !('reviewedBy' in incoming()) &&
+                    (!('isApproved' in incoming()) || incoming().isApproved == false) &&
+                    (!('verified' in incoming()) || incoming().verified == false) &&
                     incoming().id == userId &&
                     incoming().userId == request.auth.uid &&
                     (!('courierId' in incoming()) || incoming().courierId == request.auth.uid) &&
@@ -527,6 +566,8 @@ service cloud.firestore {
           hasVerifiedEmail() &&
           isOwner(userId) &&
           isValidKYCDossier(incoming()) &&
+          (!('isApproved' in incoming()) || incoming().isApproved == false) &&
+          (!('verified' in incoming()) || incoming().verified == false) &&
           (!('status' in existing()) || existing().status in ['refuse', 'non_soumis']) &&
           (!('id' in existing()) || existing().id == '' || incoming().id == existing().id) &&
           incoming().id == userId &&
@@ -575,7 +616,8 @@ service cloud.firestore {
 
       match /messages/{messageId} {
         allow get, list: if hasVerifiedEmail() && (
-          request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds || isAdmin()
+          isAdminFast() ||
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds
         );
         allow create: if hasVerifiedEmail() &&
                       isValidId(messageId) &&
@@ -629,23 +671,92 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     // 8. Priority Missions Collection (/priority_missions)
     // -------------------------------------------------------------------------
+    function canNonAdminUpdateMission(oldData, newData) {
+      let u = callerUserExists() ? callerUserData() : null;
+      let isVendorCaller = u != null && u.role == 'vendeur';
+      let isVerifiedCourierCaller = u != null && u.role == 'livreur' && u.isKycVerified == true;
+      let oldUnassigned = noCourierAssigned(oldData);
+      let oldCourier = getCourierId(oldData);
+      let newCourier = getCourierId(newData);
+      let diffKeys = newData.diff(oldData).affectedKeys();
+
+      return !(oldData.status in ['livree', 'echec']) && (
+        (
+          isVendorCaller &&
+          ('merchantId' in oldData && oldData.merchantId == request.auth.uid) &&
+          oldData.status == 'en_attente' &&
+          oldUnassigned &&
+          noCourierAssigned(newData) &&
+          newData.status == oldData.status &&
+          diffKeys.hasOnly([
+            'fee', 'cod', 'pickupCommune', 'dropoffCommune', 'itemDescription',
+            'storeName', 'urgency',
+            'dispatchMode', 'dispatchState', 'preferredCourierId', 'preferredCourierName',
+            'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
+            'offerAttempt', 'offerTimeoutSeconds', 'offerStartedAt', 'offerExpiresAt',
+            'updatedAt'
+          ])
+        ) ||
+        (
+          isVerifiedCourierCaller &&
+          oldData.status == 'en_attente' &&
+          oldUnassigned &&
+          (!('targetCourierId' in oldData) || oldData.targetCourierId == null || oldData.targetCourierId == request.auth.uid) &&
+          newData.status in ['assignee', 'acceptee'] &&
+          'courierId' in newData &&
+          newData.courierId is string &&
+          newData.courierId == request.auth.uid &&
+          (!('dispatchState' in newData) || newData.dispatchState == 'assigned') &&
+          (!('targetCourierId' in newData) || newData.targetCourierId == null) &&
+          diffKeys.hasOnly([
+            'status', 'courierId', 'courierName', 'assignedAt',
+            'dispatchState', 'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
+            'updatedAt'
+          ])
+        ) ||
+        (
+          isVerifiedCourierCaller &&
+          oldData.status == 'en_attente' &&
+          oldUnassigned &&
+          'targetCourierId' in oldData &&
+          oldData.targetCourierId == request.auth.uid &&
+          noCourierAssigned(newData) &&
+          newData.status == 'en_attente' &&
+          diffKeys.hasOnly([
+            'dispatchState', 'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
+            'offerAttempt', 'offerStartedAt', 'offerExpiresAt', 'updatedAt'
+          ])
+        ) ||
+        (
+          isVerifiedCourierCaller &&
+          hasValidCourierId(oldData) &&
+          oldCourier == request.auth.uid &&
+          newCourier == oldCourier &&
+          isCourierStatusTransition(oldData.status, newData.status) &&
+          diffKeys.hasOnly([
+            'status', 'updatedAt'
+          ])
+        )
+      );
+    }
+
     match /priority_missions/{missionId} {
       allow get: if isValidId(missionId) && hasVerifiedEmail() && (
-        isAdmin() ||
-        (isKycVerifiedLivreur() && (
+        isAdminFast() ||
+        (isKycVerifiedLivreurFast() && (
           (resource.data.status == 'en_attente' && noCourierAssigned(resource.data) && 'targetCourierId' in resource.data && resource.data.targetCourierId == request.auth.uid) ||
           getCourierId(resource.data) == request.auth.uid
         )) ||
-        (isVendeur() && ('merchantId' in resource.data && resource.data.merchantId == request.auth.uid))
+        ('merchantId' in resource.data && resource.data.merchantId == request.auth.uid && isVendeurFast())
       );
 
       allow list: if hasVerifiedEmail() && (
-        isAdmin() ||
-        (isKycVerifiedLivreur() && (
+        isAdminFast() ||
+        (isKycVerifiedLivreurFast() && (
           resource.data.targetCourierId == request.auth.uid ||
           resource.data.courierId == request.auth.uid
         )) ||
-        (isVendeur() && resource.data.merchantId == request.auth.uid)
+        (isVendeurFast() && resource.data.merchantId == request.auth.uid)
       );
 
       allow create: if isValidId(missionId) &&
@@ -653,7 +764,7 @@ service cloud.firestore {
                     isValidPriorityMission(incoming()) &&
                     incoming().status == 'en_attente' &&
                     noCourierAssigned(incoming()) &&
-                    ((isVendeur() && incoming().merchantId == request.auth.uid) || isAdmin()) &&
+                    ((incoming().merchantId == request.auth.uid && isVendeurFast()) || isAdminFast()) &&
                     incoming().keys().hasOnly([
                       'id', 'orderId', 'merchantId', 'storeName', 'pickupCommune',
                       'dropoffCommune', 'fee', 'cod', 'itemDescription', 'urgency',
@@ -669,70 +780,7 @@ service cloud.firestore {
                     incoming().id == existing().id &&
                     incoming().orderId == existing().orderId &&
                     (!('merchantId' in existing()) || incoming().merchantId == existing().merchantId) &&
-                    (
-                      isAdmin() ||
-                      (
-                        !(existing().status in ['livree', 'echec']) &&
-                        (
-                          (
-                            isVendeur() &&
-                            ('merchantId' in existing() && existing().merchantId == request.auth.uid) &&
-                            existing().status == 'en_attente' &&
-                            noCourierAssigned(existing()) &&
-                            noCourierAssigned(incoming()) &&
-                            incoming().status == existing().status &&
-                            incoming().diff(existing()).affectedKeys().hasOnly([
-                              'fee', 'cod', 'pickupCommune', 'dropoffCommune', 'itemDescription',
-                              'storeName', 'urgency',
-                              'dispatchMode', 'dispatchState', 'preferredCourierId', 'preferredCourierName',
-                              'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
-                              'offerAttempt', 'offerTimeoutSeconds', 'offerStartedAt', 'offerExpiresAt',
-                              'updatedAt'
-                            ])
-                          ) ||
-                          (
-                            isKycVerifiedLivreur() &&
-                            existing().status == 'en_attente' &&
-                            noCourierAssigned(existing()) &&
-                            (!('targetCourierId' in existing()) || existing().targetCourierId == null || existing().targetCourierId == request.auth.uid) &&
-                            incoming().status in ['assignee', 'acceptee'] &&
-                            'courierId' in incoming() &&
-                            incoming().courierId is string &&
-                            incoming().courierId == request.auth.uid &&
-                            (!('dispatchState' in incoming()) || incoming().dispatchState == 'assigned') &&
-                            (!('targetCourierId' in incoming()) || incoming().targetCourierId == null) &&
-                            incoming().diff(existing()).affectedKeys().hasOnly([
-                              'status', 'courierId', 'courierName', 'assignedAt',
-                              'dispatchState', 'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
-                              'updatedAt'
-                            ])
-                          ) ||
-                          (
-                            isKycVerifiedLivreur() &&
-                            existing().status == 'en_attente' &&
-                            noCourierAssigned(existing()) &&
-                            'targetCourierId' in existing() &&
-                            existing().targetCourierId == request.auth.uid &&
-                            noCourierAssigned(incoming()) &&
-                            incoming().status == 'en_attente' &&
-                            incoming().diff(existing()).affectedKeys().hasOnly([
-                              'dispatchState', 'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
-                              'offerAttempt', 'offerStartedAt', 'offerExpiresAt', 'updatedAt'
-                            ])
-                          ) ||
-                          (
-                            isKycVerifiedLivreur() &&
-                            hasValidCourierId(existing()) &&
-                            getCourierId(existing()) == request.auth.uid &&
-                            getCourierId(incoming()) == getCourierId(existing()) &&
-                            isCourierStatusTransition(existing().status, incoming().status) &&
-                            incoming().diff(existing()).affectedKeys().hasOnly([
-                              'status', 'updatedAt'
-                            ])
-                          )
-                        )
-                      )
-                    );
+                    (isAdminFast() || canNonAdminUpdateMission(existing(), incoming()));
 
       allow delete: if isAdmin();
     }
@@ -793,9 +841,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /system_backups/{backupId} {
+      allow read, write: if false;
+    }
+
     // Financial audit ledger: written exclusively by Admin SDK transactions
     match /wallet_transactions/{txId} {
-      allow get, list: if hasVerifiedEmail() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow get, list: if hasVerifiedEmail() && (resource.data.uid == request.auth.uid || isAdminFast());
       allow create, update, delete: if false;
     }
   }

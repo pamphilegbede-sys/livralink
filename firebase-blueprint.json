@@ -295,6 +295,22 @@
         "consecutiveFailures": { "type": "number" },
         "openUntilMs": { "type": "number" }
       }
+    },
+    "SystemBackup": {
+      "title": "SystemBackup",
+      "description": "Instantané système persistant vérifié par empreinte SHA-256 (accès serveur Admin SDK exclusif).",
+      "type": "object",
+      "properties": {
+        "backupId": { "type": "string", "maxLength": 128 },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "checksum": { "type": "string", "maxLength": 128 },
+        "mode": { "type": "string", "enum": ["payload_snapshot", "operational_collections"] },
+        "sizeBytes": { "type": "number" },
+        "payloadJson": { "type": "string" },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdByEmail": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["backupId", "timestamp", "checksum", "mode", "payloadJson"]
     }
   },
   "firestore": {
@@ -357,6 +373,10 @@
     "/ai_usage_guards/{guardId}": {
       "schema": "AiUsageGuard",
       "description": "Verrous distribués, quotas journaliers et coupe-circuit Gemini KYC (accès serveur Admin SDK exclusif)."
+    },
+    "/system_backups/{backupId}": {
+      "schema": "SystemBackup",
+      "description": "Instantanés de sauvegarde persistants multi-instances avec intégrité SHA-256 (accès serveur Admin SDK exclusif)."
     }
   }
 }
