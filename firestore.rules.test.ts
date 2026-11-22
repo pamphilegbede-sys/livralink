@@ -1727,5 +1727,42 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
       })
     );
   });
+
+  // 37. Internal ai_usage_guards locked down & client update cannot mutate aiAnalysis on /kyc
+  test('37. ai_usage_guards is completely denied to clients and client update cannot write aiAnalysis on /kyc', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('ai_usage_guards/gemini_quota_2026').set({
+        count: 5,
+        estimatedCostEur: 0.0125,
+      });
+      await context.firestore().doc('kyc/courier_ai_37').set({
+        id: 'courier_ai_37',
+        userId: 'courier_ai_37',
+        courierId: 'courier_ai_37',
+        fullName: 'Courier 37',
+        phone: '+22997000037',
+        status: 'refuse',
+      });
+    });
+
+    const courierDb = testEnv.authenticatedContext('courier_ai_37', {
+      email: 'c37@test.com',
+      email_verified: true,
+    }).firestore();
+
+    await assertFails(courierDb.doc('ai_usage_guards/gemini_quota_2026').get());
+    await assertFails(courierDb.doc('ai_usage_guards/gemini_quota_2026').set({ count: 0 }));
+
+    await assertFails(
+      courierDb.doc('kyc/courier_ai_37').update({
+        id: 'courier_ai_37',
+        userId: 'courier_ai_37',
+        fullName: 'Courier 37',
+        phone: '+22997000037',
+        status: 'en_attente',
+        aiAnalysis: { status: 'completed', summary: 'Forged by client' },
+      })
+    );
+  });
 });
 

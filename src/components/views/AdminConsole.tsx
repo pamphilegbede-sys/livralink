@@ -212,6 +212,7 @@ export const AdminConsole: React.FC = () => {
     setPricingRules,
     approveKYC,
     rejectKYC,
+    analyzeKYCWithGemini,
     showToast,
     updateDeliveryStatus,
     updateDeliveryDetails,
@@ -305,6 +306,7 @@ export const AdminConsole: React.FC = () => {
   >({});
   const [kycDocReloadTick, setKycDocReloadTick] = useState(0);
   const [isSubmittingKycDecision, setIsSubmittingKycDecision] = useState(false);
+  const [isAnalyzingKyc, setIsAnalyzingKyc] = useState(false);
   const kycDocObjectUrlsRef = useRef<string[]>([]);
   const [selectedDisputeOrder, setSelectedDisputeOrder] = useState<string | null>(null);
   const [isAddCourierModalOpen, setIsAddCourierModalOpen] = useState(false);
@@ -750,7 +752,15 @@ export const AdminConsole: React.FC = () => {
       cancelled = true;
       revokeAllDocUrls();
     };
-  }, [reviewingKycItem, kycDocReloadTick]);
+  }, [reviewingKycItem?.id, kycDocReloadTick]);
+
+  useEffect(() => {
+    if (!reviewingKycItem) return;
+    const latest = kycRequests.find((k) => k.id === reviewingKycItem.id);
+    if (latest && latest !== reviewingKycItem) {
+      setReviewingKycItem(latest);
+    }
+  }, [kycRequests, reviewingKycItem?.id]);
 
   useEffect(() => {
     if (activeViewTab === 'email_settings') {
@@ -6779,38 +6789,387 @@ export const AdminConsole: React.FC = () => {
                 );
               })()}
 
-              {/* Statut Préparation Analyse Automatisée IA (Lecture seule, aucun appel IA actif) */}
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <h4 className="font-extrabold text-xs uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-blue-600 text-sm">fact_check</span>
-                    <span>4. Préparation Analyse IA (Lecture seule)</span>
-                  </h4>
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-700">
-                    {reviewingKycItem.aiAnalysis?.status || 'not_started'}
-                  </span>
-                </div>
+              {/* ANALYSE INTELLIGENTE GEMINI (Aide à la décision administrateur uniquement) */}
+              {(() => {
+                const ai = reviewingKycItem.aiAnalysis;
+                const aiStatus = ai?.status || 'not_started';
+                const isRunning = isAnalyzingKyc || aiStatus === 'processing';
+                const statusBadgeMap: Record<string, { label: string; cls: string }> = {
+                  not_started: { label: 'En attente', cls: 'bg-slate-200 text-slate-800 border-slate-300' },
+                  processing: { label: 'En cours', cls: 'bg-blue-100 text-blue-800 border-blue-300' },
+                  completed: { label: 'Analyse terminée', cls: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
+                  failed: { label: 'Échec', cls: 'bg-red-100 text-red-800 border-red-300' },
+                };
+                const statusBadge = statusBadgeMap[aiStatus] || statusBadgeMap.not_started;
 
-                {reviewingKycItem.aiAnalysis ? (
-                  <div className="text-xs text-slate-700 space-y-1.5">
-                    {reviewingKycItem.aiAnalysis.analyzedAt && (
-                      <p className="text-[11px] text-slate-500">
-                        Horodatage enregistré : <strong>{formatKycDateTimeFr(reviewingKycItem.aiAnalysis.analyzedAt)}</strong>
+                const crossCheckStatusMeta: Record<string, { label: string; cls: string }> = {
+                  match: { label: 'Concordant', cls: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+                  mismatch: { label: 'Incohérence', cls: 'bg-red-100 text-red-800 border-red-200' },
+                  expired: { label: 'Expiré', cls: 'bg-red-100 text-red-800 border-red-200' },
+                  expiring_soon: { label: 'Expire bientôt', cls: 'bg-amber-100 text-amber-800 border-amber-200' },
+                  unverifiable: { label: 'Illisible / Non vérifiable', cls: 'bg-slate-100 text-slate-700 border-slate-200' },
+                  missing_document: { label: 'Document manquant', cls: 'bg-amber-100 text-amber-800 border-amber-200' },
+                };
+
+                const readabilityMeta: Record<string, { label: string; cls: string }> = {
+                  readable: { label: 'Lisible', cls: 'bg-emerald-100 text-emerald-800' },
+                  partially_readable: { label: 'Partiellement lisible', cls: 'bg-amber-100 text-amber-800' },
+                  unreadable: { label: 'Illisible', cls: 'bg-red-100 text-red-800' },
+                  missing: { label: 'Manquant', cls: 'bg-slate-200 text-slate-700' },
+                };
+
+                const confidenceLabelMap: Record<string, string> = {
+                  high: 'Élevée',
+                  medium: 'Moyenne',
+                  low: 'Faible',
+                  unavailable: 'Indisponible',
+                };
+
+                const slotOrder: Array<{ key: KycDocumentSlotKey; title: string }> = [
+                  { key: 'idFront', title: "1. Recto pièce d'identité" },
+                  { key: 'idBack', title: "2. Verso pièce d'identité" },
+                  { key: 'drivingLicense', title: '3. Permis de conduire' },
+                  { key: 'vehicleInsurance', title: "4. Attestation d'assurance" },
+                ];
+
+                return (
+                  <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-black text-xs uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                            <span className="material-symbols-outlined text-blue-600 text-base">psychology</span>
+                            <span>4. ANALYSE INTELLIGENTE GEMINI</span>
+                          </h4>
+                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border ${statusBadge.cls}`}>
+                            {statusBadge.label}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500">
+                          Outil d&apos;aide à la vérification uniquement — seule l&apos;équipe administrateur peut valider ou refuser le dossier.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={isRunning || isSubmittingKycDecision}
+                        onClick={async () => {
+                          if (!reviewingKycItem) return;
+                          setIsAnalyzingKyc(true);
+                          try {
+                            await analyzeKYCWithGemini(reviewingKycItem.id);
+                          } finally {
+                            setIsAnalyzingKyc(false);
+                          }
+                        }}
+                        className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs shadow-sm inline-flex items-center justify-center gap-1.5 shrink-0 cursor-pointer transition-all"
+                      >
+                        <span className={`material-symbols-outlined text-sm ${isRunning ? 'animate-spin' : ''}`}>
+                          {isRunning ? 'progress_activity' : aiStatus === 'completed' || aiStatus === 'failed' ? 'refresh' : 'auto_awesome'}
+                        </span>
+                        <span>
+                          {isRunning
+                            ? 'Analyse en cours...'
+                            : aiStatus === 'completed' || aiStatus === 'failed'
+                            ? "Relancer l'analyse"
+                            : "Lancer l'analyse IA"}
+                        </span>
+                      </button>
+                    </div>
+
+                    {/* Metadata bar */}
+                    {(ai?.analyzedAt || ai?.model || ai?.requestedBy) && (
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-600 bg-white px-3 py-2 rounded-xl border border-slate-200">
+                        {ai.analyzedAt && (
+                          <span>
+                            Dernière analyse : <strong className="text-slate-900">{formatKycDateTimeFr(ai.analyzedAt)}</strong>
+                          </span>
+                        )}
+                        {ai.model && (
+                          <span>
+                            Modèle : <strong className="font-mono text-slate-800">{ai.model}</strong>
+                          </span>
+                        )}
+                        {ai.requestedBy && (
+                          <span>
+                            Demandée par : <strong className="text-slate-800">{ai.requestedBy}</strong>
+                          </span>
+                        )}
+                        {ai.usage?.totalTokens !== undefined && (
+                          <span>
+                            Jetons : <strong className="font-mono text-slate-800">{ai.usage.totalTokens}</strong>
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Error state */}
+                    {aiStatus === 'failed' && ai?.error && (
+                      <div role="alert" className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-900 text-xs flex items-start gap-2">
+                        <span className="material-symbols-outlined text-red-600 text-lg shrink-0">error</span>
+                        <div>
+                          <p className="font-bold">Impossible d&apos;achever l&apos;analyse Gemini</p>
+                          <p className="text-[11px] mt-0.5 text-red-800">{ai.error}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Pending / Processing empty state */}
+                    {aiStatus === 'not_started' && (
+                      <p className="text-xs text-slate-600 bg-white p-3.5 rounded-xl border border-slate-200 leading-relaxed">
+                        Aucune analyse Gemini n&apos;a encore été exécutée pour ce dossier. Cliquez sur{' '}
+                        <strong>Lancer l&apos;analyse IA</strong> pour extraire les informations clés des 4 documents privés, contrôler la lisibilité, les dates d&apos;expiration et la concordance avec la fiche déclarée.
                       </p>
                     )}
-                    {reviewingKycItem.aiAnalysis.summary && (
-                      <p className="p-2.5 rounded-xl bg-white border border-slate-200 text-[11px]">
-                        {reviewingKycItem.aiAnalysis.summary}
-                      </p>
+
+                    {aiStatus === 'processing' && (
+                      <div className="p-4 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-xs flex items-center gap-3">
+                        <span className="material-symbols-outlined text-blue-600 text-xl animate-spin shrink-0">sync</span>
+                        <div>
+                          <p className="font-bold">Inspection multimodale Gemini en cours...</p>
+                          <p className="text-[11px] text-blue-800 mt-0.5">
+                            Lecture privée des justificatifs et comparaison avec les champs déclarés.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Completed report */}
+                    {aiStatus === 'completed' && ai && (
+                      <div className="space-y-4">
+                        {/* Résumé global */}
+                        {ai.summary && (
+                          <div className="p-3.5 rounded-xl bg-white border border-slate-200 space-y-1">
+                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                              Synthèse de l&apos;analyse documentaire
+                            </p>
+                            <p className="text-xs text-slate-800 leading-relaxed">{ai.summary}</p>
+                          </div>
+                        )}
+
+                        {/* Informations extraites consolidées */}
+                        {ai.extractedData && Object.keys(ai.extractedData).length > 0 && (
+                          <div className="p-3.5 rounded-xl bg-white border border-slate-200 space-y-2.5">
+                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                              Informations extraites des justificatifs
+                            </p>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                              {ai.extractedData.fullName && (
+                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">Nom complet lu</p>
+                                  <p className="font-bold text-slate-900 mt-0.5">{ai.extractedData.fullName}</p>
+                                </div>
+                              )}
+                              {ai.extractedData.idTypeDetected && (
+                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">Type pièce détecté</p>
+                                  <p className="font-bold text-slate-900 mt-0.5">{ai.extractedData.idTypeDetected}</p>
+                                </div>
+                              )}
+                              {ai.extractedData.idNumber && (
+                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">N° pièce lu</p>
+                                  <p className="font-mono font-bold text-slate-900 mt-0.5">{ai.extractedData.idNumber}</p>
+                                </div>
+                              )}
+                              {ai.extractedData.npi && (
+                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">NPI lu</p>
+                                  <p className="font-mono font-bold text-slate-900 mt-0.5">{ai.extractedData.npi}</p>
+                                </div>
+                              )}
+                              {ai.extractedData.birthDate && (
+                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">Date de naissance</p>
+                                  <p className="font-bold text-slate-900 mt-0.5">{ai.extractedData.birthDate}</p>
+                                </div>
+                              )}
+                              {ai.extractedData.idExpiresAt && (
+                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">Expiration pièce ID</p>
+                                  <p className="font-bold text-slate-900 mt-0.5">{ai.extractedData.idExpiresAt}</p>
+                                </div>
+                              )}
+                              {ai.extractedData.licenseNumber && (
+                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">N° permis</p>
+                                  <p className="font-mono font-bold text-slate-900 mt-0.5">{ai.extractedData.licenseNumber}</p>
+                                </div>
+                              )}
+                              {ai.extractedData.licenseCategories && (
+                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">Catégories permis</p>
+                                  <p className="font-bold text-slate-900 mt-0.5">{ai.extractedData.licenseCategories}</p>
+                                </div>
+                              )}
+                              {ai.extractedData.licenseExpiresAt && (
+                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">Expiration permis</p>
+                                  <p className="font-bold text-slate-900 mt-0.5">{ai.extractedData.licenseExpiresAt}</p>
+                                </div>
+                              )}
+                              {ai.extractedData.vehiclePlate && (
+                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">Immatriculation lue</p>
+                                  <p className="font-mono font-bold text-blue-700 mt-0.5">{ai.extractedData.vehiclePlate}</p>
+                                </div>
+                              )}
+                              {ai.extractedData.insurancePolicyNumber && (
+                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">N° police assurance</p>
+                                  <p className="font-mono font-bold text-slate-900 mt-0.5">{ai.extractedData.insurancePolicyNumber}</p>
+                                </div>
+                              )}
+                              {ai.extractedData.insuranceExpiresAt && (
+                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">Fin couverture assurance</p>
+                                  <p className="font-bold text-slate-900 mt-0.5">{ai.extractedData.insuranceExpiresAt}</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Contrôles croisés */}
+                        {ai.crossChecks && ai.crossChecks.length > 0 && (
+                          <div className="p-3.5 rounded-xl bg-white border border-slate-200 space-y-2.5">
+                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                              Contrôles croisés (Déclaratif vs Documents)
+                            </p>
+                            <div className="space-y-2">
+                              {ai.crossChecks.map((cc, idx) => {
+                                const badge = crossCheckStatusMeta[cc.status] || crossCheckStatusMeta.unverifiable;
+                                return (
+                                  <div
+                                    key={`${cc.field}-${idx}`}
+                                    className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                                  >
+                                    <div className="space-y-0.5 min-w-0">
+                                      <p className="font-bold text-slate-900">{cc.field}</p>
+                                      <p className="text-[11px] text-slate-600">{cc.details}</p>
+                                      {(cc.declaredValue || cc.extractedValue) && (
+                                        <p className="text-[10px] text-slate-500 font-mono">
+                                          {cc.declaredValue ? `Déclaré : ${cc.declaredValue}` : ''}
+                                          {cc.declaredValue && cc.extractedValue ? ' • ' : ''}
+                                          {cc.extractedValue ? `Lu : ${cc.extractedValue}` : ''}
+                                        </p>
+                                      )}
+                                    </div>
+                                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border shrink-0 self-start sm:self-center ${badge.cls}`}>
+                                      {badge.label}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Résultat par document */}
+                        {ai.documents && (
+                          <div className="space-y-2">
+                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                              Inspection par document
+                            </p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {slotOrder.map(({ key, title }) => {
+                                const docRes = ai.documents?.[key];
+                                if (!docRes) return null;
+                                const readMeta = readabilityMeta[docRes.readabilityStatus] || readabilityMeta.partially_readable;
+                                return (
+                                  <div key={key} className="p-3 rounded-xl bg-white border border-slate-200 space-y-2 text-xs">
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div>
+                                        <p className="font-extrabold text-slate-900">{title}</p>
+                                        {docRes.identifiedDocumentType && (
+                                          <p className="text-[10px] text-blue-700 font-semibold">{docRes.identifiedDocumentType}</p>
+                                        )}
+                                      </div>
+                                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${readMeta.cls}`}>
+                                        {readMeta.label}
+                                      </span>
+                                    </div>
+
+                                    <div className="flex items-center justify-between text-[10px] text-slate-500">
+                                      <span>
+                                        Confiance de lecture :{' '}
+                                        <strong className="text-slate-800">
+                                          {confidenceLabelMap[docRes.extractionConfidence] || docRes.extractionConfidence}
+                                          {docRes.confidencePercent !== undefined ? ` (${docRes.confidencePercent}%)` : ''}
+                                        </strong>
+                                      </span>
+                                    </div>
+
+                                    {docRes.summary && (
+                                      <p className="text-[11px] text-slate-600 leading-snug">{docRes.summary}</p>
+                                    )}
+
+                                    {docRes.anomalies && docRes.anomalies.length > 0 && (
+                                      <ul className="list-disc list-inside text-[10px] text-red-700 space-y-0.5 bg-red-50/70 p-2 rounded-lg border border-red-100">
+                                        {docRes.anomalies.map((anom, aIdx) => (
+                                          <li key={aIdx}>{anom}</li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Problèmes, avertissements & recommandations admin */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                          <div className="p-3 rounded-xl bg-white border border-slate-200 space-y-1.5">
+                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-red-700">
+                              Anomalies / Points critiques
+                            </p>
+                            {ai.issues && ai.issues.length > 0 ? (
+                              <ul className="list-disc list-inside text-[11px] text-slate-700 space-y-1">
+                                {ai.issues.map((item, idx) => (
+                                  <li key={idx}>{item}</li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="text-[11px] text-slate-400">Aucune anomalie critique relevée.</p>
+                            )}
+                          </div>
+
+                          <div className="p-3 rounded-xl bg-white border border-slate-200 space-y-1.5">
+                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-amber-700">
+                              Avertissements / Manquants
+                            </p>
+                            {ai.warnings && ai.warnings.length > 0 ? (
+                              <ul className="list-disc list-inside text-[11px] text-slate-700 space-y-1">
+                                {ai.warnings.map((item, idx) => (
+                                  <li key={idx}>{item}</li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="text-[11px] text-slate-400">Aucun avertissement particulier.</p>
+                            )}
+                          </div>
+
+                          <div className="p-3 rounded-xl bg-white border border-blue-200 space-y-1.5">
+                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-blue-700">
+                              Recommandations de vérification
+                            </p>
+                            {ai.recommendations && ai.recommendations.length > 0 ? (
+                              <ul className="list-disc list-inside text-[11px] text-slate-700 space-y-1">
+                                {ai.recommendations.map((item, idx) => (
+                                  <li key={idx}>{item}</li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="text-[11px] text-slate-400">Effectuer le contrôle humain habituel.</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     )}
                   </div>
-                ) : (
-                  <p className="text-[11px] text-slate-500 leading-relaxed">
-                    Analyse automatisée non encore exécutée. Ce dossier suit actuellement le contrôle manuel administrateur
-                    (la structure <code className="font-mono text-slate-700">aiAnalysis</code> est en place pour l&apos;intégration future).
-                  </p>
-                )}
-              </div>
+                );
+              })()}
 
               {/* Rejection motif input if admin chooses to reject */}
               <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200 space-y-2">

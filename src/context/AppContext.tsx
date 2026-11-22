@@ -20,7 +20,8 @@ import {
   ChatMessage,
   KycDocumentSlotKey,
   KycStorageDocType,
-  KycUploadedDocumentMeta
+  KycUploadedDocumentMeta,
+  KycAiAnalysisData
 } from '../types';
 import { sendPlatformNotification, sendKycSubmissionEmail, notifyClientDeliveryOtp } from '../services/emailService';
 
@@ -240,6 +241,10 @@ interface AppContextType {
   selectActiveCourier: (courierOrId: Courier | string) => void;
   approveKYC: (requestId: string) => Promise<boolean> | void;
   rejectKYC: (requestId: string, reason?: string) => Promise<boolean> | void;
+  analyzeKYCWithGemini: (
+    requestId: string,
+    options?: { force?: boolean }
+  ) => Promise<{ success: boolean; aiAnalysis?: KycAiAnalysisData; error?: string; code?: string }>;
   resolveDispute: (orderId: string, resolutionNote: string) => void;
   
   // Admin Entity Management & Full Control
@@ -5299,6 +5304,116 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
+  const analyzeKYCWithGemini = async (
+    requestId: string,
+    options?: { force?: boolean }
+  ): Promise<{ success: boolean; aiAnalysis?: KycAiAnalysisData; error?: string; code?: string }> => {
+    if (!isAdminAuthenticated) {
+      const error = 'Action réservée au Super-Admin authentifié.';
+      showToast(error, 'error');
+      return { success: false, error, code: 'ADMIN_REQUIRED' };
+    }
+    if (!auth.currentUser) {
+      const error = "Session Firebase requise pour lancer l'analyse Gemini.";
+      showToast(error, 'error');
+      return { success: false, error, code: 'AUTH_REQUIRED' };
+    }
+
+    const targetReq = kycRequests.find((r) => r.id === requestId || r.courierId === requestId);
+    const resolvedId = targetReq?.id || requestId;
+
+    setKycRequests((prev) =>
+      prev.map((req) =>
+        req.id === resolvedId || req.courierId === resolvedId
+          ? {
+              ...req,
+              aiAnalysis: {
+                ...(req.aiAnalysis || { status: 'processing' }),
+                status: 'processing',
+                provider: 'gemini',
+                startedAt: new Date().toISOString(),
+                error: undefined,
+              },
+            }
+          : req
+      )
+    );
+
+    try {
+      const token = await auth.currentUser.getIdToken();
+      const res = await fetch(`/api/admin/kyc/${encodeURIComponent(resolvedId)}/analyze`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ force: Boolean(options?.force) }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success || !data?.aiAnalysis) {
+        const errMsg = data?.error || "Échec de l'analyse documentaire Gemini sur le serveur.";
+        const errCode = data?.code || 'GEMINI_ANALYSIS_FAILED';
+        setKycRequests((prev) =>
+          prev.map((req) =>
+            req.id === resolvedId || req.courierId === resolvedId
+              ? {
+                  ...req,
+                  aiAnalysis: {
+                    ...(req.aiAnalysis || { status: 'failed' }),
+                    status: 'failed',
+                    provider: 'gemini',
+                    analyzedAt: new Date().toISOString(),
+                    error: errMsg,
+                    errorCode: errCode,
+                  },
+                }
+              : req
+          )
+        );
+        showToast(errMsg, 'error');
+        return { success: false, error: errMsg, code: errCode };
+      }
+
+      const aiAnalysis = data.aiAnalysis as KycAiAnalysisData;
+      setKycRequests((prev) =>
+        prev.map((req) =>
+          req.id === resolvedId || req.courierId === resolvedId
+            ? { ...req, aiAnalysis }
+            : req
+        )
+      );
+
+      addAuditLog(
+        'kyc',
+        'Analyse IA Gemini KYC',
+        `Rapport d'aide à la décision généré pour le dossier ${resolvedId} (statut dossier inchangé)`
+      );
+      showToast('Analyse documentaire Gemini terminée.', 'success');
+      return { success: true, aiAnalysis };
+    } catch (err: any) {
+      const errMsg = err?.message || "Erreur réseau lors de l'analyse Gemini.";
+      setKycRequests((prev) =>
+        prev.map((req) =>
+          req.id === resolvedId || req.courierId === resolvedId
+            ? {
+                ...req,
+                aiAnalysis: {
+                  ...(req.aiAnalysis || { status: 'failed' }),
+                  status: 'failed',
+                  provider: 'gemini',
+                  analyzedAt: new Date().toISOString(),
+                  error: errMsg,
+                },
+              }
+            : req
+        )
+      );
+      showToast(errMsg, 'error');
+      return { success: false, error: errMsg, code: 'NETWORK_ERROR' };
+    }
+  };
+
   const rateCourier = (
     orderId: string,
     courierId: string,
@@ -6288,6 +6403,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         selectActiveCourier,
         approveKYC,
         rejectKYC,
+        analyzeKYCWithGemini,
         resolveDispute,
         deleteDelivery,
         updateDeliveryDetails,

@@ -511,6 +511,29 @@ export const getKycDocumentSlots = (kyc?: Partial<KYCUserRequest> | null): Norma
   });
 };
 
+const normalizeKycAiAnalysis = (raw: any): KYCUserRequest['aiAnalysis'] => {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const rawStatus = typeof raw.status === 'string' ? raw.status.trim() : 'not_started';
+  const status =
+    rawStatus === 'completed' || rawStatus === 'failed' || rawStatus === 'processing' || rawStatus === 'not_started'
+      ? rawStatus
+      : rawStatus === 'pending'
+      ? 'processing'
+      : 'not_started';
+
+  return {
+    ...raw,
+    status,
+    provider: raw.provider === 'gemini' ? 'gemini' : 'gemini',
+    analyzedAt: raw.analyzedAt ? normalizeDateString(raw.analyzedAt) : undefined,
+    startedAt: raw.startedAt ? normalizeDateString(raw.startedAt) : undefined,
+    crossChecks: Array.isArray(raw.crossChecks) ? raw.crossChecks : undefined,
+    warnings: Array.isArray(raw.warnings) ? raw.warnings : undefined,
+    issues: Array.isArray(raw.issues) ? raw.issues : undefined,
+    recommendations: Array.isArray(raw.recommendations) ? raw.recommendations : undefined,
+  };
+};
+
 export const mapFirestoreKycToRequest = (data: any, docId: string): KYCUserRequest => {
   const fullName = String(data.fullName || 'Livreur LivraLink').trim();
   const nameParts = fullName.split(/\s+/).filter(Boolean);
@@ -572,6 +595,6 @@ export const mapFirestoreKycToRequest = (data: any, docId: string): KYCUserReque
     documentStoragePath: legacyPath || idFront?.storagePath || '',
     documentMimeType: data.documentMimeType || idFront?.mimeType || '',
     documentFileName: data.documentFileName || idFront?.originalFileName || idFront?.fileName || '',
-    aiAnalysis: data.aiAnalysis && typeof data.aiAnalysis === 'object' ? data.aiAnalysis : undefined,
+    aiAnalysis: normalizeKycAiAnalysis(data.aiAnalysis),
   };
 };

@@ -189,34 +189,101 @@ export interface KycDocumentsMap {
   assurance?: boolean;
 }
 
+export type KycAiAnalysisStatus = 'not_started' | 'processing' | 'completed' | 'failed';
+export type KycAiReadabilityStatus = 'readable' | 'partially_readable' | 'unreadable' | 'missing';
+export type KycAiExtractionConfidence = 'high' | 'medium' | 'low' | 'unavailable';
+export type KycAiCrossCheckStatus =
+  | 'match'
+  | 'mismatch'
+  | 'unverifiable'
+  | 'expired'
+  | 'expiring_soon'
+  | 'missing_document';
+
+export interface KycAiCrossCheckItem {
+  field: string;
+  declaredValue?: string;
+  extractedValue?: string;
+  status: KycAiCrossCheckStatus;
+  details: string;
+}
+
 export interface KycAiAnalysisSlotResult {
   slotKey: KycDocumentSlotKey;
   docType: KycStorageDocType;
-  readable?: boolean;
-  authenticAppearance?: boolean;
-  extractedFields?: Record<string, string>;
-  anomalies?: string[];
-  confidenceScore?: number;
+  documentPresent: boolean;
+  identifiedDocumentType?: string;
+  readabilityStatus: KycAiReadabilityStatus;
+  extractionConfidence: KycAiExtractionConfidence;
+  confidencePercent?: number;
+  extractedFields?: {
+    lastName?: string;
+    firstName?: string;
+    fullName?: string;
+    documentNumber?: string;
+    npi?: string;
+    birthDate?: string;
+    issuedAt?: string;
+    expiresAt?: string;
+    licenseCategories?: string;
+    vehiclePlate?: string;
+    insurerName?: string;
+    policyNumber?: string;
+    coverageStart?: string;
+    coverageEnd?: string;
+  };
+  detectedDates?: {
+    birthDate?: string;
+    issuedAt?: string;
+    expiresAt?: string;
+    coverageStart?: string;
+    coverageEnd?: string;
+  };
+  anomalies: string[];
   summary?: string;
 }
 
 export interface KycAiAnalysisData {
-  status?: 'not_analyzed' | 'pending' | 'completed' | 'failed';
+  status: KycAiAnalysisStatus;
   provider?: 'gemini';
   model?: string;
   analyzedAt?: string;
-  overallScore?: number;
-  recommendation?: 'approve_candidate' | 'manual_review' | 'reject_candidate';
+  startedAt?: string;
+  requestedBy?: string;
   summary?: string;
-  flags?: string[];
-  extractedIdentity?: {
+  extractedData?: {
     lastName?: string;
     firstName?: string;
+    fullName?: string;
+    idTypeDetected?: string;
     idNumber?: string;
     npi?: string;
+    birthDate?: string;
+    idExpiresAt?: string;
+    licenseNumber?: string;
+    licenseCategories?: string;
+    licenseExpiresAt?: string;
     vehiclePlate?: string;
+    insurancePolicyNumber?: string;
+    insuranceInsurer?: string;
+    insuranceExpiresAt?: string;
   };
   documents?: Partial<Record<KycDocumentSlotKey, KycAiAnalysisSlotResult>>;
+  crossChecks?: KycAiCrossCheckItem[];
+  warnings?: string[];
+  issues?: string[];
+  recommendations?: string[];
+  error?: string;
+  errorCode?: string;
+  usage?: {
+    promptTokens?: number;
+    candidatesTokens?: number;
+    totalTokens?: number;
+    estimatedCostEur?: number;
+    dailyCountSnapshot?: number;
+    dailyCapSnapshot?: number;
+    scope?: 'distributed_firestore' | 'instance_memory';
+  };
 }
 
 export interface KYCUserRequest {

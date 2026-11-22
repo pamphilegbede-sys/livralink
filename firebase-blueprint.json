@@ -109,7 +109,25 @@
         },
         "aiAnalysis": {
           "type": "object",
-          "description": "Structure extensible réservée à la future analyse IA Gemini (écriture serveur/admin uniquement)"
+          "description": "Rapport structuré d'analyse documentaire assistée par Google Gemini (écriture serveur Admin SDK uniquement, aucune validation/rejet automatique)",
+          "properties": {
+            "status": { "type": "string", "enum": ["not_started", "processing", "completed", "failed"] },
+            "provider": { "type": "string", "enum": ["gemini"] },
+            "model": { "type": "string", "maxLength": 128 },
+            "analyzedAt": { "type": "string", "maxLength": 64 },
+            "startedAt": { "type": "string", "maxLength": 64 },
+            "requestedBy": { "type": "string", "maxLength": 128 },
+            "summary": { "type": "string", "maxLength": 2000 },
+            "extractedData": { "type": "object" },
+            "documents": { "type": "object" },
+            "crossChecks": { "type": "array" },
+            "warnings": { "type": "array" },
+            "issues": { "type": "array" },
+            "recommendations": { "type": "array" },
+            "error": { "type": "string", "maxLength": 512 },
+            "errorCode": { "type": "string", "maxLength": 64 },
+            "usage": { "type": "object" }
+          }
         },
         "status": { "type": "string", "enum": ["en_attente", "valide", "refuse"], "description": "Statut d'instruction" },
         "submittedAt": { "type": "string", "maxLength": 64, "description": "Date de soumission" },
@@ -262,6 +280,21 @@
         "expiresAt": { "type": "number" }
       },
       "required": ["id", "dedupKey", "expiresAt"]
+    },
+    "AiUsageGuard": {
+      "title": "AiUsageGuard",
+      "description": "Verrou de concurrence, quota journalier et coupe-circuit distribué pour les appels serveur Gemini KYC (accès serveur Admin SDK exclusif).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "processing": { "type": "boolean" },
+        "leaseExpiresAt": { "type": "number" },
+        "lastRequestedAt": { "type": "number" },
+        "count": { "type": "number" },
+        "estimatedCostEur": { "type": "number" },
+        "consecutiveFailures": { "type": "number" },
+        "openUntilMs": { "type": "number" }
+      }
     }
   },
   "firestore": {
@@ -320,6 +353,10 @@
     "/email_dedup/{dedupId}": {
       "schema": "EmailDedupKey",
       "description": "Verrous de déduplication e-mail inter-instances (accès serveur exclusif)."
+    },
+    "/ai_usage_guards/{guardId}": {
+      "schema": "AiUsageGuard",
+      "description": "Verrous distribués, quotas journaliers et coupe-circuit Gemini KYC (accès serveur Admin SDK exclusif)."
     }
   }
 }

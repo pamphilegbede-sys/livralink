@@ -1277,6 +1277,19 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             </div>
           </div>
 
+          {/* Notice confidentialité & analyse assistée par IA */}
+          <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed flex items-start gap-2.5">
+            <span className="material-symbols-outlined text-blue-600 text-base shrink-0 mt-0.5">privacy_tip</span>
+            <div>
+              <p className="font-bold text-slate-800 dark:text-slate-100">
+                Confidentialité &amp; vérification assistée par IA
+              </p>
+              <p className="mt-0.5">
+                Vos pièces justificatives sont stockées dans un espace privé sécurisé. Elles peuvent faire l&apos;objet d&apos;une analyse automatisée assistée par intelligence artificielle afin de vérifier la lisibilité et la cohérence du dossier. La validation ou le refus définitif est toujours décidé par un administrateur humain LivraLink.
+              </p>
+            </div>
+          </div>
+
           {/* Checkboxes */}
           <div className="space-y-2 pt-1">
             <label className="flex items-start gap-2.5 cursor-pointer">
@@ -1301,7 +1314,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                 className="mt-0.5 rounded text-blue-600 focus:ring-blue-500"
               />
               <span className="text-slate-600 dark:text-slate-400 text-[11px]">
-                Je certifie sur l&apos;honneur l&apos;exactitude des informations et des 4 pièces fournies et accepte le contrôle d&apos;accréditation LivraLink.
+                Je certifie sur l&apos;honneur l&apos;exactitude des informations et des 4 pièces fournies et accepte le contrôle d&apos;accréditation LivraLink (incluant l&apos;analyse documentaire assistée décrite ci-dessus).
               </span>
             </label>
           </div>

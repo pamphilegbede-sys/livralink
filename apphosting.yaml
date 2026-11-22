@@ -18,8 +18,12 @@ env:
     secret: OTP_SECRET_SALT
     availability:
       - RUNTIME
-# Secrets RUNTIME optionnels recommandés dans Google Cloud Secret Manager (délivrer via
-# `firebase apphosting:secrets:set <NOM>` et accorder l'accès au backend App Hosting avant d'activer) :
+  - variable: GEMINI_API_KEY
+    secret: GEMINI_API_KEY
+    availability:
+      - RUNTIME
+# Secrets RUNTIME requis / recommandés dans Google Cloud Secret Manager (provisionner manuellement via
+# `firebase apphosting:secrets:set <NOM>` puis accorder l'accès au backend App Hosting via `firebase apphosting:secrets:grantaccess <NOM>`) :
+# - GEMINI_API_KEY (clé serveur API Google Gemini pour l'analyse KYC administrateur uniquement)
 # - EMAIL_ENCRYPTION_SECRET (>= 32 caractères ; sinon OTP_SECRET_SALT dérive la clé AES-256-GCM SMTP via HKDF)
 # - GMAIL_SMTP_USER / GMAIL_SMTP_PASS (repli serveur si la configuration SMTP partagée Firestore n'est pas définie)
-

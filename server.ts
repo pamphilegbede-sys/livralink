@@ -33,6 +33,14 @@ import {
   startOrRelaunchDeliveryDispatch,
   updateCourierAvailabilityAndGps,
 } from './src/server/dispatchService';
+import {
+  GeminiGeneratorFn,
+  KycGeminiAnalysisError,
+  redactSensitiveForLogs,
+  resetInMemoryGeminiGuardsForTests,
+  runKycGeminiAnalysis,
+  setGeminiGeneratorForTests,
+} from './src/server/kycGeminiAnalysis';
 
 const envPath = path.resolve(process.cwd(), '.env');
 if (fs.existsSync(envPath)) {
@@ -264,6 +272,15 @@ export function setTokenVerifierForTests(
 ): void {
   if (process.env.NODE_ENV === 'test') {
     testTokenVerifierOverride = verifier;
+  }
+}
+
+export function setGeminiKycAnalyzerForTests(fn: GeminiGeneratorFn | null): void {
+  if (process.env.NODE_ENV === 'test') {
+    setGeminiGeneratorForTests(fn);
+    if (fn === null) {
+      resetInMemoryGeminiGuardsForTests();
+    }
   }
 }
 
@@ -2553,14 +2570,43 @@ app.get('/api/security/audit', requireAdminAuthorization as any, (_req: Request,
 // =========================================================================
 // POINT 02 & 03: ENDPOINT D'AUDIT DU BUDGET & PLAFONDS D'APPELS D'API
 // =========================================================================
-app.get('/api/security/budget', requireAdminAuthorization as any, (_req: Request, res: Response) => {
+app.get('/api/security/budget', requireAdminAuthorization as any, async (_req: Request, res: Response) => {
   checkAndResetDailyQuotas();
   const totalCost = calculateTotalEstimatedCostToday();
+  const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+  let geminiDistributedQuota: { dayKey: string; used: number; estimatedCostEur: number; scope: 'distributed_firestore' | 'instance_memory' } = {
+    dayKey: new Date().toISOString().slice(0, 10),
+    used: apiUsageStats.geminiApiCalls.count,
+    estimatedCostEur: Number((apiUsageStats.geminiApiCalls.count * apiUsageStats.geminiApiCalls.unitCostEur).toFixed(4)),
+    scope: 'instance_memory',
+  };
+  if (activeDb?.collection) {
+    try {
+      const dayKey = new Date().toISOString().slice(0, 10);
+      const qSnap = await activeDb.collection('ai_usage_guards').doc(`gemini_quota_${dayKey}`).get();
+      if (qSnap?.exists) {
+        const qData = qSnap.data() || {};
+        geminiDistributedQuota = {
+          dayKey,
+          used: Number(qData.count || 0),
+          estimatedCostEur: Number(qData.estimatedCostEur || 0),
+          scope: 'distributed_firestore',
+        };
+      } else {
+        geminiDistributedQuota = { dayKey, used: 0, estimatedCostEur: 0, scope: 'distributed_firestore' };
+      }
+    } catch {
+      // Fallback gracefully to instance memory stats
+    }
+  }
+
   res.json({
     status: 'ACTIVE_GUARD',
+    scopeNote: 'Les compteurs locaux restent par instance Cloud Run ; geminiDistributedQuota lit Firestore lorsqu’il est accessible.',
     dailyBudgetCapEur: apiUsageStats.dailyBudgetCapEur,
     estimatedCostTodayEur: totalCost,
     budgetRemainingEur: Math.max(0, Number((apiUsageStats.dailyBudgetCapEur - totalCost).toFixed(4))),
+    geminiDistributedQuota,
     quotas: {
       gmailEmails: {
         used: apiUsageStats.gmailEmails.count,
@@ -3677,6 +3723,163 @@ app.post('/api/admin/kyc/decision', requireAdminAuthorization as any, async (req
       error: isIamDenied
         ? '[KYC-STEP-F] Permissions IAM Firestore Admin indisponibles (7 PERMISSION_DENIED).'
         : '[KYC-STEP-F] Erreur lors de la décision administrative KYC.',
+    });
+  }
+});
+
+// =========================================================================
+// ANALYSE DOCUMENTAIRE KYC ASSISTÉE PAR GOOGLE GEMINI (ADMIN UNIQUEMENT)
+// Gemini ne valide ni ne rejette jamais un dossier : aide à la décision uniquement.
+// =========================================================================
+app.post('/api/admin/kyc/:requestId/analyze', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  const cleanRequestId = String(req.params.requestId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!cleanRequestId) {
+    return res.status(400).json({
+      success: false,
+      code: 'INVALID_REQUEST_ID',
+      error: 'Identifiant du dossier KYC invalide.',
+    });
+  }
+
+  const adminActor = String(req.user?.email || req.user?.uid || 'admin').trim();
+  const rateCheck = checkIpRateLimit(`kyc_gemini_admin_${req.user!.uid}`, 20, 60_000);
+  if (!rateCheck.allowed) {
+    return res.status(429).json({
+      success: false,
+      code: 'ADMIN_RATE_LIMIT',
+      error: 'Trop de demandes d’analyse IA en moins d’une minute. Veuillez patienter.',
+    });
+  }
+
+  const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+  if (!activeDb) {
+    return res.status(503).json({
+      success: false,
+      code: 'FIRESTORE_ADMIN_UNAVAILABLE',
+      error: 'Firestore Admin SDK indisponible.',
+    });
+  }
+
+  const activeBucket =
+    process.env.NODE_ENV === 'test' && testStorageBucketOverride
+      ? testStorageBucketOverride
+      : firebaseAdminApp
+      ? getStorage(firebaseAdminApp).bucket(configuredStorageBucket)
+      : null;
+
+  try {
+    let kycDocId = cleanRequestId;
+    let kycData: Record<string, any> | null = null;
+
+    const directSnap = await activeDb.collection('kyc').doc(cleanRequestId).get();
+    if (directSnap?.exists) {
+      kycDocId = directSnap.id;
+      kycData = directSnap.data() || {};
+    } else if (typeof activeDb.collection('kyc').where === 'function') {
+      const byCourier = await activeDb.collection('kyc').where('courierId', '==', cleanRequestId).limit(1).get();
+      if (byCourier && !byCourier.empty) {
+        const hit = byCourier.docs[0];
+        kycDocId = hit.id;
+        kycData = hit.data() || {};
+      }
+    }
+
+    if (!kycData) {
+      return res.status(404).json({
+        success: false,
+        code: 'KYC_DOSSIER_NOT_FOUND',
+        error: 'Dossier KYC introuvable dans Firestore.',
+      });
+    }
+
+    const ownerUid = String(kycData.userId || kycData.courierId || kycDocId).trim();
+    let userData: Record<string, any> = {};
+    if (ownerUid) {
+      try {
+        const uSnap = await activeDb.collection('users').doc(ownerUid).get();
+        if (uSnap?.exists) {
+          userData = uSnap.data() || {};
+        }
+      } catch {
+        // Non bloquant
+      }
+    }
+
+    const { aiAnalysis, usedFallbackScope } = await runKycGeminiAnalysis({
+      db: activeDb,
+      bucket: activeBucket,
+      requestId: cleanRequestId,
+      kycDocId,
+      kycData,
+      userData,
+      requestedBy: adminActor,
+      force: Boolean(req.body?.force),
+      timeoutMs:
+        process.env.NODE_ENV === 'test' && typeof req.body?.__testTimeoutMs === 'number'
+          ? req.body.__testTimeoutMs
+          : undefined,
+      maxRetries:
+        process.env.NODE_ENV === 'test' && typeof req.body?.__testMaxRetries === 'number'
+          ? req.body.__testMaxRetries
+          : undefined,
+      dailyCap:
+        process.env.NODE_ENV === 'test' && typeof req.body?.__testDailyCap === 'number'
+          ? req.body.__testDailyCap
+          : apiUsageStats.geminiApiCalls.dailyCap,
+      dailyBudgetCapEur: apiUsageStats.dailyBudgetCapEur,
+      fallbackQuotaCheck: () => {
+        const q = canConsumeApi('geminiApiCalls');
+        return {
+          allowed: q.allowed,
+          reason: q.reason,
+          used: apiUsageStats.geminiApiCalls.count,
+          cap: apiUsageStats.geminiApiCalls.dailyCap,
+        };
+      },
+      fallbackQuotaTrack: () => trackApiConsumption('geminiApiCalls', 1),
+      fallbackCircuitCheck: () => {
+        const cb = circuitBreakers.get('gemini_api');
+        return !cb || cb.state === 'CLOSED';
+      },
+      fallbackCircuitSuccess: () => {
+        circuitBreakers.set('gemini_api', { state: 'CLOSED', failures: 0 });
+      },
+      fallbackCircuitFailure: () => {
+        const curr = circuitBreakers.get('gemini_api') || { state: 'CLOSED', failures: 0 };
+        const failures = curr.failures + 1;
+        circuitBreakers.set('gemini_api', {
+          state: failures >= 5 ? 'OPEN' : 'CLOSED',
+          failures,
+        });
+      },
+    });
+
+    console.log(
+      `[KYC-GEMINI] Analyse terminée pour dossier=${kycDocId} (scope=${usedFallbackScope}, model=${aiAnalysis.model}, admin=${adminActor})`
+    );
+
+    return res.json({
+      success: true,
+      requestId: kycDocId,
+      aiAnalysis,
+    });
+  } catch (err: any) {
+    if (err instanceof KycGeminiAnalysisError) {
+      console.warn(`[KYC-GEMINI] Échec dossier=${cleanRequestId} code=${err.code}: ${redactSensitiveForLogs(err.message)}`);
+      return res.status(err.httpStatus).json({
+        success: false,
+        code: err.code,
+        error: err.message,
+      });
+    }
+    const isIamDenied = isFirestoreIamDeniedError(err);
+    console.error('[KYC-GEMINI] Erreur inattendue:', redactSensitiveForLogs(err?.message || err));
+    return res.status(isIamDenied ? 503 : 500).json({
+      success: false,
+      code: isIamDenied ? 'IAM_PERMISSION_DENIED' : 'KYC_GEMINI_ANALYZE_FAILED',
+      error: isIamDenied
+        ? 'Permissions IAM Firestore Admin indisponibles pour enregistrer l’analyse IA.'
+        : 'Impossible d’exécuter l’analyse documentaire Gemini pour le moment.',
     });
   }
 });
