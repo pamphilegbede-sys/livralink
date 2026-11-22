@@ -295,14 +295,16 @@ describe('Suite de tests — KYC, Notifications & Isolation (LivraLink)', () => 
     const errD = createKYCStepError('KYC-STEP-D', 'Enregistrement refusé par les règles Firestore.', {
       originalCode: 'permission-denied',
       uploadedAsset: {
-        storagePath: 'kyc/u1/cni_1.pdf',
+        storagePath: 'kyc/u1/id_front/cni_1.pdf',
+        docType: 'id_front',
         contentType: 'application/pdf',
         fileName: 'cni_1.pdf',
         size: 1024,
+        uploadedAt: '2026-01-01T00:00:00.000Z',
       },
     });
     assert.equal(errD.stepCode, 'KYC-STEP-D');
-    assert.equal(errD.uploadedAsset?.storagePath, 'kyc/u1/cni_1.pdf');
+    assert.equal(errD.uploadedAsset?.storagePath, 'kyc/u1/id_front/cni_1.pdf');
 
     const { app } = await import('../firebase/config');
     const { deleteApp } = await import('firebase/app');
@@ -374,6 +376,74 @@ describe('Suite de tests — KYC, Notifications & Isolation (LivraLink)', () => 
     assert.equal(aicha?.kycStatus, 'refuse');
     assert.equal(brice?.isKycVerified, true);
     assert.equal(brice?.kycStatus, 'valide');
+  });
+
+  test('7. Modèle 4 documents KYC : getKycDocumentSlots reflète exactement les pièces fournies ou manquantes et préserve aiAnalysis', async () => {
+    const { mapFirestoreKycToRequest, getKycDocumentSlots } = await import('../utils/adminReconciliation');
+    const { formatFileSizeFr } = await import('../firebase/storageService');
+
+    assert.equal(formatFileSizeFr(512), '512 o');
+    assert.equal(formatFileSizeFr(1536), '1,5 Ko');
+    assert.equal(formatFileSizeFr(2 * 1024 * 1024), '2,00 Mo');
+
+    // Cas partiel : seul idFront possède un vrai storagePath; idBack sans storagePath ne doit jamais être considéré fourni
+    const partialKyc = mapFirestoreKycToRequest(
+      {
+        userId: 'courier_4slots',
+        fullName: 'Sèna Gbaguidi',
+        phone: '+22997223344',
+        status: 'en_attente',
+        documents: {
+          idFront: {
+            uploaded: true,
+            storagePath: 'kyc/courier_4slots/id_front/id_front_100_aa.jpg',
+            docType: 'id_front',
+            fileName: 'id_front_100_aa.jpg',
+            originalFileName: 'cni_recto.jpg',
+            mimeType: 'image/jpeg',
+            size: 204800,
+            uploadedAt: '2026-01-01T10:00:00.000Z',
+            uploadedBy: 'courier_4slots',
+          },
+          idBack: {
+            uploaded: true,
+            storagePath: '',
+          },
+          drivingLicense: {
+            uploaded: true,
+            storagePath: 'kyc/courier_4slots/driving_license/driving_license_101_bb.pdf',
+            docType: 'driving_license',
+            fileName: 'driving_license_101_bb.pdf',
+            mimeType: 'application/pdf',
+            size: 512000,
+            uploadedAt: '2026-01-01T10:01:00.000Z',
+            uploadedBy: 'courier_4slots',
+          },
+          assurance: true,
+        },
+        aiAnalysis: {
+          status: 'not_started',
+          provider: 'gemini',
+          version: 'v1',
+        },
+      },
+      'courier_4slots'
+    );
+
+    const slots = getKycDocumentSlots(partialKyc);
+    assert.equal(slots.length, 4);
+    assert.equal(slots[0].slotKey, 'idFront');
+    assert.equal(slots[0].uploaded, true);
+    assert.equal(slots[0].meta?.originalFileName, 'cni_recto.jpg');
+    assert.equal(slots[1].slotKey, 'idBack');
+    assert.equal(slots[1].uploaded, false);
+    assert.equal(slots[2].slotKey, 'drivingLicense');
+    assert.equal(slots[2].uploaded, true);
+    assert.equal(slots[3].slotKey, 'vehicleInsurance');
+    assert.equal(slots[3].uploaded, false);
+    assert.equal(partialKyc.documents.assurance, true);
+    assert.equal(partialKyc.aiAnalysis?.status, 'not_started');
+    assert.equal(partialKyc.aiAnalysis?.provider, 'gemini');
   });
 });
 

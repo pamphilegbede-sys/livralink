@@ -197,6 +197,34 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     // KYC Dossier Blueprint Validation
     // -------------------------------------------------------------------------
+    function isValidKycSlotMeta(slot, uid) {
+      return slot is map &&
+             slot.keys().hasAll(['uploaded', 'storagePath', 'docType', 'fileName', 'mimeType', 'uploadedBy', 'uploadedAt']) &&
+             slot.uploaded == true &&
+             slot.storagePath is string &&
+             slot.storagePath.size() >= 10 &&
+             slot.storagePath.size() <= 300 &&
+             !slot.storagePath.matches('.*\\.\\..*') &&
+             slot.storagePath.matches('^kyc/' + uid + '/(id_front|id_back|driving_license|vehicle_insurance)/[a-zA-Z0-9_.-]+$') &&
+             slot.docType in ['id_front', 'id_back', 'driving_license', 'vehicle_insurance'] &&
+             slot.fileName is string &&
+             slot.fileName.size() >= 1 &&
+             slot.fileName.size() <= 180 &&
+             slot.mimeType in ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] &&
+             slot.uploadedBy == uid &&
+             slot.uploadedAt is string &&
+             slot.uploadedAt.size() <= 64 &&
+             (!('size' in slot) || (slot.size is number && slot.size > 0 && slot.size < 10485760));
+    }
+
+    function isValidKycDocumentsMap(docs, uid) {
+      return docs is map &&
+             (!('idFront' in docs) || isValidKycSlotMeta(docs.idFront, uid)) &&
+             (!('idBack' in docs) || isValidKycSlotMeta(docs.idBack, uid)) &&
+             (!('drivingLicense' in docs) || isValidKycSlotMeta(docs.drivingLicense, uid)) &&
+             (!('vehicleInsurance' in docs) || isValidKycSlotMeta(docs.vehicleInsurance, uid));
+    }
+
     function isValidKYCDossier(data) {
       return data.keys().hasAll(['id', 'userId', 'fullName', 'phone', 'status']) &&
              isValidId(data.id) &&
@@ -204,6 +232,7 @@ service cloud.firestore {
              data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 128 &&
              data.phone is string && data.phone.size() <= 32 &&
              data.status in ['en_attente', 'valide', 'refuse'] &&
+             (!('documents' in data) || isValidKycDocumentsMap(data.documents, data.userId)) &&
              (!('isApproved' in data) || data.isApproved == false || isAdmin()) &&
              (!('verified' in data) || data.verified == false || isAdmin());
     }
@@ -485,6 +514,9 @@ service cloud.firestore {
                     hasVerifiedEmail() &&
                     isOwner(userId) &&
                     isValidKYCDossier(incoming()) &&
+                    !('aiAnalysis' in incoming()) &&
+                    !('reviewedAt' in incoming()) &&
+                    !('reviewedBy' in incoming()) &&
                     incoming().id == userId &&
                     incoming().userId == request.auth.uid &&
                     (!('courierId' in incoming()) || incoming().courierId == request.auth.uid) &&

@@ -4,10 +4,11 @@ import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
 import { BackButton } from '../common/BackButton';
 import { DisputeResolutionModal } from '../modals/DisputeResolutionModal';
-import { Courier, Merchant, DeliveryOrder, DeliveryStatus, KYCUserRequest } from '../../types';
+import { Courier, Merchant, DeliveryOrder, DeliveryStatus, KYCUserRequest, KycDocumentSlotKey } from '../../types';
 import { loginWithGoogle, getFirebaseAuthErrorMessage } from '../../firebase/authService';
 import { auth } from '../../firebase/config';
-import { fetchAuthorizedKYCDocumentBlob, normalizeMimeType } from '../../firebase/storageService';
+import { fetchAuthorizedKYCDocumentBlob, normalizeMimeType, formatFileSizeFr } from '../../firebase/storageService';
+import { getKycDocumentSlots } from '../../utils/adminReconciliation';
 import { downloadCsvFile } from '../../utils/csvExport';
 import { AdminOverviewDashboard } from './AdminOverviewDashboard';
 import { AdminCommunicationsSection } from '../admin/AdminCommunicationsSection';
@@ -283,15 +284,28 @@ export const AdminConsole: React.FC = () => {
   // Modals state
   const [reviewingKycItem, setReviewingKycItem] = useState<KYCUserRequest | null>(null);
   const [kycRejectionMotifInput, setKycRejectionMotifInput] = useState('');
-  const [isZoomingKycPhoto, setIsZoomingKycPhoto] = useState(false);
-  const [resolvedKycDocUrl, setResolvedKycDocUrl] = useState<string | null>(null);
-  const [resolvedKycDocMime, setResolvedKycDocMime] = useState<string>('');
-  const [resolvedKycDocName, setResolvedKycDocName] = useState<string>('justificatif_kyc');
-  const [isLoadingKycDoc, setIsLoadingKycDoc] = useState(false);
-  const [kycDocLoadError, setKycDocLoadError] = useState<string | null>(null);
+  const [zoomingKycSlot, setZoomingKycSlot] = useState<{
+    key: KycDocumentSlotKey | 'legacy';
+    title: string;
+  } | null>(null);
+  const [kycSlotMedia, setKycSlotMedia] = useState<
+    Partial<
+      Record<
+        KycDocumentSlotKey | 'legacy',
+        {
+          url: string | null;
+          mimeType: string;
+          fileName: string;
+          size?: number;
+          isLoading: boolean;
+          error: string | null;
+        }
+      >
+    >
+  >({});
   const [kycDocReloadTick, setKycDocReloadTick] = useState(0);
   const [isSubmittingKycDecision, setIsSubmittingKycDecision] = useState(false);
-  const kycDocObjectUrlRef = useRef<string | null>(null);
+  const kycDocObjectUrlsRef = useRef<string[]>([]);
   const [selectedDisputeOrder, setSelectedDisputeOrder] = useState<string | null>(null);
   const [isAddCourierModalOpen, setIsAddCourierModalOpen] = useState(false);
   const [editingCourier, setEditingCourier] = useState<Courier | null>(null);
@@ -507,77 +521,234 @@ export const AdminConsole: React.FC = () => {
     }
   }, [activeViewTab, isAdminAuthenticated]);
 
+  const formatKycDateTimeFr = (iso?: string): string => {
+    if (!iso) return 'Non renseignée';
+    const parsed = new Date(iso);
+    if (Number.isNaN(parsed.getTime())) return iso;
+    return parsed.toLocaleString('fr-FR', {
+      timeZone: 'Africa/Porto-Novo',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const retryKycSlotLoad = (slotKey: KycDocumentSlotKey | 'legacy') => {
+    if (!reviewingKycItem) return;
+    let storagePath = '';
+    let legacyUrl = '';
+    let fallbackMime = '';
+    let fallbackName = 'document_kyc';
+    let fallbackSize: number | undefined;
+
+    if (slotKey === 'legacy') {
+      storagePath = reviewingKycItem.documentStoragePath || '';
+      legacyUrl = reviewingKycItem.documentPhotoUrl || '';
+      fallbackMime = reviewingKycItem.documentMimeType || '';
+      fallbackName = reviewingKycItem.documentFileName || 'justificatif_kyc';
+    } else {
+      const slot = getKycDocumentSlots(reviewingKycItem).find((s) => s.slotKey === slotKey);
+      if (!slot?.meta?.storagePath) return;
+      storagePath = slot.meta.storagePath;
+      fallbackMime = slot.meta.mimeType || '';
+      fallbackName = slot.meta.originalFileName || slot.meta.fileName || slotKey;
+      fallbackSize = slot.meta.size;
+    }
+
+    setKycSlotMedia((prev) => ({
+      ...prev,
+      [slotKey]: {
+        url: null,
+        mimeType: fallbackMime,
+        fileName: fallbackName,
+        size: fallbackSize,
+        isLoading: true,
+        error: null,
+      },
+    }));
+
+    fetchAuthorizedKYCDocumentBlob({ storagePath, legacyUrl })
+      .then(({ blob, mimeType, fileName }) => {
+        const objUrl = URL.createObjectURL(blob);
+        kycDocObjectUrlsRef.current.push(objUrl);
+        setKycSlotMedia((prev) => ({
+          ...prev,
+          [slotKey]: {
+            url: objUrl,
+            mimeType: normalizeMimeType(mimeType || fallbackMime, fileName) || 'image/jpeg',
+            fileName: fallbackName || fileName || 'document_kyc',
+            size: fallbackSize ?? blob.size,
+            isLoading: false,
+            error: null,
+          },
+        }));
+      })
+      .catch((err: any) => {
+        setKycSlotMedia((prev) => ({
+          ...prev,
+          [slotKey]: {
+            url: null,
+            mimeType: fallbackMime,
+            fileName: fallbackName,
+            size: fallbackSize,
+            isLoading: false,
+            error: err?.message || 'Impossible de charger ce justificatif depuis le stockage sécurisé.',
+          },
+        }));
+      });
+  };
+
   useEffect(() => {
-    const revokeDocUrl = () => {
-      if (kycDocObjectUrlRef.current && kycDocObjectUrlRef.current.startsWith('blob:')) {
-        try {
-          URL.revokeObjectURL(kycDocObjectUrlRef.current);
-        } catch {}
-        kycDocObjectUrlRef.current = null;
+    const revokeAllDocUrls = () => {
+      for (const u of kycDocObjectUrlsRef.current) {
+        if (u && u.startsWith('blob:')) {
+          try {
+            URL.revokeObjectURL(u);
+          } catch {}
+        }
       }
+      kycDocObjectUrlsRef.current = [];
     };
 
-    revokeDocUrl();
-    setResolvedKycDocUrl(null);
-    setResolvedKycDocMime('');
-    setResolvedKycDocName('justificatif_kyc');
-    setKycDocLoadError(null);
-    setIsZoomingKycPhoto(false);
+    revokeAllDocUrls();
+    setKycSlotMedia({});
+    setZoomingKycSlot(null);
 
     if (!reviewingKycItem) {
-      setIsLoadingKycDoc(false);
-      return;
-    }
-
-    const storagePath = reviewingKycItem.documentStoragePath;
-    const legacyUrl = reviewingKycItem.documentPhotoUrl;
-    if (!storagePath && !legacyUrl) {
-      setIsLoadingKycDoc(false);
-      return;
-    }
-
-    if (
-      !storagePath &&
-      legacyUrl &&
-      /^https?:\/\//i.test(legacyUrl) &&
-      !legacyUrl.includes('/o/') &&
-      !legacyUrl.includes('firebasestorage')
-    ) {
-      setResolvedKycDocUrl(legacyUrl);
-      setResolvedKycDocMime(normalizeMimeType(reviewingKycItem.documentMimeType, legacyUrl) || 'image/jpeg');
-      setResolvedKycDocName(reviewingKycItem.documentFileName || 'justificatif_kyc.jpg');
-      setIsLoadingKycDoc(false);
       return;
     }
 
     let cancelled = false;
-    setIsLoadingKycDoc(true);
-    fetchAuthorizedKYCDocumentBlob({ storagePath, legacyUrl })
-      .then(({ blob, mimeType, fileName }) => {
-        if (cancelled) return;
-        const objUrl = URL.createObjectURL(blob);
-        kycDocObjectUrlRef.current = objUrl;
-        setResolvedKycDocUrl(objUrl);
-        setResolvedKycDocMime(
-          normalizeMimeType(mimeType || reviewingKycItem.documentMimeType, fileName) || 'image/jpeg'
-        );
-        setResolvedKycDocName(reviewingKycItem.documentFileName || fileName || 'justificatif_kyc');
-      })
-      .catch((err: any) => {
-        if (cancelled) return;
-        setKycDocLoadError(
-          err?.message || 'Impossible de charger la pièce justificative depuis le stockage sécurisé.'
-        );
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsLoadingKycDoc(false);
-        }
+    const slots = getKycDocumentSlots(reviewingKycItem);
+    const uploadedSlots = slots.filter((s) => s.uploaded && s.meta?.storagePath);
+
+    const loadEntries: Array<{
+      key: KycDocumentSlotKey | 'legacy';
+      storagePath?: string;
+      legacyUrl?: string;
+      fallbackMime?: string;
+      fallbackName: string;
+      fallbackSize?: number;
+    }> = uploadedSlots.map((slot) => ({
+      key: slot.slotKey,
+      storagePath: slot.meta?.storagePath,
+      fallbackMime: slot.meta?.mimeType,
+      fallbackName: slot.meta?.originalFileName || slot.meta?.fileName || slot.slotKey,
+      fallbackSize: slot.meta?.size,
+    }));
+
+    if (
+      loadEntries.length === 0 &&
+      (reviewingKycItem.documentStoragePath || reviewingKycItem.documentPhotoUrl)
+    ) {
+      loadEntries.push({
+        key: 'legacy',
+        storagePath: reviewingKycItem.documentStoragePath,
+        legacyUrl: reviewingKycItem.documentPhotoUrl,
+        fallbackMime: reviewingKycItem.documentMimeType,
+        fallbackName: reviewingKycItem.documentFileName || 'justificatif_kyc',
       });
+    }
+
+    if (loadEntries.length === 0) {
+      return;
+    }
+
+    const initialState: Partial<
+      Record<
+        KycDocumentSlotKey | 'legacy',
+        {
+          url: string | null;
+          mimeType: string;
+          fileName: string;
+          size?: number;
+          isLoading: boolean;
+          error: string | null;
+        }
+      >
+    > = {};
+    for (const entry of loadEntries) {
+      if (
+        !entry.storagePath &&
+        entry.legacyUrl &&
+        /^https?:\/\//i.test(entry.legacyUrl) &&
+        !entry.legacyUrl.includes('/o/') &&
+        !entry.legacyUrl.includes('firebasestorage')
+      ) {
+        initialState[entry.key] = {
+          url: entry.legacyUrl,
+          mimeType: normalizeMimeType(entry.fallbackMime, entry.legacyUrl) || 'image/jpeg',
+          fileName: entry.fallbackName,
+          size: entry.fallbackSize,
+          isLoading: false,
+          error: null,
+        };
+      } else {
+        initialState[entry.key] = {
+          url: null,
+          mimeType: entry.fallbackMime || '',
+          fileName: entry.fallbackName,
+          size: entry.fallbackSize,
+          isLoading: true,
+          error: null,
+        };
+      }
+    }
+    setKycSlotMedia(initialState);
+
+    loadEntries.forEach((entry) => {
+      if (
+        !entry.storagePath &&
+        entry.legacyUrl &&
+        /^https?:\/\//i.test(entry.legacyUrl) &&
+        !entry.legacyUrl.includes('/o/') &&
+        !entry.legacyUrl.includes('firebasestorage')
+      ) {
+        return;
+      }
+
+      fetchAuthorizedKYCDocumentBlob({
+        storagePath: entry.storagePath,
+        legacyUrl: entry.legacyUrl,
+      })
+        .then(({ blob, mimeType, fileName }) => {
+          if (cancelled) return;
+          const objUrl = URL.createObjectURL(blob);
+          kycDocObjectUrlsRef.current.push(objUrl);
+          setKycSlotMedia((prev) => ({
+            ...prev,
+            [entry.key]: {
+              url: objUrl,
+              mimeType: normalizeMimeType(mimeType || entry.fallbackMime, fileName) || 'image/jpeg',
+              fileName: entry.fallbackName || fileName || 'document_kyc',
+              size: entry.fallbackSize ?? blob.size,
+              isLoading: false,
+              error: null,
+            },
+          }));
+        })
+        .catch((err: any) => {
+          if (cancelled) return;
+          setKycSlotMedia((prev) => ({
+            ...prev,
+            [entry.key]: {
+              url: null,
+              mimeType: entry.fallbackMime || '',
+              fileName: entry.fallbackName,
+              size: entry.fallbackSize,
+              isLoading: false,
+              error:
+                err?.message || 'Impossible de charger la pièce justificative depuis le stockage sécurisé.',
+            },
+          }));
+        });
+    });
 
     return () => {
       cancelled = true;
-      revokeDocUrl();
+      revokeAllDocUrls();
     };
   }, [reviewingKycItem, kycDocReloadTick]);
 
@@ -2088,20 +2259,32 @@ export const AdminConsole: React.FC = () => {
                         </span>
                       </div>
 
-                      {/* Documents Preview Badges */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 bg-white rounded-xl border border-slate-200 text-xs mb-3">
-                        <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-50 min-w-0">
-                          <span className="font-semibold text-slate-700 truncate">Pièce CNI / Passeport</span>
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded shrink-0 ${kyc.documents.cni ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
-                            {kyc.documents.cni ? '✓ Fourni' : '✗ Manquant'}
-                          </span>
+                      {/* Documents Preview Badges (4 slots obligatoires + compatibilité héritée) */}
+                      <div className="space-y-2 p-3 bg-white rounded-xl border border-slate-200 text-xs mb-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {getKycDocumentSlots(kyc).map((slot) => (
+                            <div
+                              key={slot.slotKey}
+                              className="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-50 min-w-0"
+                            >
+                              <span className="font-semibold text-slate-700 truncate">{slot.shortLabel}</span>
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded shrink-0 ${
+                                  slot.uploaded ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                                }`}
+                              >
+                                {slot.uploaded ? '✓ Fourni' : '✗ Manquant'}
+                              </span>
+                            </div>
+                          ))}
                         </div>
-                        <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-50 min-w-0">
-                          <span className="font-semibold text-slate-700 truncate">Permis de Conduire</span>
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded shrink-0 ${kyc.documents.permis ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
-                            {kyc.documents.permis ? '✓ Fourni' : '✗ Manquant'}
-                          </span>
-                        </div>
+                        {getKycDocumentSlots(kyc).every((s) => !s.uploaded) &&
+                          (kyc.documentStoragePath || kyc.documentPhotoUrl) && (
+                            <div className="flex items-center justify-between gap-2 px-2 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[10px] text-amber-800 font-semibold">
+                              <span>Dossier hérité (ancien format mono-document)</span>
+                              <span className="font-bold">1 pièce archivée</span>
+                            </div>
+                          )}
                       </div>
 
                       {/* Actions */}
@@ -2213,7 +2396,7 @@ export const AdminConsole: React.FC = () => {
 
               {/* Couriers Table Header */}
               {/* KYC Requests Module */}
-              {kycRequests.length > 0 && (
+              {kycRequests.filter((k) => k.status === 'en_attente').length > 0 && (
                 <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200/80 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -2223,12 +2406,14 @@ export const AdminConsole: React.FC = () => {
                       </h3>
                     </div>
                     <span className="text-[10px] text-amber-700 font-bold bg-amber-100 px-2 py-0.5 rounded-full">
-                      Vérification CNI / Permis
+                      4 pièces contrôlées
                     </span>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {kycRequests.map(kyc => (
+                    {kycRequests
+                      .filter((k) => k.status === 'en_attente')
+                      .map((kyc) => (
                       <div key={kyc.id} className="p-3 bg-white rounded-xl border border-amber-200/60 shadow-2xs flex items-center justify-between gap-3 text-xs">
                         <div className="space-y-0.5 min-w-0">
                           <p className="font-bold text-slate-900 flex items-center gap-1.5 truncate">
@@ -2236,13 +2421,19 @@ export const AdminConsole: React.FC = () => {
                             <span className="text-[10px] text-slate-400 font-mono">({kyc.idNumber || 'En cours'})</span>
                           </p>
                           <p className="text-[11px] text-slate-500">{kyc.phone} • {kyc.vehicleType || 'Moto'}</p>
-                          <div className="flex gap-1 pt-1">
-                            <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold ${kyc.documents.cni ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500'}`}>
-                              CNI {kyc.documents.cni ? '✓' : '✗'}
-                            </span>
-                            <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold ${kyc.documents.permis ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500'}`}>
-                              Permis {kyc.documents.permis ? '✓' : '✗'}
-                            </span>
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            {getKycDocumentSlots(kyc).map((slot) => (
+                              <span
+                                key={slot.slotKey}
+                                className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                                  slot.uploaded
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                    : 'bg-red-50 text-red-700 border border-red-200'
+                                }`}
+                              >
+                                {slot.shortLabel} {slot.uploaded ? '✓' : '✗'}
+                              </span>
+                            ))}
                           </div>
                         </div>
 
@@ -6275,143 +6466,349 @@ export const AdminConsole: React.FC = () => {
                       </p>
                     </div>
 
-                    <div className="p-2 bg-slate-50 rounded-xl col-span-2 flex items-center justify-between">
-                      <span className="text-[11px] font-bold text-slate-600">Assurance circulation déclarée :</span>
-                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${reviewingKycItem.documents.assurance ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
-                        {reviewingKycItem.documents.assurance ? '✓ Assuré' : '✗ Non assurée'}
+                    <div className="p-2 bg-slate-50 rounded-xl col-span-2 flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-bold text-slate-600">Attestation d&apos;assurance véhicule :</span>
+                      <span
+                        className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                          reviewingKycItem.documents.vehicleInsurance?.uploaded
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : reviewingKycItem.documents.assurance
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}
+                      >
+                        {reviewingKycItem.documents.vehicleInsurance?.uploaded
+                          ? '✓ Attestation jointe'
+                          : reviewingKycItem.documents.assurance
+                          ? 'Déclarée (attestation manquante)'
+                          : '✗ Attestation manquante'}
                       </span>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Document Preview (Image ou PDF sécurisé via Storage/Backend) */}
-              <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
-                <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2 flex-wrap">
-                  <h4 className="font-extrabold text-xs uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-blue-600 text-sm">badge</span>
-                    <span>3. Justificatif d&apos;Identité Transmis</span>
-                  </h4>
-                  <div className="flex items-center gap-2">
-                    {resolvedKycDocUrl && (
-                      <a
-                        href={resolvedKycDocUrl}
-                        download={resolvedKycDocName || 'justificatif_kyc'}
-                        className="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-bold inline-flex items-center gap-1"
-                      >
-                        <span className="material-symbols-outlined text-xs">download</span>
-                        <span>Télécharger</span>
-                      </a>
-                    )}
-                    <span className="text-[10px] text-slate-400 font-bold">Vérifiez la lisibilité des 4 coins</span>
-                  </div>
-                </div>
+              {/* 4 Documents Justificatifs KYC (Inspection indépendante par pièce) */}
+              {(() => {
+                const slots = getKycDocumentSlots(reviewingKycItem);
+                const hasLegacyOnly =
+                  slots.every((s) => !s.uploaded) &&
+                  Boolean(reviewingKycItem.documentStoragePath || reviewingKycItem.documentPhotoUrl);
+                const zoomedMedia = zoomingKycSlot ? kycSlotMedia[zoomingKycSlot.key] : undefined;
 
-                <div className="flex flex-col sm:flex-row items-center gap-4">
-                  <div className="relative w-full sm:w-64 h-40 rounded-2xl overflow-hidden border-2 border-slate-300 bg-slate-900 group shrink-0 flex items-center justify-center">
-                    {isLoadingKycDoc ? (
-                      <div className="text-center p-4 space-y-2 text-slate-200">
-                        <span className="material-symbols-outlined text-2xl animate-spin text-blue-400">progress_activity</span>
-                        <p className="text-[11px] font-bold">Chargement sécurisé du document...</p>
-                      </div>
-                    ) : kycDocLoadError ? (
-                      <div className="text-center p-3 space-y-2">
-                        <span className="material-symbols-outlined text-2xl text-red-400">error</span>
-                        <p className="text-[10px] font-bold text-red-200 line-clamp-2">{kycDocLoadError}</p>
+                return (
+                  <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-4">
+                    <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2 flex-wrap">
+                      <h4 className="font-extrabold text-xs uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-blue-600 text-sm">badge</span>
+                        <span>3. Pièces Justificatives Transmises (4 documents)</span>
+                      </h4>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                          {slots.filter((s) => s.uploaded).length} / 4 pièces fournies
+                        </span>
                         <button
                           type="button"
                           onClick={() => setKycDocReloadTick((n) => n + 1)}
-                          className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white text-[10px] font-bold cursor-pointer"
+                          className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer"
                         >
-                          Réessayer
+                          <span className="material-symbols-outlined text-xs">refresh</span>
+                          <span>Actualiser les aperçus</span>
                         </button>
                       </div>
-                    ) : resolvedKycDocUrl ? (
-                      resolvedKycDocMime === 'application/pdf' ? (
-                        <div className="w-full h-full flex flex-col items-center justify-center bg-slate-800 text-white p-3 text-center">
-                          <span className="material-symbols-outlined text-4xl text-red-400">picture_as_pdf</span>
-                          <p className="text-[11px] font-bold mt-1 truncate max-w-full px-2">
-                            {resolvedKycDocName || 'justificatif_kyc.pdf'}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => setIsZoomingKycPhoto(!isZoomingKycPhoto)}
-                            className="mt-2 px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold rounded-lg inline-flex items-center gap-1 cursor-pointer"
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {slots.map((slot) => {
+                        const media = kycSlotMedia[slot.slotKey];
+                        const isPdf = media?.mimeType === 'application/pdf' || slot.meta?.mimeType === 'application/pdf';
+                        const displayFileName =
+                          media?.fileName || slot.meta?.originalFileName || slot.meta?.fileName || `${slot.docType}`;
+                        const displaySize = media?.size ?? slot.meta?.size;
+
+                        return (
+                          <div
+                            key={slot.slotKey}
+                            className="p-3 rounded-2xl border border-slate-200 bg-slate-50/70 space-y-2.5 flex flex-col justify-between"
                           >
-                            <span className="material-symbols-outlined text-xs">visibility</span>
-                            <span>{isZoomingKycPhoto ? 'Masquer PDF' : 'Afficher le PDF'}</span>
-                          </button>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-xs font-extrabold text-slate-900 truncate">{slot.label}</p>
+                                {slot.uploaded && slot.meta ? (
+                                  <p className="text-[10px] text-slate-500 truncate mt-0.5" title={displayFileName}>
+                                    {displayFileName}
+                                  </p>
+                                ) : (
+                                  <p className="text-[10px] text-red-600 font-semibold mt-0.5">
+                                    Aucune pièce déposée pour ce champ
+                                  </p>
+                                )}
+                              </div>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                                  media?.error
+                                    ? 'bg-red-100 text-red-800'
+                                    : slot.uploaded
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-red-100 text-red-800'
+                                }`}
+                              >
+                                {media?.error ? 'Erreur' : slot.uploaded ? '✓ Fourni' : '✗ Manquant'}
+                              </span>
+                            </div>
+
+                            <div className="relative w-full h-40 rounded-xl overflow-hidden border border-slate-300 bg-slate-900 flex items-center justify-center">
+                              {!slot.uploaded ? (
+                                <div className="text-center p-3 space-y-1">
+                                  <span className="material-symbols-outlined text-2xl text-slate-400">
+                                    image_not_supported
+                                  </span>
+                                  <p className="text-[11px] font-bold text-slate-300">Document manquant</p>
+                                </div>
+                              ) : media?.isLoading || !media ? (
+                                <div className="text-center p-3 space-y-1.5 text-slate-200">
+                                  <span className="material-symbols-outlined text-2xl animate-spin text-blue-400">
+                                    progress_activity
+                                  </span>
+                                  <p className="text-[10px] font-bold">Chargement sécurisé...</p>
+                                </div>
+                              ) : media.error ? (
+                                <div className="text-center p-3 space-y-2">
+                                  <span className="material-symbols-outlined text-2xl text-red-400">error</span>
+                                  <p className="text-[10px] font-bold text-red-200 line-clamp-2">{media.error}</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => retryKycSlotLoad(slot.slotKey)}
+                                    className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white text-[10px] font-bold cursor-pointer"
+                                  >
+                                    Réessayer
+                                  </button>
+                                </div>
+                              ) : media.url ? (
+                                isPdf ? (
+                                  <div className="w-full h-full flex flex-col items-center justify-center bg-slate-800 text-white p-3 text-center">
+                                    <span className="material-symbols-outlined text-4xl text-red-400">
+                                      picture_as_pdf
+                                    </span>
+                                    <p className="text-[11px] font-bold mt-1 truncate max-w-full px-2">
+                                      {displayFileName}
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <img
+                                    src={media.url}
+                                    alt={slot.label}
+                                    className="w-full h-full object-cover"
+                                  />
+                                )
+                              ) : (
+                                <div className="text-center p-3 space-y-1">
+                                  <span className="material-symbols-outlined text-2xl text-slate-400">
+                                    description
+                                  </span>
+                                  <p className="text-[10px] font-bold text-slate-300">Aperçu indisponible</p>
+                                </div>
+                              )}
+                            </div>
+
+                            {slot.uploaded && slot.meta && (
+                              <div className="space-y-1.5 text-[10px] text-slate-600">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span>
+                                    Taille : <strong>{formatFileSizeFr(displaySize)}</strong>
+                                  </span>
+                                  <span>
+                                    Déposé : <strong>{formatKycDateTimeFr(slot.meta.uploadedAt)}</strong>
+                                  </span>
+                                </div>
+                                <p className="font-mono text-[9px] text-slate-400 break-all">
+                                  {slot.meta.storagePath}
+                                </p>
+                              </div>
+                            )}
+
+                            {slot.uploaded && media?.url && (
+                              <div className="flex items-center gap-2 pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setZoomingKycSlot({
+                                      key: slot.slotKey,
+                                      title: slot.label,
+                                    })
+                                  }
+                                  className="flex-1 py-1.5 px-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold inline-flex items-center justify-center gap-1 cursor-pointer"
+                                >
+                                  <span className="material-symbols-outlined text-xs">
+                                    {isPdf ? 'visibility' : 'zoom_in'}
+                                  </span>
+                                  <span>Consulter</span>
+                                </button>
+                                <a
+                                  href={media.url}
+                                  download={displayFileName}
+                                  className="py-1.5 px-2.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-[10px] font-bold inline-flex items-center justify-center gap-1"
+                                >
+                                  <span className="material-symbols-outlined text-xs">download</span>
+                                  <span>Télécharger</span>
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Compatibilité Dossier Hérité (ancien format mono-fichier) */}
+                    {hasLegacyOnly && (
+                      <div className="p-3 rounded-2xl border border-amber-200 bg-amber-50/70 space-y-2.5">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div>
+                            <p className="text-xs font-extrabold text-amber-950">
+                              Document hérité (ancien dossier mono-pièce)
+                            </p>
+                            <p className="text-[10px] text-amber-800">
+                              {reviewingKycItem.documentFileName || 'justificatif_kyc'}
+                              {reviewingKycItem.documentStoragePath
+                                ? ` • ${reviewingKycItem.documentStoragePath}`
+                                : ''}
+                            </p>
+                          </div>
+                          {kycSlotMedia.legacy?.url && (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setZoomingKycSlot({
+                                    key: 'legacy',
+                                    title: 'Justificatif KYC (format hérité)',
+                                  })
+                                }
+                                className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <span className="material-symbols-outlined text-xs">visibility</span>
+                                <span>Consulter</span>
+                              </button>
+                              <a
+                                href={kycSlotMedia.legacy.url}
+                                download={kycSlotMedia.legacy.fileName || 'justificatif_kyc'}
+                                className="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-[10px] font-bold inline-flex items-center gap-1"
+                              >
+                                <span className="material-symbols-outlined text-xs">download</span>
+                                <span>Télécharger</span>
+                              </a>
+                            </div>
+                          )}
                         </div>
-                      ) : (
-                        <>
-                          <img
-                            src={resolvedKycDocUrl}
-                            alt="Document d'identité KYC"
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        {kycSlotMedia.legacy?.error && (
+                          <div className="flex items-center justify-between gap-2 text-[10px] text-red-700">
+                            <span>{kycSlotMedia.legacy.error}</span>
+                            <button
+                              type="button"
+                              onClick={() => retryKycSlotLoad('legacy')}
+                              className="px-2 py-0.5 rounded bg-red-100 hover:bg-red-200 font-bold cursor-pointer"
+                            >
+                              Réessayer
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Directives de contrôle */}
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 space-y-1">
+                      <p className="font-bold text-slate-800">Directives de contrôle pour l&apos;administrateur :</p>
+                      <ul className="list-disc list-inside space-y-0.5 text-[11px] text-slate-500 leading-relaxed">
+                        <li>
+                          Vérifier que l&apos;identité <strong>{reviewingKycItem.fullName}</strong> correspond au recto/verso de la pièce et au permis.
+                        </li>
+                        <li>
+                          Contrôler le numéro de pièce <strong>{reviewingKycItem.idNumber || '—'}</strong>
+                          {reviewingKycItem.npi ? ` (NPI : ${reviewingKycItem.npi})` : ''}.
+                        </li>
+                        <li>
+                          Vérifier la validité de l&apos;attestation d&apos;assurance et la concordance de l&apos;immatriculation{' '}
+                          <strong>{reviewingKycItem.vehiclePlate || 'Non renseignée'}</strong>.
+                        </li>
+                      </ul>
+                    </div>
+
+                    {/* Visionneuse haute résolution / Lecteur PDF */}
+                    {zoomingKycSlot && zoomedMedia?.url && (
+                      <div className="p-3 bg-slate-900 rounded-2xl animate-in fade-in duration-200 space-y-2">
+                        <div className="text-[11px] text-slate-200 flex items-center justify-between gap-2 flex-wrap">
+                          <span className="font-bold">
+                            {zoomingKycSlot.title} —{' '}
+                            {zoomedMedia.mimeType === 'application/pdf'
+                              ? 'Lecteur PDF Sécurisé'
+                              : 'Vue Haute Résolution'}
+                          </span>
+                          <div className="flex items-center gap-3">
+                            <a
+                              href={zoomedMedia.url}
+                              download={zoomedMedia.fileName || 'justificatif_kyc'}
+                              className="text-blue-300 hover:underline font-semibold"
+                            >
+                              Télécharger
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => setZoomingKycSlot(null)}
+                              className="text-white hover:underline cursor-pointer font-bold"
+                            >
+                              Réduire
+                            </button>
+                          </div>
+                        </div>
+                        {zoomedMedia.mimeType === 'application/pdf' ? (
+                          <iframe
+                            src={zoomedMedia.url}
+                            title={zoomingKycSlot.title}
+                            className="w-full h-[65vh] rounded-xl bg-white"
                           />
-                          <button
-                            type="button"
-                            onClick={() => setIsZoomingKycPhoto(!isZoomingKycPhoto)}
-                            className="absolute bottom-2 right-2 px-2.5 py-1 bg-black/75 hover:bg-black text-white text-[10px] font-bold rounded-lg backdrop-blur-xs flex items-center gap-1 cursor-pointer"
-                          >
-                            <span className="material-symbols-outlined text-xs">zoom_in</span>
-                            <span>Agrandir</span>
-                          </button>
-                        </>
-                      )
-                    ) : (
-                      <div className="text-center p-4 space-y-1.5">
-                        <span className="material-symbols-outlined text-3xl text-slate-400">image_not_supported</span>
-                        <p className="text-[11px] font-bold text-slate-300">Document d&apos;identité non transmis</p>
+                        ) : (
+                          <img
+                            src={zoomedMedia.url}
+                            alt={zoomingKycSlot.title}
+                            className="w-full h-auto max-h-[60vh] object-contain rounded-xl mx-auto"
+                          />
+                        )}
                       </div>
                     )}
                   </div>
+                );
+              })()}
 
-                  <div className="space-y-2 text-xs text-slate-600 flex-1">
-                    <p className="font-bold text-slate-800">Directives de contrôle pour l&apos;administrateur :</p>
-                    <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-500 leading-relaxed">
-                      <li>S&apos;assurer que le nom <strong>{reviewingKycItem.fullName}</strong> correspond parfaitement au document.</li>
-                      <li>Vérifier la validité du numéro <strong>{reviewingKycItem.idNumber || '—'}</strong>{reviewingKycItem.npi ? ` (NPI: ${reviewingKycItem.npi})` : ''}.</li>
-                      <li>S&apos;assurer que le document n&apos;est ni flou, ni altéré, ni tronqué.</li>
-                      {reviewingKycItem.documentStoragePath && (
-                        <li className="font-mono text-[10px] text-slate-400 break-all">
-                          Chemin sécurisé : {reviewingKycItem.documentStoragePath}
-                        </li>
-                      )}
-                    </ul>
-                  </div>
+              {/* Statut Préparation Analyse Automatisée IA (Lecture seule, aucun appel IA actif) */}
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <h4 className="font-extrabold text-xs uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-blue-600 text-sm">fact_check</span>
+                    <span>4. Préparation Analyse IA (Lecture seule)</span>
+                  </h4>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-700">
+                    {reviewingKycItem.aiAnalysis?.status || 'not_started'}
+                  </span>
                 </div>
 
-                {isZoomingKycPhoto && resolvedKycDocUrl && (
-                  <div className="p-3 bg-slate-900 rounded-2xl animate-in fade-in duration-200">
-                    <p className="text-[10px] text-slate-400 mb-2 flex items-center justify-between">
-                      <span>
-                        {resolvedKycDocMime === 'application/pdf'
-                          ? 'Lecteur PDF Sécurisé'
-                          : 'Vue Haute Résolution Agrandie'}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setIsZoomingKycPhoto(false)}
-                        className="text-white hover:underline cursor-pointer"
-                      >
-                        Réduire
-                      </button>
-                    </p>
-                    {resolvedKycDocMime === 'application/pdf' ? (
-                      <iframe
-                        src={resolvedKycDocUrl}
-                        title="Document KYC PDF"
-                        className="w-full h-[65vh] rounded-xl bg-white"
-                      />
-                    ) : (
-                      <img
-                        src={resolvedKycDocUrl}
-                        alt="Photo document KYC zoom"
-                        className="w-full h-auto max-h-[60vh] object-contain rounded-xl mx-auto"
-                      />
+                {reviewingKycItem.aiAnalysis ? (
+                  <div className="text-xs text-slate-700 space-y-1.5">
+                    {reviewingKycItem.aiAnalysis.analyzedAt && (
+                      <p className="text-[11px] text-slate-500">
+                        Horodatage enregistré : <strong>{formatKycDateTimeFr(reviewingKycItem.aiAnalysis.analyzedAt)}</strong>
+                      </p>
+                    )}
+                    {reviewingKycItem.aiAnalysis.summary && (
+                      <p className="p-2.5 rounded-xl bg-white border border-slate-200 text-[11px]">
+                        {reviewingKycItem.aiAnalysis.summary}
+                      </p>
                     )}
                   </div>
+                ) : (
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Analyse automatisée non encore exécutée. Ce dossier suit actuellement le contrôle manuel administrateur
+                    (la structure <code className="font-mono text-slate-700">aiAnalysis</code> est en place pour l&apos;intégration future).
+                  </p>
                 )}
               </div>
 

@@ -18,6 +18,8 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
     setSelectedDelivery,
     deliveries,
     setCurrentView,
+    setCurrentRole,
+    setAdminActiveTab,
     notificationPermission,
     requestBrowserNotificationPermission,
   } = useApp();
@@ -71,7 +73,13 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
       }
     }
     if (notif.actionView) {
-      setCurrentView(notif.actionView as any);
+      if (notif.actionView === 'admin_kyc') {
+        setCurrentRole('admin');
+        setAdminActiveTab('kyc');
+        setCurrentView('admin_console');
+      } else {
+        setCurrentView(notif.actionView as any);
+      }
       onClose();
     }
   };

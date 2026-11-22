@@ -155,6 +155,70 @@ export interface DeliveryOrder {
   dispatchFailureReason?: string;
 }
 
+export type KycStorageDocType =
+  | 'id_front'
+  | 'id_back'
+  | 'driving_license'
+  | 'vehicle_insurance';
+
+export type KycDocumentSlotKey =
+  | 'idFront'
+  | 'idBack'
+  | 'drivingLicense'
+  | 'vehicleInsurance';
+
+export interface KycUploadedDocumentMeta {
+  uploaded: boolean;
+  storagePath: string;
+  docType: KycStorageDocType;
+  fileName: string;
+  originalFileName?: string;
+  mimeType: string;
+  size?: number;
+  uploadedAt: string;
+  uploadedBy: string;
+}
+
+export interface KycDocumentsMap {
+  idFront?: KycUploadedDocumentMeta;
+  idBack?: KycUploadedDocumentMeta;
+  drivingLicense?: KycUploadedDocumentMeta;
+  vehicleInsurance?: KycUploadedDocumentMeta;
+  cni?: boolean;
+  permis?: boolean;
+  assurance?: boolean;
+}
+
+export interface KycAiAnalysisSlotResult {
+  slotKey: KycDocumentSlotKey;
+  docType: KycStorageDocType;
+  readable?: boolean;
+  authenticAppearance?: boolean;
+  extractedFields?: Record<string, string>;
+  anomalies?: string[];
+  confidenceScore?: number;
+  summary?: string;
+}
+
+export interface KycAiAnalysisData {
+  status?: 'not_analyzed' | 'pending' | 'completed' | 'failed';
+  provider?: 'gemini';
+  model?: string;
+  analyzedAt?: string;
+  overallScore?: number;
+  recommendation?: 'approve_candidate' | 'manual_review' | 'reject_candidate';
+  summary?: string;
+  flags?: string[];
+  extractedIdentity?: {
+    lastName?: string;
+    firstName?: string;
+    idNumber?: string;
+    npi?: string;
+    vehiclePlate?: string;
+  };
+  documents?: Partial<Record<KycDocumentSlotKey, KycAiAnalysisSlotResult>>;
+}
+
 export interface KYCUserRequest {
   id: string;
   courierId?: string;
@@ -179,11 +243,9 @@ export interface KYCUserRequest {
   documentMimeType?: string;
   documentFileName?: string;
   documentFile?: File | Blob;
-  documents: {
-    cni: boolean;
-    permis: boolean;
-    assurance: boolean;
-  };
+  pendingFiles?: Partial<Record<KycDocumentSlotKey, File | Blob>>;
+  documents: KycDocumentsMap;
+  aiAnalysis?: KycAiAnalysisData;
 }
 
 export interface PricingRule {

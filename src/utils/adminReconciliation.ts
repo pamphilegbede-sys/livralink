@@ -428,11 +428,104 @@ export const mergeRemoteUsersIntoAdminLists = (params: {
   return { merchants: mergedMerchants, couriers: mergedCouriers };
 };
 
+const KYC_SLOT_DEFS: Array<{
+  slotKey: 'idFront' | 'idBack' | 'drivingLicense' | 'vehicleInsurance';
+  docType: 'id_front' | 'id_back' | 'driving_license' | 'vehicle_insurance';
+  label: string;
+  shortLabel: string;
+}> = [
+  {
+    slotKey: 'idFront',
+    docType: 'id_front',
+    label: "Recto de la pièce d'identité",
+    shortLabel: 'Recto pièce',
+  },
+  {
+    slotKey: 'idBack',
+    docType: 'id_back',
+    label: "Verso de la pièce d'identité",
+    shortLabel: 'Verso pièce',
+  },
+  {
+    slotKey: 'drivingLicense',
+    docType: 'driving_license',
+    label: 'Permis de conduire',
+    shortLabel: 'Permis',
+  },
+  {
+    slotKey: 'vehicleInsurance',
+    docType: 'vehicle_insurance',
+    label: "Attestation d'assurance du véhicule",
+    shortLabel: 'Assurance',
+  },
+];
+
+const parseKycUploadedMeta = (
+  raw: any,
+  slotKey: 'idFront' | 'idBack' | 'drivingLicense' | 'vehicleInsurance',
+  fallbackDocType: 'id_front' | 'id_back' | 'driving_license' | 'vehicle_insurance'
+) => {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const storagePath = typeof raw.storagePath === 'string' ? raw.storagePath.trim() : '';
+  if (!storagePath) return undefined;
+  const uploaded = raw.uploaded !== false;
+  return {
+    uploaded,
+    storagePath,
+    docType: (typeof raw.docType === 'string' && raw.docType.trim() ? raw.docType.trim() : fallbackDocType) as any,
+    fileName: typeof raw.fileName === 'string' && raw.fileName.trim()
+      ? raw.fileName.trim()
+      : storagePath.split('/').pop() || `${slotKey}.bin`,
+    originalFileName: typeof raw.originalFileName === 'string' && raw.originalFileName.trim()
+      ? raw.originalFileName.trim()
+      : undefined,
+    mimeType: typeof raw.mimeType === 'string' ? raw.mimeType.trim() : '',
+    size: typeof raw.size === 'number' && Number.isFinite(raw.size) ? raw.size : undefined,
+    uploadedAt: normalizeDateString(raw.uploadedAt) || '',
+    uploadedBy: typeof raw.uploadedBy === 'string' ? raw.uploadedBy.trim() : '',
+  };
+};
+
+export interface NormalizedKycSlotEntry {
+  slotKey: 'idFront' | 'idBack' | 'drivingLicense' | 'vehicleInsurance';
+  docType: 'id_front' | 'id_back' | 'driving_license' | 'vehicle_insurance';
+  label: string;
+  shortLabel: string;
+  uploaded: boolean;
+  meta?: NonNullable<KYCUserRequest['documents']['idFront']>;
+}
+
+export const getKycDocumentSlots = (kyc?: Partial<KYCUserRequest> | null): NormalizedKycSlotEntry[] => {
+  const docs = (kyc?.documents || {}) as KYCUserRequest['documents'];
+  return KYC_SLOT_DEFS.map((def) => {
+    const meta = docs[def.slotKey];
+    const isUploaded = Boolean(meta && meta.uploaded !== false && typeof meta.storagePath === 'string' && meta.storagePath.trim().length > 0);
+    return {
+      slotKey: def.slotKey,
+      docType: def.docType,
+      label: def.label,
+      shortLabel: def.shortLabel,
+      uploaded: isUploaded,
+      meta: isUploaded ? meta : undefined,
+    };
+  });
+};
+
 export const mapFirestoreKycToRequest = (data: any, docId: string): KYCUserRequest => {
   const fullName = String(data.fullName || 'Livreur LivraLink').trim();
   const nameParts = fullName.split(/\s+/).filter(Boolean);
   const derivedLastName = nameParts.length > 0 ? nameParts[0] : '';
   const derivedFirstName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+
+  const rawDocs = data.documents && typeof data.documents === 'object' ? data.documents : {};
+  const idFront = parseKycUploadedMeta(rawDocs.idFront, 'idFront', 'id_front');
+  const idBack = parseKycUploadedMeta(rawDocs.idBack, 'idBack', 'id_back');
+  const drivingLicense = parseKycUploadedMeta(rawDocs.drivingLicense, 'drivingLicense', 'driving_license');
+  const vehicleInsurance = parseKycUploadedMeta(rawDocs.vehicleInsurance, 'vehicleInsurance', 'vehicle_insurance');
+
+  const legacyPath = typeof data.documentStoragePath === 'string' ? data.documentStoragePath.trim() : '';
+  const legacyUrl = typeof (data.documentPhotoUrl || data.cniUrl) === 'string' ? String(data.documentPhotoUrl || data.cniUrl).trim() : '';
+
   return {
     id: data.id || docId,
     courierId: data.courierId || data.userId || docId,
@@ -449,17 +542,36 @@ export const mapFirestoreKycToRequest = (data: any, docId: string): KYCUserReque
     idNumber: data.idNumber || '',
     ifuNumber: data.ifuNumber || '',
     operatingZone: data.operatingZone || data.zone || 'Cotonou',
-    documents: data.documents || {
-      cni: Boolean(data.cniUrl || data.documentPhotoUrl || data.documentStoragePath),
-      permis: Boolean(data.permisUrl),
-      assurance: Boolean(data.assuranceUrl),
+    documents: {
+      ...(idFront ? { idFront } : {}),
+      ...(idBack ? { idBack } : {}),
+      ...(drivingLicense ? { drivingLicense } : {}),
+      ...(vehicleInsurance ? { vehicleInsurance } : {}),
+      cni: Boolean(
+        idFront?.uploaded ||
+          idBack?.uploaded ||
+          rawDocs.cni === true ||
+          legacyUrl ||
+          legacyPath
+      ),
+      permis: Boolean(
+        drivingLicense?.uploaded ||
+          rawDocs.permis === true ||
+          data.permisUrl
+      ),
+      assurance: Boolean(
+        vehicleInsurance?.uploaded ||
+          rawDocs.assurance === true ||
+          data.assuranceUrl
+      ),
     },
     status: data.status || 'en_attente',
     submittedAt: normalizeDateString(data.submittedAt || data.createdAt),
     rejectionReason: data.rejectionReason,
-    documentPhotoUrl: data.documentPhotoUrl || data.cniUrl,
-    documentStoragePath: data.documentStoragePath || '',
-    documentMimeType: data.documentMimeType || '',
-    documentFileName: data.documentFileName || '',
+    documentPhotoUrl: legacyUrl || undefined,
+    documentStoragePath: legacyPath || idFront?.storagePath || '',
+    documentMimeType: data.documentMimeType || idFront?.mimeType || '',
+    documentFileName: data.documentFileName || idFront?.originalFileName || idFront?.fileName || '',
+    aiAnalysis: data.aiAnalysis && typeof data.aiAnalysis === 'object' ? data.aiAnalysis : undefined,
   };
 };

@@ -1610,5 +1610,122 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
       })
     );
   });
+
+  // 36. 4-slot KYC documents metadata validation & client lock on aiAnalysis / reviewedAt / reviewedBy
+  test('36. 4-slot KYC documents metadata succeeds while client aiAnalysis write or forged slot owner fails', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/courier_4slot_36').set({
+        uid: 'courier_4slot_36',
+        email: 'c36@test.com',
+        fullName: 'Courier 36',
+        phone: '+22997000036',
+        role: 'livreur',
+        isKycVerified: false,
+        kycStatus: 'non_soumis',
+      });
+    });
+
+    const courierDb = testEnv.authenticatedContext('courier_4slot_36', {
+      email: 'c36@test.com',
+      email_verified: true,
+    }).firestore();
+
+    const validDocs = {
+      idFront: {
+        uploaded: true,
+        storagePath: 'kyc/courier_4slot_36/id_front/id_front_1_a.jpg',
+        docType: 'id_front',
+        fileName: 'id_front_1_a.jpg',
+        mimeType: 'image/jpeg',
+        size: 12000,
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: 'courier_4slot_36',
+      },
+      idBack: {
+        uploaded: true,
+        storagePath: 'kyc/courier_4slot_36/id_back/id_back_1_b.jpg',
+        docType: 'id_back',
+        fileName: 'id_back_1_b.jpg',
+        mimeType: 'image/jpeg',
+        size: 12500,
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: 'courier_4slot_36',
+      },
+      drivingLicense: {
+        uploaded: true,
+        storagePath: 'kyc/courier_4slot_36/driving_license/driving_license_1_c.pdf',
+        docType: 'driving_license',
+        fileName: 'driving_license_1_c.pdf',
+        mimeType: 'application/pdf',
+        size: 25000,
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: 'courier_4slot_36',
+      },
+      vehicleInsurance: {
+        uploaded: true,
+        storagePath: 'kyc/courier_4slot_36/vehicle_insurance/vehicle_insurance_1_d.pdf',
+        docType: 'vehicle_insurance',
+        fileName: 'vehicle_insurance_1_d.pdf',
+        mimeType: 'application/pdf',
+        size: 30000,
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: 'courier_4slot_36',
+      },
+      cni: true,
+      permis: true,
+      assurance: true,
+    };
+
+    // 1. Client cannot inject aiAnalysis or reviewedAt
+    await assertFails(
+      courierDb.doc('kyc/courier_4slot_36').set({
+        id: 'courier_4slot_36',
+        userId: 'courier_4slot_36',
+        courierId: 'courier_4slot_36',
+        fullName: 'Courier 36',
+        phone: '+22997000036',
+        status: 'en_attente',
+        documents: validDocs,
+        aiAnalysis: { status: 'completed', overallDecision: 'valide' },
+      })
+    );
+
+    // 2. Client cannot reference another user's storagePath or uploadedBy in a slot
+    await assertFails(
+      courierDb.doc('kyc/courier_4slot_36').set({
+        id: 'courier_4slot_36',
+        userId: 'courier_4slot_36',
+        courierId: 'courier_4slot_36',
+        fullName: 'Courier 36',
+        phone: '+22997000036',
+        status: 'en_attente',
+        documents: {
+          ...validDocs,
+          idFront: {
+            ...validDocs.idFront,
+            storagePath: 'kyc/other_uid/id_front/id_front_1_a.jpg',
+          },
+        },
+      })
+    );
+
+    // 3. Valid 4-slot dossier submission succeeds
+    await assertSucceeds(
+      courierDb.doc('kyc/courier_4slot_36').set({
+        id: 'courier_4slot_36',
+        userId: 'courier_4slot_36',
+        courierId: 'courier_4slot_36',
+        fullName: 'Courier 36',
+        phone: '+22997000036',
+        status: 'en_attente',
+        isApproved: false,
+        verified: false,
+        documentStoragePath: validDocs.idFront.storagePath,
+        documentMimeType: 'image/jpeg',
+        documents: validDocs,
+        submittedAt: new Date().toISOString(),
+      })
+    );
+  });
 });
 

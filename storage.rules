@@ -75,13 +75,16 @@ service firebase.storage {
       allow delete: if isSignedIn() && (request.auth.uid == userId || isAdmin());
     }
 
-    // 2. KYC Identification Documents: /kyc/{userId}/{fileName}
+    // 2. KYC Identification Documents:
+    //    - Legacy 2-segment path: /kyc/{userId}/{fileName}
+    //    - Structured 4-slot path: /kyc/{userId}/{docSlot}/{fileName}
     //    - Strictly private: readable only by verified owner or Admin (plus server Admin SDK /api/kyc/document)
-    //    - Create only (immutable for couriers): verified owner, < 10 MB, JPG/PNG/WebP/PDF, uploadedBy == uid
-    //    - No overwrite, update, or deletion allowed by couriers once uploaded
+    //    - Writes restricted strictly to Admin / server Admin SDK (/api/courier/kyc/upload) so
+    //      Firebase Auth, email_verified, livreur role, Firestore status lock, magic bytes & <10MB
+    //      can never be bypassed directly from client SDK.
     match /kyc/{userId}/{fileName} {
       allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      allow create: if isVerifiedUser()
+      allow create: if isAdmin()
                     && isSafeFileName(userId)
                     && isSafeFileName(fileName)
                     && request.resource != null
@@ -94,14 +97,27 @@ service firebase.storage {
                       'image/webp',
                       'application/pdf'
                     ]
-                    && hasValidUploaderMetadata()
-                    && (
-                      (
-                        request.auth.uid == userId &&
-                        !isKycLocked()
-                      ) ||
-                      isAdmin()
-                    );
+                    && hasValidUploaderMetadata();
+      allow update, delete: if isAdmin();
+    }
+
+    match /kyc/{userId}/{docSlot}/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if isAdmin()
+                    && isSafeFileName(userId)
+                    && docSlot in ['id_front', 'id_back', 'driving_license', 'vehicle_insurance']
+                    && isSafeFileName(fileName)
+                    && request.resource != null
+                    && request.resource.size > 0
+                    && request.resource.size < 10 * 1024 * 1024
+                    && request.resource.contentType is string
+                    && request.resource.contentType in [
+                      'image/jpeg',
+                      'image/png',
+                      'image/webp',
+                      'application/pdf'
+                    ]
+                    && hasValidUploaderMetadata();
       allow update, delete: if isAdmin();
     }
 

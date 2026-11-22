@@ -94,9 +94,23 @@
         "operatingZone": { "type": "string", "maxLength": 128, "description": "Zone d'activité principale" },
         "vehicleType": { "type": "string", "maxLength": 64, "description": "Type d'engin ou véhicule" },
         "vehiclePlate": { "type": "string", "maxLength": 32, "description": "Plaque d'immatriculation" },
-        "documentStoragePath": { "type": "string", "maxLength": 256, "description": "Chemin privé Firebase Storage (accès authentifié uniquement)" },
+        "documentStoragePath": { "type": "string", "maxLength": 256, "description": "Chemin privé Firebase Storage principal ou historique (accès authentifié uniquement)" },
         "documentMimeType": { "type": "string", "maxLength": 64, "description": "Type MIME réel du justificatif (image/* ou application/pdf)" },
         "documentFileName": { "type": "string", "maxLength": 128, "description": "Nom de fichier du justificatif" },
+        "documents": {
+          "type": "object",
+          "description": "Métadonnées individuelles des 4 pièces obligatoires (idFront, idBack, drivingLicense, vehicleInsurance)",
+          "properties": {
+            "idFront": { "type": "object", "description": "Recto de la pièce d'identité" },
+            "idBack": { "type": "object", "description": "Verso de la pièce d'identité" },
+            "drivingLicense": { "type": "object", "description": "Permis de conduire" },
+            "vehicleInsurance": { "type": "object", "description": "Attestation d'assurance du véhicule" }
+          }
+        },
+        "aiAnalysis": {
+          "type": "object",
+          "description": "Structure extensible réservée à la future analyse IA Gemini (écriture serveur/admin uniquement)"
+        },
         "status": { "type": "string", "enum": ["en_attente", "valide", "refuse"], "description": "Statut d'instruction" },
         "submittedAt": { "type": "string", "maxLength": 64, "description": "Date de soumission" },
         "reviewedAt": { "type": "string", "maxLength": 64, "description": "Date d'instruction par l'administrateur" },

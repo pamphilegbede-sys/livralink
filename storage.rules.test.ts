@@ -113,25 +113,11 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
     );
   });
 
-  test('3. KYC docs: supports JPG/PNG/WebP/PDF, enforces email_verified, uploadedBy, <10MB, kycLocked, immutability & private isolation', async () => {
+  test('3. KYC docs: direct client writes denied (server proxy required); admins can store valid 4-slot docs; owner & admin can read', async () => {
     const courierStorage = testEnv
       .authenticatedContext('courier_kyc_1', {
         email: 'ck@test.com',
         email_verified: true,
-      })
-      .storage();
-    const unlockedCourierStorage = testEnv
-      .authenticatedContext('courier_kyc_1', {
-        email: 'ck@test.com',
-        email_verified: true,
-        kycLocked: false,
-      })
-      .storage();
-    const lockedCourierStorage = testEnv
-      .authenticatedContext('courier_kyc_1', {
-        email: 'ck@test.com',
-        email_verified: true,
-        kycLocked: true,
       })
       .storage();
     const unverifiedCourierStorage = testEnv
@@ -160,111 +146,113 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
       .storage();
 
-    // Owner uploads JPG, PNG, WebP, and PDF with valid uploadedBy metadata
-    await assertSucceeds(
-      courierStorage.ref('kyc/courier_kyc_1/cni.jpg').put(Buffer.from('jpg-bytes'), {
+    // Direct browser/client Storage writes by verified or unverified couriers are strictly blocked (must go via /api/courier/kyc/upload)
+    await assertFails(
+      courierStorage.ref('kyc/courier_kyc_1/id_front/cni.jpg').put(Buffer.from('jpg-bytes'), {
         contentType: 'image/jpeg',
         customMetadata: { uploadedBy: 'courier_kyc_1' },
       })
     );
-    await assertSucceeds(
-      courierStorage.ref('kyc/courier_kyc_1/cni.png').put(Buffer.from('png-bytes'), {
-        contentType: 'image/png',
-        customMetadata: { uploadedBy: 'courier_kyc_1' },
-      })
-    );
-    await assertSucceeds(
-      courierStorage.ref('kyc/courier_kyc_1/cni.webp').put(Buffer.from('webp-bytes'), {
-        contentType: 'image/webp',
-        customMetadata: { uploadedBy: 'courier_kyc_1' },
-      })
-    );
-    await assertSucceeds(
+    await assertFails(
       courierStorage.ref('kyc/courier_kyc_1/cni.pdf').put(Buffer.from('%PDF-1.4\n1 0 obj'), {
         contentType: 'application/pdf',
         customMetadata: { uploadedBy: 'courier_kyc_1' },
       })
     );
-    await assertSucceeds(
-      unlockedCourierStorage.ref('kyc/courier_kyc_1/cni_retry.pdf').put(Buffer.from('%PDF-1.4\n1 0 obj'), {
-        contentType: 'application/pdf',
-        customMetadata: { uploadedBy: 'courier_kyc_1' },
-      })
-    );
-
-    // Unverified email cannot upload KYC documents
     await assertFails(
-      unverifiedCourierStorage.ref('kyc/courier_unverified/cni.jpg').put(Buffer.from('jpg-bytes'), {
+      unverifiedCourierStorage.ref('kyc/courier_unverified/id_front/cni.jpg').put(Buffer.from('jpg-bytes'), {
         contentType: 'image/jpeg',
         customMetadata: { uploadedBy: 'courier_unverified' },
       })
     );
 
-    // Invalid MIME type (text/plain), empty file, and oversized (>=10MB) rejected
-    await assertFails(
-      courierStorage.ref('kyc/courier_kyc_1/script.txt').put(Buffer.from('hello'), {
-        contentType: 'text/plain',
-        customMetadata: { uploadedBy: 'courier_kyc_1' },
-      })
-    );
-    await assertFails(
-      courierStorage.ref('kyc/courier_kyc_1/empty.jpg').put(Buffer.alloc(0), {
-        contentType: 'image/jpeg',
-        customMetadata: { uploadedBy: 'courier_kyc_1' },
-      })
-    );
-    await assertFails(
-      courierStorage.ref('kyc/courier_kyc_1/too_big.jpg').put(Buffer.alloc(10 * 1024 * 1024 + 1), {
-        contentType: 'image/jpeg',
-        customMetadata: { uploadedBy: 'courier_kyc_1' },
-      })
-    );
-
-    // Forged or missing uploadedBy metadata rejected
-    await assertFails(
-      courierStorage.ref('kyc/courier_kyc_1/forged.jpg').put(Buffer.from('jpg-bytes'), {
-        contentType: 'image/jpeg',
-        customMetadata: { uploadedBy: 'another_uid' },
-      })
-    );
-    await assertFails(
-      courierStorage.ref('kyc/courier_kyc_1/missing_meta.jpg').put(Buffer.from('jpg-bytes'), {
-        contentType: 'image/jpeg',
-      })
-    );
-
     // Outsider cannot upload into another user's KYC folder
     await assertFails(
-      outsiderStorage.ref('kyc/courier_kyc_1/hack.jpg').put(Buffer.from('jpg-bytes'), {
+      outsiderStorage.ref('kyc/courier_kyc_1/id_front/hack.jpg').put(Buffer.from('jpg-bytes'), {
         contentType: 'image/jpeg',
         customMetadata: { uploadedBy: 'outsider_1' },
       })
     );
 
-    // Courier cannot delete or overwrite/update existing KYC objects
-    await assertFails(courierStorage.ref('kyc/courier_kyc_1/cni.jpg').delete());
+    // Admin can store all 4 structured slots (JPG, PNG, WebP, PDF) and legacy 2-segment files
+    await assertSucceeds(
+      superAdminStorage.ref('kyc/courier_kyc_1/id_front/recto.jpg').put(Buffer.from('jpg-bytes'), {
+        contentType: 'image/jpeg',
+        customMetadata: { uploadedBy: 'super_admin' },
+      })
+    );
+    await assertSucceeds(
+      superAdminStorage.ref('kyc/courier_kyc_1/id_back/verso.png').put(Buffer.from('png-bytes'), {
+        contentType: 'image/png',
+        customMetadata: { uploadedBy: 'super_admin' },
+      })
+    );
+    await assertSucceeds(
+      superAdminStorage.ref('kyc/courier_kyc_1/driving_license/permis.webp').put(Buffer.from('webp-bytes'), {
+        contentType: 'image/webp',
+        customMetadata: { uploadedBy: 'super_admin' },
+      })
+    );
+    await assertSucceeds(
+      claimAdminStorage.ref('kyc/courier_kyc_1/vehicle_insurance/assurance.pdf').put(Buffer.from('%PDF-1.4\n1 0 obj'), {
+        contentType: 'application/pdf',
+        customMetadata: { uploadedBy: 'sub_admin' },
+      })
+    );
+
+    // Invalid docSlot, invalid MIME, empty/oversized file, and missing/forged uploadedBy rejected even for Admin
     await assertFails(
-      courierStorage.ref('kyc/courier_kyc_1/cni.jpg').updateMetadata({
+      superAdminStorage.ref('kyc/courier_kyc_1/unknown_slot/doc.jpg').put(Buffer.from('jpg-bytes'), {
+        contentType: 'image/jpeg',
+        customMetadata: { uploadedBy: 'super_admin' },
+      })
+    );
+    await assertFails(
+      superAdminStorage.ref('kyc/courier_kyc_1/id_front/script.txt').put(Buffer.from('hello'), {
+        contentType: 'text/plain',
+        customMetadata: { uploadedBy: 'super_admin' },
+      })
+    );
+    await assertFails(
+      superAdminStorage.ref('kyc/courier_kyc_1/id_front/empty.jpg').put(Buffer.alloc(0), {
+        contentType: 'image/jpeg',
+        customMetadata: { uploadedBy: 'super_admin' },
+      })
+    );
+    await assertFails(
+      superAdminStorage.ref('kyc/courier_kyc_1/id_front/too_big.jpg').put(Buffer.alloc(10 * 1024 * 1024 + 1), {
+        contentType: 'image/jpeg',
+        customMetadata: { uploadedBy: 'super_admin' },
+      })
+    );
+    await assertFails(
+      superAdminStorage.ref('kyc/courier_kyc_1/id_front/forged.jpg').put(Buffer.from('jpg-bytes'), {
+        contentType: 'image/jpeg',
+        customMetadata: { uploadedBy: 'another_uid' },
+      })
+    );
+    await assertFails(
+      superAdminStorage.ref('kyc/courier_kyc_1/id_front/missing_meta.jpg').put(Buffer.from('jpg-bytes'), {
+        contentType: 'image/jpeg',
+      })
+    );
+
+    // Courier cannot delete or update existing KYC objects
+    await assertFails(courierStorage.ref('kyc/courier_kyc_1/id_front/recto.jpg').delete());
+    await assertFails(
+      courierStorage.ref('kyc/courier_kyc_1/id_front/recto.jpg').updateMetadata({
         customMetadata: { uploadedBy: 'courier_kyc_1', tampered: 'true' },
       })
     );
 
-    // When custom claim kycLocked is true (after admin approval), courier upload is blocked
-    await assertFails(
-      lockedCourierStorage.ref('kyc/courier_kyc_1/cni_after_valide.jpg').put(Buffer.from('jpg-bytes'), {
-        contentType: 'image/jpeg',
-        customMetadata: { uploadedBy: 'courier_kyc_1' },
-      })
-    );
-
     // Owner, Super-Admin (verified), and claim-Admin can read/inspect; unverified Super-Admin & outsider strictly denied
-    await assertSucceeds(courierStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
-    await assertSucceeds(courierStorage.ref('kyc/courier_kyc_1/cni.pdf').getDownloadURL());
-    await assertSucceeds(superAdminStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
-    await assertSucceeds(claimAdminStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
-    await assertFails(unverifiedSuperAdminStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
-    await assertFails(outsiderStorage.ref('kyc/courier_kyc_1/cni.pdf').getMetadata());
-    await assertFails(outsiderStorage.ref('kyc/courier_kyc_1/cni.jpg').getDownloadURL());
+    await assertSucceeds(courierStorage.ref('kyc/courier_kyc_1/vehicle_insurance/assurance.pdf').getMetadata());
+    await assertSucceeds(courierStorage.ref('kyc/courier_kyc_1/vehicle_insurance/assurance.pdf').getDownloadURL());
+    await assertSucceeds(superAdminStorage.ref('kyc/courier_kyc_1/vehicle_insurance/assurance.pdf').getMetadata());
+    await assertSucceeds(claimAdminStorage.ref('kyc/courier_kyc_1/vehicle_insurance/assurance.pdf').getMetadata());
+    await assertFails(unverifiedSuperAdminStorage.ref('kyc/courier_kyc_1/vehicle_insurance/assurance.pdf').getMetadata());
+    await assertFails(outsiderStorage.ref('kyc/courier_kyc_1/vehicle_insurance/assurance.pdf').getMetadata());
+    await assertFails(outsiderStorage.ref('kyc/courier_kyc_1/id_front/recto.jpg').getDownloadURL());
   });
 
   test('4. POD proofs: direct client read/write strictly restricted to Admin (blocking non-admin verified users); MIME/uploadedBy enforced', async () => {

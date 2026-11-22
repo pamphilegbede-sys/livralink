@@ -2,11 +2,16 @@ import React, { useState, useEffect, useRef } from 'react';
 import { sendEmailVerification } from 'firebase/auth';
 import { auth } from '../../firebase/config';
 import { useApp } from '../../context/AppContext';
-import { KYCUserRequest } from '../../types';
+import {
+  KYCUserRequest,
+  KycDocumentSlotKey,
+  KycStorageDocType,
+} from '../../types';
 import {
   UploadedKYCDocumentResult,
   cleanupOrphanKYCDocument,
   fetchAuthorizedKYCDocumentBlob,
+  formatFileSizeFr,
   isAllowedKycMimeType,
   normalizeMimeType,
 } from '../../firebase/storageService';
@@ -25,6 +30,87 @@ export const BENIN_VEHICLE_OPTIONS = [
   'Vélo / Deux-roues non motorisé',
   'Autre engin (préciser)',
 ];
+
+interface KycSlotDescriptor {
+  slotKey: KycDocumentSlotKey;
+  docType: KycStorageDocType;
+  title: string;
+  description: string;
+  icon: string;
+}
+
+const KYC_DOCUMENT_SLOTS: KycSlotDescriptor[] = [
+  {
+    slotKey: 'idFront',
+    docType: 'id_front',
+    title: "1. Recto de la pièce d'identité *",
+    description: 'Face avant lisible (CIP, CNI biométrique ou passeport). Les 4 coins doivent être visibles.',
+    icon: 'badge',
+  },
+  {
+    slotKey: 'idBack',
+    docType: 'id_back',
+    title: "2. Verso de la pièce d'identité *",
+    description: 'Face arrière de votre pièce (ou page secondaire / couverture pour passeport).',
+    icon: 'flip_to_back',
+  },
+  {
+    slotKey: 'drivingLicense',
+    docType: 'driving_license',
+    title: '3. Permis de conduire *',
+    description: 'Permis de conduire valide (catégorie A/B ou équivalent) sans reflet ni flou.',
+    icon: 'directions_car',
+  },
+  {
+    slotKey: 'vehicleInsurance',
+    docType: 'vehicle_insurance',
+    title: "4. Attestation d'assurance du véhicule *",
+    description: "Attestation d'assurance circulation en cours de validité pour l'engin déclaré.",
+    icon: 'verified_user',
+  },
+];
+
+interface KycSlotUiState {
+  file: File | null;
+  previewUrl: string | null;
+  originalFileName: string;
+  mimeType: string;
+  size: number | null;
+  uploadedAsset: UploadedKYCDocumentResult | null;
+  isLoadingExisting: boolean;
+  uploadStatus: 'idle' | 'ready' | 'uploading' | 'uploaded' | 'error';
+  progress: number;
+  error: string | null;
+}
+
+const createEmptySlotState = (): KycSlotUiState => ({
+  file: null,
+  previewUrl: null,
+  originalFileName: '',
+  mimeType: '',
+  size: null,
+  uploadedAsset: null,
+  isLoadingExisting: false,
+  uploadStatus: 'idle',
+  progress: 0,
+  error: null,
+});
+
+const createInitialSlotsState = (): Record<KycDocumentSlotKey, KycSlotUiState> => ({
+  idFront: createEmptySlotState(),
+  idBack: createEmptySlotState(),
+  drivingLicense: createEmptySlotState(),
+  vehicleInsurance: createEmptySlotState(),
+});
+
+const formatMimeBadge = (mime?: string, fileName?: string): string => {
+  const norm = normalizeMimeType(mime, fileName);
+  if (norm === 'application/pdf') return 'PDF';
+  if (norm === 'image/png') return 'PNG';
+  if (norm === 'image/webp') return 'WebP';
+  if (norm === 'image/jpeg') return 'JPG';
+  return norm ? norm.toUpperCase() : 'FICHIER';
+};
 
 interface KYCSubmissionModalProps {
   isOpen: boolean;
@@ -62,20 +148,16 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
   const [isCheckingEmail, setIsCheckingEmail] = useState(false);
   const [isResendingEmail, setIsResendingEmail] = useState(false);
 
-  // POINT 1: Initialisation VIDE si nouveau formulaire (aucun préremplissage automatique)
-  // Conservé uniquement si un dossier/brouillon KYC existe déjà.
   const [lastName, setLastName] = useState(existingKyc?.lastName || '');
   const [firstName, setFirstName] = useState(existingKyc?.firstName || '');
   const [phone, setPhone] = useState(existingKyc?.phone || '');
   const [operatingZone, setOperatingZone] = useState(existingKyc?.operatingZone || '');
 
-  // POINT 4: Séparation NPI et Numéro de Pièce
   const [npi, setNpi] = useState(existingKyc?.npi || '');
   const [idType, setIdType] = useState<'CIP' | 'CNI' | 'PASSPORT'>(existingKyc?.idType || 'CIP');
   const [idNumber, setIdNumber] = useState(existingKyc?.idNumber || '');
   const [ifuNumber, setIfuNumber] = useState(existingKyc?.ifuNumber || '');
 
-  // Vehicle Selection logic
   const existingVehicle = existingKyc?.vehicleType || '';
   const isKnownVehicle = BENIN_VEHICLE_OPTIONS.includes(existingVehicle);
 
@@ -89,27 +171,32 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
   const [vehiclePlate, setVehiclePlate] = useState(existingKyc?.vehiclePlate || '');
   const [hasInsurance, setHasInsurance] = useState(true);
   const [hasAgreedTerms, setHasAgreedTerms] = useState(true);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
-  const [previewMimeType, setPreviewMimeType] = useState<string>(existingKyc?.documentMimeType || '');
-  const [previewFileName, setPreviewFileName] = useState<string>(existingKyc?.documentFileName || '');
-  const [isLoadingExistingDoc, setIsLoadingExistingDoc] = useState(false);
+
+  const [slots, setSlots] = useState<Record<KycDocumentSlotKey, KycSlotUiState>>(createInitialSlotsState);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [pendingUploadedAsset, setPendingUploadedAsset] = useState<UploadedKYCDocumentResult | null>(null);
 
-  const objectUrlRef = useRef<string | null>(null);
+  const slotObjectUrlsRef = useRef<Partial<Record<KycDocumentSlotKey, string>>>({});
+  const sessionUploadedPathsRef = useRef<Set<string>>(new Set());
+  const replacedSavedPathsRef = useRef<Set<string>>(new Set());
   const uploadAbortRef = useRef<AbortController | null>(null);
   const isSubmittingRef = useRef<boolean>(false);
 
-  const revokeObjectPreview = () => {
-    if (objectUrlRef.current && objectUrlRef.current.startsWith('blob:')) {
+  const revokeSlotObjectUrl = (slotKey: KycDocumentSlotKey) => {
+    const existingUrl = slotObjectUrlsRef.current[slotKey];
+    if (existingUrl && existingUrl.startsWith('blob:')) {
       try {
-        URL.revokeObjectURL(objectUrlRef.current);
+        URL.revokeObjectURL(existingUrl);
       } catch {}
-      objectUrlRef.current = null;
     }
+    delete slotObjectUrlsRef.current[slotKey];
+  };
+
+  const revokeAllSlotObjectUrls = () => {
+    (Object.keys(slotObjectUrlsRef.current) as KycDocumentSlotKey[]).forEach((key) => {
+      revokeSlotObjectUrl(key);
+    });
   };
 
   useEffect(() => {
@@ -117,7 +204,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       try {
         uploadAbortRef.current?.abort();
       } catch {}
-      revokeObjectPreview();
+      revokeAllSlotObjectUrls();
     };
   }, []);
 
@@ -150,50 +237,149 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     setIdType(existingKyc?.idType || 'CIP');
     setIdNumber(existingKyc?.idNumber || '');
     setIfuNumber(existingKyc?.ifuNumber || '');
+
     const vType = existingKyc?.vehicleType || '';
     const known = BENIN_VEHICLE_OPTIONS.includes(vType);
     setVehicleSelect(vType ? (known ? vType : 'Autre engin (préciser)') : BENIN_VEHICLE_OPTIONS[0]);
     setCustomVehicle(vType && !known ? vType : '');
     setVehiclePlate(existingKyc?.vehiclePlate || '');
-    setSelectedFile(null);
     setSubmitError(null);
     setUploadProgress(null);
-    setPendingUploadedAsset(null);
-    setPreviewMimeType(existingKyc?.documentMimeType || '');
-    setPreviewFileName(existingKyc?.documentFileName || '');
 
-    revokeObjectPreview();
-    setPhotoPreview(null);
+    revokeAllSlotObjectUrls();
+    sessionUploadedPathsRef.current.clear();
+    replacedSavedPathsRef.current.clear();
 
-    if (existingKyc?.documentStoragePath || existingKyc?.documentPhotoUrl) {
-      setIsLoadingExistingDoc(true);
+    const nextSlots = createInitialSlotsState();
+    const docsToFetch: Array<{
+      slotKey: KycDocumentSlotKey;
+      docType: KycStorageDocType;
+      storagePath?: string;
+      legacyUrl?: string;
+      fileName?: string;
+      mimeType?: string;
+      size?: number;
+      uploadedAt?: string;
+    }> = [];
+
+    for (const def of KYC_DOCUMENT_SLOTS) {
+      const existingSlotMeta = existingKyc?.documents?.[def.slotKey];
+      if (existingSlotMeta && existingSlotMeta.uploaded !== false && existingSlotMeta.storagePath) {
+        nextSlots[def.slotKey] = {
+          file: null,
+          previewUrl: null,
+          originalFileName: existingSlotMeta.originalFileName || existingSlotMeta.fileName || '',
+          mimeType: existingSlotMeta.mimeType || '',
+          size: existingSlotMeta.size ?? null,
+          uploadedAsset: {
+            storagePath: existingSlotMeta.storagePath,
+            docType: existingSlotMeta.docType || def.docType,
+            contentType: existingSlotMeta.mimeType || 'image/jpeg',
+            fileName: existingSlotMeta.fileName || existingSlotMeta.storagePath.split('/').pop() || `${def.docType}.jpg`,
+            originalFileName: existingSlotMeta.originalFileName,
+            size: existingSlotMeta.size || 0,
+            uploadedAt: existingSlotMeta.uploadedAt || '',
+          },
+          isLoadingExisting: true,
+          uploadStatus: 'uploaded',
+          progress: 100,
+          error: null,
+        };
+        docsToFetch.push({
+          slotKey: def.slotKey,
+          docType: def.docType,
+          storagePath: existingSlotMeta.storagePath,
+          fileName: existingSlotMeta.originalFileName || existingSlotMeta.fileName,
+          mimeType: existingSlotMeta.mimeType,
+          size: existingSlotMeta.size,
+          uploadedAt: existingSlotMeta.uploadedAt,
+        });
+      } else if (
+        def.slotKey === 'idFront' &&
+        !existingKyc?.documents?.idFront &&
+        (existingKyc?.documentStoragePath || existingKyc?.documentPhotoUrl)
+      ) {
+        // Rétrocompatibilité lecture pour un ancien dossier mono-fichier
+        nextSlots.idFront = {
+          file: null,
+          previewUrl: null,
+          originalFileName: existingKyc.documentFileName || 'justificatif_existant',
+          mimeType: existingKyc.documentMimeType || '',
+          size: null,
+          uploadedAsset: existingKyc.documentStoragePath
+            ? {
+                storagePath: existingKyc.documentStoragePath,
+                docType: 'id_front',
+                contentType: existingKyc.documentMimeType || 'image/jpeg',
+                fileName: existingKyc.documentFileName || 'justificatif_existant',
+                originalFileName: existingKyc.documentFileName,
+                size: 0,
+                uploadedAt: existingKyc.submittedAt || '',
+              }
+            : null,
+          isLoadingExisting: true,
+          uploadStatus: existingKyc.documentStoragePath ? 'uploaded' : 'idle',
+          progress: existingKyc.documentStoragePath ? 100 : 0,
+          error: null,
+        };
+        docsToFetch.push({
+          slotKey: 'idFront',
+          docType: 'id_front',
+          storagePath: existingKyc.documentStoragePath,
+          legacyUrl: existingKyc.documentPhotoUrl,
+          fileName: existingKyc.documentFileName,
+          mimeType: existingKyc.documentMimeType,
+        });
+      }
+    }
+
+    setSlots(nextSlots);
+
+    docsToFetch.forEach((entry) => {
       fetchAuthorizedKYCDocumentBlob({
-        storagePath: existingKyc.documentStoragePath,
-        legacyUrl: existingKyc.documentPhotoUrl,
+        storagePath: entry.storagePath,
+        legacyUrl: entry.legacyUrl,
       })
         .then(({ blob, mimeType, fileName }) => {
           if (cancelled) return;
+          revokeSlotObjectUrl(entry.slotKey);
           const objUrl = URL.createObjectURL(blob);
-          objectUrlRef.current = objUrl;
-          setPhotoPreview(objUrl);
-          setPreviewMimeType(mimeType);
-          setPreviewFileName(fileName);
+          slotObjectUrlsRef.current[entry.slotKey] = objUrl;
+          setSlots((prev) => ({
+            ...prev,
+            [entry.slotKey]: {
+              ...prev[entry.slotKey],
+              previewUrl: objUrl,
+              mimeType: mimeType || prev[entry.slotKey].mimeType,
+              originalFileName: prev[entry.slotKey].originalFileName || fileName,
+              size: prev[entry.slotKey].size || blob.size || null,
+              isLoadingExisting: false,
+            },
+          }));
         })
         .catch(() => {
           if (cancelled) return;
-          if (existingKyc?.documentPhotoUrl && existingKyc.documentPhotoUrl.startsWith('http')) {
-            setPhotoPreview(existingKyc.documentPhotoUrl);
-          }
-        })
-        .finally(() => {
-          if (!cancelled) setIsLoadingExistingDoc(false);
+          setSlots((prev) => ({
+            ...prev,
+            [entry.slotKey]: {
+              ...prev[entry.slotKey],
+              isLoadingExisting: false,
+            },
+          }));
         });
-    }
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [isOpen, existingKyc?.id, existingKyc?.status, existingKyc?.documentStoragePath, existingKyc?.documentPhotoUrl, firebaseUser?.emailVerified]);
+  }, [
+    isOpen,
+    existingKyc?.id,
+    existingKyc?.status,
+    existingKyc?.documentStoragePath,
+    existingKyc?.documentPhotoUrl,
+    firebaseUser?.emailVerified,
+  ]);
 
   if (!isOpen) return null;
 
@@ -204,10 +390,13 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       } catch {}
       uploadAbortRef.current = null;
     }
-    if (pendingUploadedAsset) {
-      void cleanupOrphanKYCDocument(pendingUploadedAsset.storagePath);
-      setPendingUploadedAsset(null);
+    // Nettoyer uniquement les fichiers uploadés durant cette session non finalisée
+    for (const tempPath of sessionUploadedPathsRef.current) {
+      void cleanupOrphanKYCDocument(tempPath);
     }
+    sessionUploadedPathsRef.current.clear();
+    replacedSavedPathsRef.current.clear();
+    revokeAllSlotObjectUrls();
     setSubmitError(null);
     setUploadProgress(null);
     onClose();
@@ -232,7 +421,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       await sendEmailVerification(auth.currentUser);
       showToast('E-mail de vérification envoyé. Consultez votre boîte de réception (et spams).', 'success');
     } catch (err: any) {
-      showToast(err?.message || 'Impossible d\'envoyer l\'e-mail de vérification pour le moment.', 'error');
+      showToast(err?.message || "Impossible d'envoyer l'e-mail de vérification pour le moment.", 'error');
     } finally {
       setIsResendingEmail(false);
     }
@@ -262,13 +451,21 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     }
   };
 
-  const handleDocumentPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSlotFileChange = (slotDef: KycSlotDescriptor, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const resolvedMime = normalizeMimeType(file.type, file.name);
     if (!isAllowedKycMimeType(resolvedMime)) {
-      const msg = 'Format non supporté. Importez une image (JPG, JPEG, PNG, WebP) ou un document PDF.';
+      const msg = `${slotDef.title.replace(' *', '')} : format non supporté. Formats acceptés : JPG, JPEG, PNG, WebP ou PDF.`;
+      setSlots((prev) => ({
+        ...prev,
+        [slotDef.slotKey]: {
+          ...prev[slotDef.slotKey],
+          uploadStatus: 'error',
+          error: msg,
+        },
+      }));
       setSubmitError(msg);
       showToast(msg, 'error');
       e.target.value = '';
@@ -276,28 +473,66 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     }
 
     const maxBytes = 10 * 1024 * 1024;
-    if (file.size >= maxBytes) {
-      const msg = 'Le fichier dépasse la taille maximale autorisée de 10 Mo.';
+    if (file.size <= 0 || file.size >= maxBytes) {
+      const msg =
+        file.size <= 0
+          ? `${slotDef.title.replace(' *', '')} : le fichier sélectionné est vide.`
+          : `${slotDef.title.replace(' *', '')} : le fichier dépasse la taille maximale autorisée de 10 Mo.`;
+      setSlots((prev) => ({
+        ...prev,
+        [slotDef.slotKey]: {
+          ...prev[slotDef.slotKey],
+          uploadStatus: 'error',
+          error: msg,
+        },
+      }));
       setSubmitError(msg);
       showToast(msg, 'error');
       e.target.value = '';
       return;
     }
 
-    if (pendingUploadedAsset) {
-      void cleanupOrphanKYCDocument(pendingUploadedAsset.storagePath);
-      setPendingUploadedAsset(null);
+    const previousSlot = slots[slotDef.slotKey];
+    if (previousSlot.uploadedAsset?.storagePath) {
+      const prevPath = previousSlot.uploadedAsset.storagePath;
+      if (sessionUploadedPathsRef.current.has(prevPath)) {
+        // Fichier temporaire uploadé dans cette session -> nettoyage immédiat
+        sessionUploadedPathsRef.current.delete(prevPath);
+        void cleanupOrphanKYCDocument(prevPath);
+      } else {
+        // Ancien fichier d'un dossier refusé -> nettoyage différé APRÈS succès du commit Firestore
+        replacedSavedPathsRef.current.add(prevPath);
+      }
     }
 
-    revokeObjectPreview();
+    revokeSlotObjectUrl(slotDef.slotKey);
     const localObjectUrl = URL.createObjectURL(file);
-    objectUrlRef.current = localObjectUrl;
-    setSelectedFile(file);
-    setPhotoPreview(localObjectUrl);
-    setPreviewMimeType(resolvedMime);
-    setPreviewFileName(file.name);
+    slotObjectUrlsRef.current[slotDef.slotKey] = localObjectUrl;
+
+    setSlots((prev) => ({
+      ...prev,
+      [slotDef.slotKey]: {
+        file,
+        previewUrl: localObjectUrl,
+        originalFileName: file.name,
+        mimeType: resolvedMime,
+        size: file.size,
+        uploadedAsset: null,
+        isLoadingExisting: false,
+        uploadStatus: 'ready',
+        progress: 0,
+        error: null,
+      },
+    }));
     setSubmitError(null);
-    showToast('Document d\'identité sélectionné !', 'success');
+    e.target.value = '';
+  };
+
+  const countCompletedSlots = (): number => {
+    return KYC_DOCUMENT_SLOTS.filter((def) => {
+      const s = slots[def.slotKey];
+      return Boolean(s.file || s.uploadedAsset?.storagePath);
+    }).length;
   };
 
   const performSubmit = async () => {
@@ -321,7 +556,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     }
 
     if (currentStatus === 'en_attente') {
-      const msg = 'Votre dossier est déjà en cours d\'examen par l\'administrateur.';
+      const msg = "Votre dossier est déjà en cours d'examen par l'administrateur.";
       setSubmitError(msg);
       showToast(msg, 'info');
       return;
@@ -349,14 +584,14 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     }
 
     if (!operatingZone.trim()) {
-      const msg = 'Veuillez préciser votre zone d\'activité.';
+      const msg = "Veuillez préciser votre zone d'activité.";
       setSubmitError(msg);
       showToast(msg, 'error');
       return;
     }
 
     if (!idNumber.trim()) {
-      const msg = 'Veuillez renseigner le numéro de votre pièce d\'identité.';
+      const msg = "Veuillez renseigner le numéro de votre pièce d'identité.";
       setSubmitError(msg);
       showToast(msg, 'error');
       return;
@@ -368,15 +603,31 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
         : vehicleSelect;
 
     if (!finalVehicleType.trim()) {
-      const msg = 'Veuillez préciser votre type d\'engin ou véhicule.';
+      const msg = "Veuillez préciser votre type d'engin ou véhicule.";
       setSubmitError(msg);
       showToast(msg, 'error');
       return;
     }
 
-    const hasExistingDoc = Boolean(existingKyc?.documentStoragePath || existingKyc?.documentPhotoUrl);
-    if (!selectedFile && !pendingUploadedAsset && !hasExistingDoc) {
-      const msg = 'La photo ou le PDF de votre pièce d\'identité est obligatoire.';
+    const missingSlots = KYC_DOCUMENT_SLOTS.filter((def) => {
+      const s = slots[def.slotKey];
+      return !s.file && !s.uploadedAsset?.storagePath;
+    });
+
+    if (missingSlots.length > 0) {
+      const missingNames = missingSlots.map((m) => m.title.replace(/^\d+\.\s*/, '').replace(' *', '')).join(', ');
+      const msg = `Tous les justificatifs obligatoires doivent être fournis avant la soumission. Manquant(s) : ${missingNames}.`;
+      setSlots((prev) => {
+        const updated = { ...prev };
+        missingSlots.forEach((m) => {
+          updated[m.slotKey] = {
+            ...updated[m.slotKey],
+            uploadStatus: 'error',
+            error: 'Document obligatoire requis.',
+          };
+        });
+        return updated;
+      });
       setSubmitError(msg);
       showToast(msg, 'error');
       return;
@@ -389,9 +640,39 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       return;
     }
 
+    const pendingFiles: Partial<Record<KycDocumentSlotKey, File>> = {};
+    const reuseUploadedAssetsBySlot: Partial<Record<KycDocumentSlotKey, UploadedKYCDocumentResult>> = {};
+    let hasPendingUpload = false;
+
+    for (const def of KYC_DOCUMENT_SLOTS) {
+      const slot = slots[def.slotKey];
+      if (slot.file) {
+        pendingFiles[def.slotKey] = slot.file;
+        hasPendingUpload = true;
+      } else if (slot.uploadedAsset) {
+        reuseUploadedAssetsBySlot[def.slotKey] = slot.uploadedAsset;
+      }
+    }
+
     isSubmittingRef.current = true;
     setIsSubmitting(true);
-    setUploadProgress(selectedFile && !pendingUploadedAsset ? 5 : null);
+    setUploadProgress(hasPendingUpload ? 5 : null);
+
+    setSlots((prev) => {
+      const updated = { ...prev };
+      KYC_DOCUMENT_SLOTS.forEach((def) => {
+        const current = updated[def.slotKey];
+        if (current.file) {
+          updated[def.slotKey] = {
+            ...current,
+            uploadStatus: 'uploading',
+            progress: 5,
+            error: null,
+          };
+        }
+      });
+      return updated;
+    });
 
     const fullFormattedName = `${lastName.trim()} ${firstName.trim()}`.trim();
 
@@ -409,14 +690,12 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       idNumber: idNumber.trim(),
       ifuNumber: ifuNumber.trim() || undefined,
       operatingZone: operatingZone.trim(),
-      documentFile: selectedFile || undefined,
-      documentStoragePath: pendingUploadedAsset?.storagePath || existingKyc?.documentStoragePath,
-      documentMimeType: pendingUploadedAsset?.contentType || previewMimeType || existingKyc?.documentMimeType,
-      documentFileName: pendingUploadedAsset?.fileName || previewFileName || existingKyc?.documentFileName,
+      pendingFiles,
       documents: {
-        cni: true,
-        permis: true,
-        assurance: hasInsurance,
+        idFront: existingKyc?.documents?.idFront,
+        idBack: existingKyc?.documents?.idBack,
+        drivingLicense: existingKyc?.documents?.drivingLicense,
+        vehicleInsurance: existingKyc?.documents?.vehicleInsurance,
       },
       status: 'en_attente',
     };
@@ -427,20 +706,71 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     try {
       await submitKYCRequest(newKycData, {
         onProgress: (pct) => setUploadProgress(pct),
-        reuseUploadedAsset: pendingUploadedAsset,
+        onSlotProgress: (slotKey, pct) => {
+          setSlots((prev) => ({
+            ...prev,
+            [slotKey]: {
+              ...prev[slotKey],
+              uploadStatus: pct >= 100 ? 'uploaded' : 'uploading',
+              progress: pct,
+              error: null,
+            },
+          }));
+        },
+        onSlotUploaded: (slotKey, asset) => {
+          sessionUploadedPathsRef.current.add(asset.storagePath);
+          setSlots((prev) => ({
+            ...prev,
+            [slotKey]: {
+              ...prev[slotKey],
+              file: null,
+              uploadedAsset: asset,
+              uploadStatus: 'uploaded',
+              progress: 100,
+              error: null,
+            },
+          }));
+        },
+        reuseUploadedAssetsBySlot,
+        replacedStoragePaths: Array.from(replacedSavedPathsRef.current),
         signal: abortController.signal,
       });
-      setPendingUploadedAsset(null);
+
+      sessionUploadedPathsRef.current.clear();
+      replacedSavedPathsRef.current.clear();
       setSubmitError(null);
       onClose();
     } catch (err: any) {
-      if (err?.uploadedAsset) {
-        setPendingUploadedAsset(err.uploadedAsset);
+      const uploadedBySlot = err?.uploadedAssetsBySlot as
+        | Partial<Record<KycDocumentSlotKey, UploadedKYCDocumentResult>>
+        | undefined;
+      if (uploadedBySlot) {
+        setSlots((prev) => {
+          const updated = { ...prev };
+          (Object.keys(uploadedBySlot) as KycDocumentSlotKey[]).forEach((k) => {
+            const asset = uploadedBySlot[k];
+            if (asset) {
+              sessionUploadedPathsRef.current.add(asset.storagePath);
+              updated[k] = {
+                ...updated[k],
+                file: null,
+                uploadedAsset: asset,
+                uploadStatus: 'uploaded',
+                progress: 100,
+                error: null,
+              };
+            }
+          });
+          return updated;
+        });
       }
-      const stepPrefix = err?.stepCode && !String(err?.message || '').includes(err.stepCode)
-        ? `[${err.stepCode}] `
-        : '';
-      const errMsg = `${stepPrefix}${err?.message || '[KYC-STEP-D] Erreur lors de la soumission du dossier KYC. Veuillez réessayer.'}`;
+      const stepPrefix =
+        err?.stepCode && !String(err?.message || '').includes(err.stepCode)
+          ? `[${err.stepCode}] `
+          : '';
+      const errMsg = `${stepPrefix}${
+        err?.message || '[KYC-STEP-D] Erreur lors de la soumission du dossier KYC. Veuillez réessayer.'
+      }`;
       setSubmitError(errMsg);
       showToast(errMsg, 'error');
     } finally {
@@ -456,19 +786,21 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     await performSubmit();
   };
 
+  const completedCount = countCompletedSlots();
+
   return (
     <div
       className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
       onClick={handleCloseModal}
     >
       <div
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-2xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 my-auto"
+        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 my-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
-        <div className="p-4 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-4 bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-transparent shrink-0">
+        <div className="p-4 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-4 bg-gradient-to-r from-blue-500/10 via-slate-500/5 to-transparent shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-600 text-white flex items-center justify-center shadow-md shadow-emerald-500/20 shrink-0">
+            <div className="w-11 h-11 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-600/20 shrink-0">
               <span className="material-symbols-outlined text-2xl">verified_user</span>
             </div>
             <div>
@@ -493,7 +825,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                 )}
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Saisie obligatoire de vos informations personnelles et justificatifs pour validation par l'administrateur.
+                Saisie obligatoire de vos informations et dépôt des 4 justificatifs distincts pour validation.
               </p>
             </div>
           </div>
@@ -515,9 +847,9 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
               <div className="flex items-start gap-2.5">
                 <span className="material-symbols-outlined text-amber-600 text-xl shrink-0">mark_email_unread</span>
                 <div>
-                  <p className="font-bold">Vérification d'adresse e-mail requise</p>
+                  <p className="font-bold">Vérification d&apos;adresse e-mail requise</p>
                   <p className="text-[11px] text-amber-900 dark:text-amber-300 mt-0.5">
-                    Confirmez votre adresse e-mail avant d'envoyer vos pièces justificatives.
+                    Confirmez votre adresse e-mail avant d&apos;envoyer vos pièces justificatives.
                   </p>
                 </div>
               </div>
@@ -546,7 +878,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             <div className="flex items-center gap-3 p-3 rounded-2xl bg-emerald-100/80 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 text-xs">
               <span className="material-symbols-outlined text-emerald-600 text-2xl shrink-0">check_circle</span>
               <div>
-                <p className="font-bold">Votre dossier KYC a été validé et accrédité par l'administrateur !</p>
+                <p className="font-bold">Votre dossier KYC a été validé et accrédité par l&apos;administrateur !</p>
                 <p className="text-[11px] text-emerald-800 dark:text-emerald-300 mt-0.5">
                   Vous êtes pleinement autorisé à passer en ligne et effectuer vos livraisons.
                 </p>
@@ -556,9 +888,9 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             <div className="flex items-center gap-3 p-3 rounded-2xl bg-amber-100/80 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200 text-xs">
               <span className="material-symbols-outlined text-amber-600 text-2xl shrink-0 animate-spin">sync</span>
               <div className="flex-1">
-                <p className="font-bold">Dossier KYC en cours d'examen par l'administrateur</p>
+                <p className="font-bold">Dossier KYC en cours d&apos;examen par l&apos;administrateur</p>
                 <p className="text-[11px] text-amber-900 dark:text-amber-300 mt-0.5">
-                  Votre dossier est verrouillé pendant la vérification. Vous serez notifié dès la décision de l'administrateur.
+                  Votre dossier est verrouillé pendant la vérification. Vous serez notifié dès la décision de l&apos;administrateur.
                 </p>
               </div>
             </div>
@@ -566,9 +898,9 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             <div className="flex items-center gap-3 p-3 rounded-2xl bg-red-100/80 dark:bg-red-950/60 border border-red-300 dark:border-red-800 text-red-950 dark:text-red-200 text-xs">
               <span className="material-symbols-outlined text-red-600 text-2xl shrink-0">error</span>
               <div>
-                <p className="font-bold">Votre dossier KYC a été refusé par l'administrateur</p>
+                <p className="font-bold">Votre dossier KYC a été refusé par l&apos;administrateur</p>
                 <p className="text-[11px] text-red-900 dark:text-red-300 mt-0.5">
-                  Motif : {existingKyc?.rejectionReason || 'Documents illisibles ou informations non conformes. Veuillez re-soumettre des photos nettes.'}
+                  Motif : {existingKyc?.rejectionReason || 'Documents illisibles ou informations non conformes. Veuillez remplacer les pièces concernées puis re-soumettre.'}
                 </p>
               </div>
             </div>
@@ -576,9 +908,9 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             <div className="flex items-center gap-3 p-3 rounded-2xl bg-blue-100/70 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200 text-xs">
               <span className="material-symbols-outlined text-blue-600 text-2xl shrink-0">shield</span>
               <div>
-                <p className="font-bold">Formulaire vierge de vérification d'identité</p>
+                <p className="font-bold">Dossier d&apos;identification complet requis ({completedCount}/4 justificatifs prêts)</p>
                 <p className="text-[11px] text-blue-800 dark:text-blue-300 mt-0.5">
-                  Saisissez personnellement vos informations et vos pièces d'identité (CIP, CNI biométrique ou passeport).
+                  Téléversez chacun des 4 documents séparément (JPG, PNG, WebP ou PDF, &lt; 10 Mo par fichier).
                 </p>
               </div>
             </div>
@@ -591,35 +923,36 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div>
               <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                Nom de famille (tel qu'indiqué sur la pièce) *
+                Nom de famille (tel qu&apos;indiqué sur la pièce) *
               </label>
               <input
                 type="text"
                 required
+                disabled={isSubmissionLocked || isSubmitting}
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 placeholder="ex: GBÉDÉ"
-                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-semibold outline-none focus:ring-2 focus:ring-emerald-500 uppercase"
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-semibold outline-none focus:ring-2 focus:ring-blue-500 uppercase disabled:opacity-60"
               />
             </div>
 
             <div>
               <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                Prénom(s) (tels qu'indiqués sur la pièce) *
+                Prénom(s) (tels qu&apos;indiqués sur la pièce) *
               </label>
               <input
                 type="text"
                 required
+                disabled={isSubmissionLocked || isSubmitting}
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
                 placeholder="ex: Pamphile Kodjo"
-                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-semibold outline-none focus:ring-2 focus:ring-emerald-500 capitalize"
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-semibold outline-none focus:ring-2 focus:ring-blue-500 capitalize disabled:opacity-60"
               />
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-            {/* Phone */}
             <div>
               <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
                 Numéro de téléphone (MoMo / WhatsApp) *
@@ -627,89 +960,89 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
               <input
                 type="tel"
                 required
+                disabled={isSubmissionLocked || isSubmitting}
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="ex: +229 97 00 00 00"
-                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
               />
             </div>
 
-            {/* Operating Zone */}
             <div>
               <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                Zone d'activité principale *
+                Zone d&apos;activité principale *
               </label>
               <input
                 type="text"
                 required
+                disabled={isSubmissionLocked || isSubmitting}
                 value={operatingZone}
                 onChange={(e) => setOperatingZone(e.target.value)}
                 placeholder="ex: Cotonou, Abomey-Calavi, Porto-Novo"
-                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
               />
             </div>
           </div>
 
-          {/* POINT 4: CHAMPS NPI ET NUMÉRO DE PIÈCE DEUX CHAMPS DISTINCTS */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-            {/* Field 1: Numéro Personnel d'Identification (NPI) */}
             <div>
               <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                Numéro Personnel d'Identification (NPI)
+                Numéro Personnel d&apos;Identification (NPI)
               </label>
               <input
                 type="text"
+                disabled={isSubmissionLocked || isSubmitting}
                 value={npi}
                 onChange={(e) => setNpi(e.target.value)}
                 placeholder="Saisissez votre NPI (10 chiffres)"
-                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
               />
             </div>
 
-            {/* Field 2: Numéro de pièce d'identité */}
             <div>
               <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                Numéro de pièce d'identité *
+                Numéro de pièce d&apos;identité *
               </label>
               <input
                 type="text"
                 required
+                disabled={isSubmissionLocked || isSubmitting}
                 value={idNumber}
                 onChange={(e) => setIdNumber(e.target.value)}
                 placeholder="Saisissez le numéro figurant sur la pièce"
-                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
               />
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-            {/* ID Type */}
             <div>
               <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                Type de pièce d'identité *
+                Type de pièce d&apos;identité *
               </label>
               <select
+                disabled={isSubmissionLocked || isSubmitting}
                 value={idType}
                 onChange={(e) => setIdType(e.target.value as any)}
-                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-medium outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-medium outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
               >
-                <option value="CIP">CIP (Certificat d'Identification Personnelle)</option>
+                <option value="CIP">CIP (Certificat d&apos;Identification Personnelle)</option>
                 <option value="CNI">CNI Biométrique Béninoise</option>
                 <option value="PASSPORT">Passeport CEDEAO / Bénin</option>
               </select>
             </div>
 
-            {/* IFU Number */}
             <div>
               <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
                 Numéro IFU (optionnel)
               </label>
               <input
                 type="text"
+                disabled={isSubmissionLocked || isSubmitting}
                 value={ifuNumber}
                 onChange={(e) => setIfuNumber(e.target.value)}
                 placeholder="Saisissez vos 13 chiffres IFU"
-                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
               />
             </div>
           </div>
@@ -719,12 +1052,13 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div>
                 <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                  Type d'engin / Véhicule au Bénin *
+                  Type d&apos;engin / Véhicule au Bénin *
                 </label>
                 <select
+                  disabled={isSubmissionLocked || isSubmitting}
                   value={vehicleSelect}
                   onChange={(e) => setVehicleSelect(e.target.value)}
-                  className="w-full p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-medium outline-none focus:ring-2 focus:ring-emerald-500"
+                  className="w-full p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-medium outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
                 >
                   {BENIN_VEHICLE_OPTIONS.map((v) => (
                     <option key={v} value={v}>
@@ -734,23 +1068,22 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                 </select>
               </div>
 
-              {/* Vehicle Plate */}
               <div>
                 <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
-                  Plaque d'immatriculation *
+                  Plaque d&apos;immatriculation *
                 </label>
                 <input
                   type="text"
                   required
+                  disabled={isSubmissionLocked || isSubmitting}
                   value={vehiclePlate}
                   onChange={(e) => setVehiclePlate(e.target.value)}
                   placeholder="ex: BJ-8492-RB"
-                  className="w-full p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-emerald-500 uppercase"
+                  className="w-full p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-blue-500 uppercase disabled:opacity-60"
                 />
               </div>
             </div>
 
-            {/* Custom vehicle input field if "Autre engin (préciser)" is selected */}
             {vehicleSelect === 'Autre engin (préciser)' && (
               <div className="animate-in fade-in duration-200 pt-1">
                 <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
@@ -759,90 +1092,188 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                 <input
                   type="text"
                   required
+                  disabled={isSubmissionLocked || isSubmitting}
                   value={customVehicle}
                   onChange={(e) => setCustomVehicle(e.target.value)}
                   placeholder="ex: Moto Tricycle Spéciale, Scooter Honda Dio 110cc, etc."
-                  className="w-full p-2.5 bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700 rounded-xl text-slate-900 dark:text-white font-medium outline-none focus:ring-2 focus:ring-emerald-500"
+                  className="w-full p-2.5 bg-white dark:bg-slate-900 border border-blue-300 dark:border-blue-700 rounded-xl text-slate-900 dark:text-white font-medium outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
                 />
               </div>
             )}
+
+            {vehicleSelect === 'Vélo / Deux-roues non motorisé' && (
+              <p className="text-[11px] text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl px-3 py-2">
+                Note : conformément aux règles actuelles d&apos;accréditation, les 4 justificatifs (incluant permis et attestation d&apos;assurance) restent exigés pour valider le dossier.
+              </p>
+            )}
           </div>
 
-          {/* Photo Upload / Preview (POINT 5: "Spécimen de test" supprimé) */}
-          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-emerald-600 text-sm">badge</span>
-                <span>Photo de la pièce d'identité (Recto / Verso) *</span>
-              </span>
-              <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 dark:bg-emerald-950 px-2 py-0.5 rounded-full">
-                Document Requis
+          {/* 4 SEPARATE KYC DOCUMENT UPLOAD SLOTS */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-blue-600 text-base">folder_shared</span>
+                <span className="font-extrabold text-slate-900 dark:text-white text-xs sm:text-sm">
+                  Pièces justificatives obligatoires (4 fichiers distincts)
+                </span>
+              </div>
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                  completedCount === 4
+                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                    : 'bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
+                }`}
+              >
+                {completedCount}/4 documents sélectionnés
               </span>
             </div>
 
-            <div className="flex flex-col sm:flex-row items-center gap-4">
-              {isLoadingExistingDoc ? (
-                <div className="w-full sm:w-48 h-32 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center text-slate-400 shrink-0">
-                  <span className="material-symbols-outlined text-2xl animate-spin">sync</span>
-                  <span className="text-[10px] mt-1">Chargement sécurisé...</span>
-                </div>
-              ) : photoPreview ? (
-                previewMimeType === 'application/pdf' || photoPreview.startsWith('data:application/pdf') ? (
-                  <div className="relative w-full sm:w-48 h-32 rounded-xl overflow-hidden border-2 border-emerald-500 shadow-xs shrink-0 bg-emerald-50 dark:bg-emerald-950/40 flex flex-col items-center justify-center p-3 text-center gap-1">
-                    <span className="material-symbols-outlined text-3xl text-emerald-600">picture_as_pdf</span>
-                    <span className="text-[11px] font-bold text-emerald-900 dark:text-emerald-200 truncate max-w-full px-1">
-                      {previewFileName || 'Document PDF chargé'}
-                    </span>
-                    <a
-                      href={photoPreview}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 underline"
-                    >
-                      Aperçu PDF
-                    </a>
-                    <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/70 text-white text-[9px] font-bold">
-                      ✓ Chargé
-                    </span>
-                  </div>
-                ) : (
-                  <div className="relative w-full sm:w-48 h-32 rounded-xl overflow-hidden border-2 border-emerald-500 shadow-xs shrink-0 bg-slate-100">
-                    <img
-                      src={photoPreview}
-                      alt="Aperçu pièce d'identité"
-                      className="w-full h-full object-cover"
-                    />
-                    <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/70 text-white text-[9px] font-bold">
-                      ✓ Chargée
-                    </span>
-                  </div>
-                )
-              ) : (
-                <div className="w-full sm:w-48 h-32 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center text-slate-400 shrink-0">
-                  <span className="material-symbols-outlined text-2xl">add_photo_alternate</span>
-                  <span className="text-[10px] mt-1">Photo ou PDF requis</span>
-                </div>
-              )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {KYC_DOCUMENT_SLOTS.map((slotDef) => {
+                const slot = slots[slotDef.slotKey];
+                const hasDoc = Boolean(slot.file || slot.uploadedAsset?.storagePath);
+                const isPdf = normalizeMimeType(slot.mimeType, slot.originalFileName) === 'application/pdf';
+                const formatBadge = hasDoc ? formatMimeBadge(slot.mimeType, slot.originalFileName) : null;
 
-              <div className="space-y-2 flex-1 w-full">
-                <p className="text-slate-500 dark:text-slate-400 text-[11px] leading-relaxed">
-                  Importez une photo nette et lisible de votre pièce d'identité (JPG, JPEG, PNG, WebP) ou un document PDF (max 10 Mo). Les 4 coins doivent être visibles.
-                </p>
+                return (
+                  <div
+                    key={slotDef.slotKey}
+                    className={`p-3.5 rounded-2xl border transition-all flex flex-col justify-between gap-2.5 ${
+                      slot.uploadStatus === 'error'
+                        ? 'bg-red-50/50 dark:bg-red-950/20 border-red-300 dark:border-red-800'
+                        : slot.uploadStatus === 'uploaded'
+                        ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800'
+                        : hasDoc
+                        ? 'bg-blue-50/40 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800'
+                        : 'bg-slate-50 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5 text-xs">
+                          <span className="material-symbols-outlined text-blue-600 text-sm shrink-0">
+                            {slotDef.icon}
+                          </span>
+                          <span>{slotDef.title}</span>
+                        </span>
 
-                <div className="flex items-center gap-2 flex-wrap">
-                  <label className={`px-3 py-1.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 hover:bg-slate-100 rounded-xl text-slate-700 dark:text-slate-200 font-bold text-xs shadow-2xs transition-colors inline-flex items-center gap-1.5 ${isSubmissionLocked || isSubmitting ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}>
-                    <span className="material-symbols-outlined text-sm">upload_file</span>
-                    <span>Prendre / Télécharger le document</span>
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf"
-                      disabled={isSubmissionLocked || isSubmitting}
-                      onChange={handleDocumentPhotoUpload}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-              </div>
+                        {slot.uploadStatus === 'uploading' ? (
+                          <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold shrink-0">
+                            {slot.progress}%
+                          </span>
+                        ) : slot.uploadStatus === 'uploaded' ? (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold shrink-0">
+                            ✓ Téléversé
+                          </span>
+                        ) : slot.file ? (
+                          <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold shrink-0">
+                            Prêt
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300 text-[10px] font-bold shrink-0">
+                            Requis
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+                        {slotDef.description}
+                      </p>
+                    </div>
+
+                    {/* Preview Area */}
+                    {slot.isLoadingExisting ? (
+                      <div className="h-24 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center text-slate-400 bg-white/60 dark:bg-slate-900/40">
+                        <span className="material-symbols-outlined text-xl animate-spin">sync</span>
+                        <span className="text-[10px] mt-1">Chargement sécurisé...</span>
+                      </div>
+                    ) : hasDoc ? (
+                      <div className="flex items-center gap-2.5 p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+                        {isPdf ? (
+                          <div className="w-16 h-16 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 flex flex-col items-center justify-center shrink-0 text-red-700 dark:text-red-300">
+                            <span className="material-symbols-outlined text-2xl">picture_as_pdf</span>
+                            {slot.previewUrl && (
+                              <a
+                                href={slot.previewUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[9px] font-bold underline"
+                              >
+                                Ouvrir
+                              </a>
+                            )}
+                          </div>
+                        ) : slot.previewUrl ? (
+                          <img
+                            src={slot.previewUrl}
+                            alt={slotDef.title}
+                            className="w-16 h-16 rounded-lg object-cover border border-slate-200 dark:border-slate-700 shrink-0 bg-slate-100"
+                          />
+                        ) : (
+                          <div className="w-16 h-16 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0 text-slate-500">
+                            <span className="material-symbols-outlined text-2xl">description</span>
+                          </div>
+                        )}
+
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <p className="font-bold text-slate-800 dark:text-slate-100 text-[11px] truncate" title={slot.originalFileName}>
+                            {slot.originalFileName || 'Document enregistré'}
+                          </p>
+                          <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-slate-500 dark:text-slate-400">
+                            {formatBadge && (
+                              <span className="px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 font-mono font-bold text-slate-700 dark:text-slate-300">
+                                {formatBadge}
+                              </span>
+                            )}
+                            {slot.size ? <span>{formatFileSizeFr(slot.size)}</span> : null}
+                          </div>
+                          {slot.uploadStatus === 'uploading' && (
+                            <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                              <div
+                                className="h-full bg-blue-600 transition-all duration-200"
+                                style={{ width: `${Math.max(10, slot.progress)}%` }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="h-20 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center text-slate-400 bg-white/50 dark:bg-slate-900/30">
+                        <span className="material-symbols-outlined text-xl">add_photo_alternate</span>
+                        <span className="text-[10px] mt-0.5">JPG, PNG, WebP ou PDF (&lt; 10 Mo)</span>
+                      </div>
+                    )}
+
+                    {slot.error && (
+                      <p className="text-[10px] font-bold text-red-700 dark:text-red-300 leading-tight">
+                        {slot.error}
+                      </p>
+                    )}
+
+                    {/* Action Picker / Replace Button */}
+                    <div className="flex items-center justify-between gap-2 pt-0.5">
+                      <label
+                        className={`w-full justify-center px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl text-slate-800 dark:text-slate-200 font-bold text-[11px] shadow-2xs transition-colors inline-flex items-center gap-1.5 ${
+                          isSubmissionLocked || isSubmitting
+                            ? 'opacity-50 pointer-events-none'
+                            : 'cursor-pointer'
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-sm">
+                          {hasDoc ? 'swap_horiz' : 'upload_file'}
+                        </span>
+                        <span>{hasDoc ? 'Remplacer le fichier' : 'Sélectionner un fichier'}</span>
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf"
+                          disabled={isSubmissionLocked || isSubmitting}
+                          onChange={(e) => handleSlotFileChange(slotDef, e)}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -852,12 +1283,12 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
               <input
                 type="checkbox"
                 checked={hasInsurance}
-                disabled={isSubmissionLocked}
+                disabled={isSubmissionLocked || isSubmitting}
                 onChange={(e) => setHasInsurance(e.target.checked)}
-                className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500"
+                className="mt-0.5 rounded text-blue-600 focus:ring-blue-500"
               />
               <span className="text-slate-600 dark:text-slate-400 text-[11px]">
-                Mon engin / véhicule dispose d'une assurance circulation valide au Bénin.
+                Mon engin / véhicule dispose d&apos;une assurance circulation valide au Bénin (attestation jointe ci-dessus).
               </span>
             </label>
 
@@ -865,25 +1296,25 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
               <input
                 type="checkbox"
                 checked={hasAgreedTerms}
-                disabled={isSubmissionLocked}
+                disabled={isSubmissionLocked || isSubmitting}
                 onChange={(e) => setHasAgreedTerms(e.target.checked)}
-                className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500"
+                className="mt-0.5 rounded text-blue-600 focus:ring-blue-500"
               />
               <span className="text-slate-600 dark:text-slate-400 text-[11px]">
-                Je certifie sur l'honneur l'exactitude des pièces fournies et accepte le contrôle d'accréditation LivraLink.
+                Je certifie sur l&apos;honneur l&apos;exactitude des informations et des 4 pièces fournies et accepte le contrôle d&apos;accréditation LivraLink.
               </span>
             </label>
           </div>
 
-          {/* Inline Upload Progress & Error Alert */}
+          {/* Inline Global Upload Progress & Error Alert */}
           {isSubmitting && (
-            <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 space-y-2">
-              <div className="flex items-center justify-between gap-2 text-[11px] font-bold text-emerald-900 dark:text-emerald-200">
+            <div className="p-3 rounded-2xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 space-y-2">
+              <div className="flex items-center justify-between gap-2 text-[11px] font-bold text-blue-900 dark:text-blue-200">
                 <span className="flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-sm animate-spin">sync</span>
                   <span>
                     {uploadProgress !== null && uploadProgress < 100
-                      ? `Téléversement sécurisé du justificatif (${uploadProgress}%)...`
+                      ? `Téléversement sécurisé des justificatifs (${uploadProgress}%)...`
                       : 'Enregistrement du dossier KYC dans Firestore...'}
                   </span>
                 </span>
@@ -892,15 +1323,15 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                   <button
                     type="button"
                     onClick={handleCancelOngoingUpload}
-                    className="px-2 py-0.5 rounded-lg bg-emerald-100 hover:bg-red-100 text-emerald-900 hover:text-red-700 text-[10px] font-bold cursor-pointer transition-colors"
+                    className="px-2 py-0.5 rounded-lg bg-blue-100 hover:bg-red-100 text-blue-900 hover:text-red-700 text-[10px] font-bold cursor-pointer transition-colors"
                   >
                     Annuler
                   </button>
                 </div>
               </div>
-              <div className="w-full h-2 rounded-full bg-emerald-200/70 dark:bg-emerald-900 overflow-hidden">
+              <div className="w-full h-2 rounded-full bg-blue-200/70 dark:bg-blue-900 overflow-hidden">
                 <div
-                  className="h-full bg-emerald-600 transition-all duration-200"
+                  className="h-full bg-blue-600 transition-all duration-200"
                   style={{ width: `${uploadProgress !== null ? Math.max(8, uploadProgress) : 100}%` }}
                 />
               </div>
@@ -932,7 +1363,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             </div>
           )}
 
-          {/* Modal Actions (POINT 2: Seul l'administrateur peut valider) */}
+          {/* Modal Actions */}
           <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2">
             <button
               type="button"
@@ -945,7 +1376,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
               <button
                 type="submit"
                 disabled={isSubmitting || !emailVerified}
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-bold shadow-md shadow-emerald-600/20 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-bold shadow-md shadow-blue-600/20 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
               >
                 <span className="material-symbols-outlined text-sm">{isSubmitting ? 'sync' : 'send'}</span>
                 <span>
@@ -954,7 +1385,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                       ? `Téléversement (${uploadProgress}%)...`
                       : 'Enregistrement...'
                     : submitError
-                    ? 'Réessayer l\'envoi'
+                    ? "Réessayer l'envoi"
                     : currentStatus === 'refuse'
                     ? 'Re-soumettre mon dossier KYC'
                     : 'Soumettre mon dossier KYC'}

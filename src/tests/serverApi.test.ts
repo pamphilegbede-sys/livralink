@@ -836,7 +836,7 @@ test('Express API security & health integration tests', async (t) => {
     assert.equal(kycPlan.patch.documentPhotoUrl, '');
   });
 
-  await t.test('POST /api/courier/kyc/upload enforces email_verified, KYC-STEP-C lock, magic bytes, and surfaces GCS IAM/Rules diagnostics cleanly', async () => {
+  await t.test('POST /api/courier/kyc/upload enforces email_verified, livreur role, 4 docTypes, KYC-STEP-C lock, magic bytes, and surfaces GCS IAM/Rules diagnostics cleanly', async () => {
     const serverMod = await import('../../server');
     const storageFiles = new Map<string, { contentType: string; data: Buffer; metadata?: Record<string, any> }>();
     let kycStatus: 'non_soumis' | 'en_attente' | 'valide' | 'refuse' = 'non_soumis';
@@ -846,6 +846,9 @@ test('Express API security & health integration tests', async (t) => {
       if (tok === 'courier-verified-tok') {
         return { uid: 'courier_kyc_up', email: 'courier@livralink.bj', email_verified: true };
       }
+      if (tok === 'vendor-verified-tok') {
+        return { uid: 'vendor_not_courier', email: 'vendor@livralink.bj', email_verified: true };
+      }
       if (tok === 'unverified-tok') {
         return { uid: 'courier_unv', email: 'unv@livralink.bj', email_verified: false };
       }
@@ -854,8 +857,17 @@ test('Express API security & health integration tests', async (t) => {
 
     serverMod.setFirestoreAdminForTests({
       collection: (name: string) => ({
-        doc: () => ({
+        doc: (docId: string) => ({
           get: async () => {
+            if (name === 'users') {
+              if (docId === 'vendor_not_courier') {
+                return { exists: true, data: () => ({ uid: 'vendor_not_courier', role: 'vendeur' }) };
+              }
+              if (docId === 'courier_kyc_up') {
+                return { exists: true, data: () => ({ uid: 'courier_kyc_up', role: 'livreur', isKycVerified: false }) };
+              }
+              return { exists: false, data: () => undefined };
+            }
             if (name === 'kyc') {
               if (kycStatus === 'non_soumis') return { exists: false, data: () => undefined };
               return { exists: true, data: () => ({ status: kycStatus }) };
@@ -891,7 +903,7 @@ test('Express API security & health integration tests', async (t) => {
       const unauthRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ docType: 'cni', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
+        body: JSON.stringify({ docType: 'id_front', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
       });
       assert.equal(unauthRes.status, 401);
 
@@ -899,9 +911,27 @@ test('Express API security & health integration tests', async (t) => {
       const unvRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer unverified-tok' },
-        body: JSON.stringify({ docType: 'cni', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
+        body: JSON.stringify({ docType: 'id_front', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
       });
       assert.equal(unvRes.status, 403);
+
+      // 2b. Non-livreur account (vendeur) -> 403 KYC-STEP-A
+      const vendorRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer vendor-verified-tok' },
+        body: JSON.stringify({ docType: 'id_front', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
+      });
+      assert.equal(vendorRes.status, 403);
+      assert.equal((await vendorRes.json()).stepCode, 'KYC-STEP-A');
+
+      // 2c. Unsupported docType (ex: legacy 'cni' or arbitrary string) -> 400 KYC-STEP-B
+      const badDocTypeRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-verified-tok' },
+        body: JSON.stringify({ docType: 'cni', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
+      });
+      assert.equal(badDocTypeRes.status, 400);
+      assert.equal((await badDocTypeRes.json()).stepCode, 'KYC-STEP-B');
 
       // 3. Pending or validated KYC dossier -> 409 KYC-STEP-C
       for (const blockedStatus of ['en_attente', 'valide'] as const) {
@@ -909,7 +939,7 @@ test('Express API security & health integration tests', async (t) => {
         const lockedRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-verified-tok' },
-          body: JSON.stringify({ docType: 'cni', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
+          body: JSON.stringify({ docType: 'id_front', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
         });
         assert.equal(lockedRes.status, 409);
         assert.equal((await lockedRes.json()).stepCode, 'KYC-STEP-C');
@@ -920,22 +950,29 @@ test('Express API security & health integration tests', async (t) => {
       const spoofRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-verified-tok' },
-        body: JSON.stringify({ docType: 'cni', contentType: 'image/jpeg', dataBase64: spoofedHtmlBase64 }),
+        body: JSON.stringify({ docType: 'id_front', contentType: 'image/jpeg', dataBase64: spoofedHtmlBase64 }),
       });
       assert.equal(spoofRes.status, 400);
       assert.equal((await spoofRes.json()).stepCode, 'KYC-STEP-B');
 
-      // 5. Valid JPG upload succeeds and stores strict private object under kyc/{uid}/ with uploadedBy metadata
+      // 5. Valid JPG upload succeeds and stores strict private object under kyc/{uid}/{docType}/ with uploadedBy metadata
       const okRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-verified-tok' },
-        body: JSON.stringify({ docType: 'cni', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
+        body: JSON.stringify({
+          docType: 'id_front',
+          originalFileName: 'carte_recto.jpg',
+          contentType: 'image/jpeg',
+          dataBase64: validJpgBase64,
+        }),
       });
       assert.equal(okRes.status, 200);
       const okBody = await okRes.json();
       assert.equal(okBody.success, true);
-      assert.match(okBody.storagePath, /^kyc\/courier_kyc_up\/cni_\d+_[a-f0-9]+\.jpg$/);
+      assert.equal(okBody.docType, 'id_front');
+      assert.match(okBody.storagePath, /^kyc\/courier_kyc_up\/id_front\/id_front_\d+_[a-f0-9]+\.jpg$/);
       assert.equal(storageFiles.get(okBody.storagePath)?.metadata?.uploadedBy, 'courier_kyc_up');
+      assert.equal(storageFiles.get(okBody.storagePath)?.metadata?.docType, 'id_front');
       assert.equal(storageFiles.get(okBody.storagePath)?.metadata?.firebaseStorageDownloadTokens, undefined);
 
       // 6. GCS 403 / PERMISSION_DENIED returns actionable 503 STORAGE_IAM_OR_RULES_REQUIRED
@@ -943,7 +980,7 @@ test('Express API security & health integration tests', async (t) => {
       const gcsErrRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-verified-tok' },
-        body: JSON.stringify({ docType: 'cni', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
+        body: JSON.stringify({ docType: 'id_front', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
       });
       assert.equal(gcsErrRes.status, 503);
       const gcsErrBody = await gcsErrRes.json();
@@ -956,11 +993,18 @@ test('Express API security & health integration tests', async (t) => {
     }
   });
 
-  await t.test('KYC end-to-end server lifecycle: kycLocked claim, admin document access, reject, resubmit, and approve', async () => {
+  await t.test('KYC end-to-end server lifecycle: 4-slot uploads, notify-submitted, cleanup guard, admin inspection, reject, resubmit, and approve', async () => {
     const serverMod = await import('../../server');
     const storageFiles = new Map<string, { contentType: string; data: Buffer; metadata?: Record<string, any> }>();
     const collections = new Map<string, Map<string, Record<string, any>>>([
-      ['users', new Map([['courier_e2e', { uid: 'courier_e2e', email: 'e2e@livralink.bj', fullName: 'Koffi E2E', role: 'livreur', isKycVerified: false, kycStatus: 'non_soumis' }]])],
+      [
+        'users',
+        new Map([
+          ['courier_e2e', { uid: 'courier_e2e', email: 'e2e@livralink.bj', fullName: 'Koffi E2E', role: 'livreur', isKycVerified: false, kycStatus: 'non_soumis' }],
+          ['super_admin_e2e', { uid: 'super_admin_e2e', email: 'pamphile.gbede@gmail.com', fullName: 'Super Admin', role: 'admin' }],
+        ]),
+      ],
+      ['admins', new Map([['super_admin_e2e', { uid: 'super_admin_e2e', email: 'pamphile.gbede@gmail.com' }]])],
       ['kyc', new Map()],
       ['notifications', new Map()],
       ['deliveries', new Map()],
@@ -1047,6 +1091,9 @@ test('Express API security & health integration tests', async (t) => {
         exists: async () => [storageFiles.has(path)],
         getMetadata: async () => [{ contentType: storageFiles.get(path)?.contentType || 'application/pdf' }],
         download: async () => [storageFiles.get(path)?.data || Buffer.alloc(0)],
+        delete: async () => {
+          storageFiles.delete(path);
+        },
       }),
     });
 
@@ -1058,24 +1105,30 @@ test('Express API security & health integration tests', async (t) => {
       const lockedClaimRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-locked-tok' },
-        body: JSON.stringify({ docType: 'cni', contentType: 'application/pdf', dataBase64: samplePdfBase64 }),
+        body: JSON.stringify({ docType: 'id_front', contentType: 'application/pdf', dataBase64: samplePdfBase64 }),
       });
       assert.equal(lockedClaimRes.status, 409);
       assert.equal((await lockedClaimRes.json()).stepCode, 'KYC-STEP-C');
       simulateFirestorePrecheckError = false;
 
-      // 2. Courier uploads valid PDF KYC document
-      const uploadRes1 = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-e2e-tok' },
-        body: JSON.stringify({ docType: 'cni', contentType: 'application/pdf', dataBase64: samplePdfBase64 }),
-      });
-      assert.equal(uploadRes1.status, 200);
-      const up1 = await uploadRes1.json();
-      assert.equal(up1.contentType, 'application/pdf');
-      assert.match(up1.storagePath, /^kyc\/courier_e2e\/cni_\d+_[a-f0-9]+\.pdf$/);
+      // 2. Courier uploads all 4 distinct KYC documents
+      const docTypes = ['id_front', 'id_back', 'driving_license', 'vehicle_insurance'] as const;
+      const uploadedByType: Record<string, any> = {};
+      for (const dt of docTypes) {
+        const upRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-e2e-tok' },
+          body: JSON.stringify({ docType: dt, contentType: 'application/pdf', dataBase64: samplePdfBase64 }),
+        });
+        assert.equal(upRes.status, 200);
+        const upBody = await upRes.json();
+        assert.equal(upBody.contentType, 'application/pdf');
+        assert.match(upBody.storagePath, new RegExp(`^kyc/courier_e2e/${dt}/${dt}_\\d+_[a-f0-9]+\\.pdf$`));
+        uploadedByType[dt] = upBody;
+      }
 
-      // Persist KYC dossier as client batch.commit() does
+      // Persist 4-slot KYC dossier as client batch.commit() does
+      const submittedAtIso = new Date().toISOString();
       getCol('kyc').set('courier_e2e', {
         id: 'courier_e2e',
         userId: 'courier_e2e',
@@ -1083,32 +1136,118 @@ test('Express API security & health integration tests', async (t) => {
         fullName: 'Koffi E2E',
         phone: '+22997001122',
         email: 'e2e@livralink.bj',
+        idType: 'CIP',
+        vehicleType: 'Moto 125cc',
         status: 'en_attente',
-        documentStoragePath: up1.storagePath,
-        documentMimeType: up1.contentType,
+        submittedAt: submittedAtIso,
+        documentStoragePath: uploadedByType.id_front.storagePath,
+        documentMimeType: uploadedByType.id_front.contentType,
+        documents: {
+          idFront: {
+            uploaded: true,
+            storagePath: uploadedByType.id_front.storagePath,
+            docType: 'id_front',
+            fileName: uploadedByType.id_front.fileName,
+            mimeType: 'application/pdf',
+            size: uploadedByType.id_front.size,
+            uploadedAt: submittedAtIso,
+            uploadedBy: 'courier_e2e',
+          },
+          idBack: {
+            uploaded: true,
+            storagePath: uploadedByType.id_back.storagePath,
+            docType: 'id_back',
+            fileName: uploadedByType.id_back.fileName,
+            mimeType: 'application/pdf',
+            size: uploadedByType.id_back.size,
+            uploadedAt: submittedAtIso,
+            uploadedBy: 'courier_e2e',
+          },
+          drivingLicense: {
+            uploaded: true,
+            storagePath: uploadedByType.driving_license.storagePath,
+            docType: 'driving_license',
+            fileName: uploadedByType.driving_license.fileName,
+            mimeType: 'application/pdf',
+            size: uploadedByType.driving_license.size,
+            uploadedAt: submittedAtIso,
+            uploadedBy: 'courier_e2e',
+          },
+          vehicleInsurance: {
+            uploaded: true,
+            storagePath: uploadedByType.vehicle_insurance.storagePath,
+            docType: 'vehicle_insurance',
+            fileName: uploadedByType.vehicle_insurance.fileName,
+            mimeType: 'application/pdf',
+            size: uploadedByType.vehicle_insurance.size,
+            uploadedAt: submittedAtIso,
+            uploadedBy: 'courier_e2e',
+          },
+          cni: true,
+          permis: true,
+          assurance: true,
+        },
       });
 
-      // 3. Super-Admin retrieves KYC dossier in sync-overview and reads private PDF; outsider gets 403
+      // 2b. Notify admins on submission (idempotent deduplicated notifications with actionView: admin_kyc)
+      const notifyRes1 = await fetch(`${baseUrl}/api/courier/kyc/notify-submitted`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-e2e-tok' },
+      });
+      assert.equal(notifyRes1.status, 200);
+      const notifyBody1 = await notifyRes1.json();
+      assert.equal(notifyBody1.success, true);
+      assert.equal(notifyBody1.notifiedAdminCount, 1);
+
+      const notifyRes2 = await fetch(`${baseUrl}/api/courier/kyc/notify-submitted`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-e2e-tok' },
+      });
+      assert.equal(notifyRes2.status, 200);
+      assert.equal(getCol('notifications').size, 1, 'Duplicate notify-submitted must remain deduplicated');
+      const adminNotif = Array.from(getCol('notifications').values())[0];
+      assert.equal(adminNotif.recipientId, 'super_admin_e2e');
+      assert.equal(adminNotif.actionView, 'admin_kyc');
+
+      // 2c. Active 4-slot documents cannot be deleted via cleanup-orphan (409), while unreferenced orphan succeeds
+      const protectedCleanupRes = await fetch(`${baseUrl}/api/courier/kyc/cleanup-orphan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-e2e-tok' },
+        body: JSON.stringify({ storagePath: uploadedByType.vehicle_insurance.storagePath }),
+      });
+      assert.equal(protectedCleanupRes.status, 409);
+
+      const orphanPath = 'kyc/courier_e2e/id_back/id_back_orphan_999.pdf';
+      storageFiles.set(orphanPath, { contentType: 'application/pdf', data: Buffer.from('%PDF-1.4') });
+      const okCleanupRes = await fetch(`${baseUrl}/api/courier/kyc/cleanup-orphan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-e2e-tok' },
+        body: JSON.stringify({ storagePath: orphanPath }),
+      });
+      assert.equal(okCleanupRes.status, 200);
+      assert.equal(storageFiles.has(orphanPath), false);
+
+      // 3. Super-Admin retrieves KYC dossier in sync-overview and reads private PDFs; outsider gets 403
       const syncRes = await fetch(`${baseUrl}/api/admin/sync-overview`, {
         headers: { Authorization: 'Bearer admin-e2e-tok' },
       });
       assert.equal(syncRes.status, 200);
       const syncBody = await syncRes.json();
       assert.equal(syncBody.kycRequests.length, 1);
-      assert.equal(syncBody.kycRequests[0].documentStoragePath, up1.storagePath);
+      assert.equal(syncBody.kycRequests[0].documentStoragePath, uploadedByType.id_front.storagePath);
 
-      const adminDocRes = await fetch(`${baseUrl}/api/kyc/document?path=${encodeURIComponent(up1.storagePath)}`, {
+      const adminDocRes = await fetch(`${baseUrl}/api/kyc/document?path=${encodeURIComponent(uploadedByType.vehicle_insurance.storagePath)}`, {
         headers: { Authorization: 'Bearer admin-e2e-tok' },
       });
       assert.equal(adminDocRes.status, 200);
       assert.equal(adminDocRes.headers.get('content-type'), 'application/pdf');
 
-      const ownerDocRes = await fetch(`${baseUrl}/api/kyc/document?path=${encodeURIComponent(up1.storagePath)}`, {
+      const ownerDocRes = await fetch(`${baseUrl}/api/kyc/document?path=${encodeURIComponent(uploadedByType.driving_license.storagePath)}`, {
         headers: { Authorization: 'Bearer courier-e2e-tok' },
       });
       assert.equal(ownerDocRes.status, 200);
 
-      const outsiderDocRes = await fetch(`${baseUrl}/api/kyc/document?path=${encodeURIComponent(up1.storagePath)}`, {
+      const outsiderDocRes = await fetch(`${baseUrl}/api/kyc/document?path=${encodeURIComponent(uploadedByType.id_front.storagePath)}`, {
         headers: { Authorization: 'Bearer outsider-e2e-tok' },
       });
       assert.equal(outsiderDocRes.status, 403);
@@ -1128,7 +1267,7 @@ test('Express API security & health integration tests', async (t) => {
       const resubmitUploadRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-locked-tok' },
-        body: JSON.stringify({ docType: 'cni', contentType: 'application/pdf', dataBase64: samplePdfBase64 }),
+        body: JSON.stringify({ docType: 'id_front', contentType: 'application/pdf', dataBase64: samplePdfBase64 }),
       });
       assert.equal(resubmitUploadRes.status, 200);
 
@@ -1143,7 +1282,7 @@ test('Express API security & health integration tests', async (t) => {
       assert.equal(getCol('kyc').get('courier_e2e')?.isApproved, true);
       assert.equal(getCol('users').get('courier_e2e')?.kycStatus, 'valide');
       assert.equal(getCol('users').get('courier_e2e')?.isKycVerified, true);
-      assert.equal(getCol('notifications').size, 2);
+      assert.equal(getCol('notifications').size, 3);
     } finally {
       serverMod.setStorageBucketForTests(null);
       serverMod.setFirestoreAdminForTests(null);

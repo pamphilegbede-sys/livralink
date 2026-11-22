@@ -9,11 +9,16 @@ import {
 } from 'firebase/storage';
 import { storage, auth } from './config';
 
+import { KycDocumentSlotKey, KycStorageDocType } from '../types';
+
 export interface UploadedKYCDocumentResult {
   storagePath: string;
+  docType: KycStorageDocType;
   contentType: string;
   fileName: string;
+  originalFileName?: string;
   size: number;
+  uploadedAt: string;
 }
 
 export type KYCStepCode =
@@ -28,12 +33,17 @@ export interface KYCStepError extends Error {
   stepCode?: KYCStepCode;
   originalCode?: string;
   uploadedAsset?: UploadedKYCDocumentResult;
+  uploadedAssetsBySlot?: Partial<Record<KycDocumentSlotKey, UploadedKYCDocumentResult>>;
 }
 
 export function createKYCStepError(
   stepCode: KYCStepCode,
   message: string,
-  extra?: { originalCode?: string; uploadedAsset?: UploadedKYCDocumentResult }
+  extra?: {
+    originalCode?: string;
+    uploadedAsset?: UploadedKYCDocumentResult;
+    uploadedAssetsBySlot?: Partial<Record<KycDocumentSlotKey, UploadedKYCDocumentResult>>;
+  }
 ): KYCStepError {
   const prefix = `[${stepCode}] `;
   const formatted = message.startsWith(prefix) ? message : `${prefix}${message}`;
@@ -41,6 +51,7 @@ export function createKYCStepError(
   err.stepCode = stepCode;
   if (extra?.originalCode) err.originalCode = extra.originalCode;
   if (extra?.uploadedAsset) err.uploadedAsset = extra.uploadedAsset;
+  if (extra?.uploadedAssetsBySlot) err.uploadedAssetsBySlot = extra.uploadedAssetsBySlot;
   return err;
 }
 
@@ -48,6 +59,14 @@ export interface UploadProgressOptions {
   onProgress?: (percent: number) => void;
   timeoutMs?: number;
   signal?: AbortSignal;
+  originalFileName?: string;
+}
+
+export function formatFileSizeFr(bytes?: number): string {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return '—';
+  if (bytes < 1024) return `${bytes} o`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1).replace('.', ',')} Ko`;
+  return `${(bytes / (1024 * 1024)).toFixed(2).replace('.', ',')} Mo`;
 }
 
 const DEFAULT_UPLOAD_TIMEOUT_MS = 35_000;
@@ -432,12 +451,14 @@ export async function uploadPODSignature(orderId: string, signatureDataUrl: stri
 }
 
 /**
- * 3. Upload KYC Identity Document to Storage: kyc/{userId}/{docType}_{timestamp}.{ext}
- * Respecte strictement le MIME réel (JPG, PNG, WebP, PDF) et ne génère AUCUNE URL publique permanente.
+ * 3. Upload KYC Identity Document strictly via authenticated backend Admin SDK:
+ *    POST /api/courier/kyc/upload -> kyc/{userId}/{docType}/{docType}_{timestamp}_{rand}.{ext}
+ *    Enforces Auth email_verified, livreur role, Firestore status lock, magic bytes, <10MB,
+ *    and private Storage isolation without public URLs.
  */
 export async function uploadKYCDocument(
   userId: string,
-  docType: 'cni' | 'permis' | 'assurance' | 'identity_photo',
+  docType: KycStorageDocType,
   fileOrDataUrl: File | Blob | string,
   options?: UploadProgressOptions
 ): Promise<UploadedKYCDocumentResult> {
@@ -454,13 +475,23 @@ export async function uploadKYCDocument(
     throw createKYCStepError('KYC-STEP-A', 'Identifiant utilisateur incohérent pour le téléversement KYC.');
   }
 
-  try {
-    if (typeof currentUser.getIdToken === 'function') {
-      await currentUser.getIdToken(true);
-    }
-  } catch {
-    // Non-blocking: let Storage SDK or server endpoint report exact auth error if session expired
+  const allowedDocTypes: Set<KycStorageDocType> = new Set([
+    'id_front',
+    'id_back',
+    'driving_license',
+    'vehicle_insurance',
+  ]);
+  if (!allowedDocTypes.has(docType)) {
+    throw createKYCStepError('KYC-STEP-B', 'Type de document KYC non pris en charge.');
   }
+
+  if (options?.signal?.aborted) {
+    throw createKYCStepError('KYC-STEP-B', 'Téléversement annulé par l’utilisateur.', {
+      originalCode: 'storage/canceled',
+    });
+  }
+
+  options?.onProgress?.(10);
 
   const { blob, contentType } = await resolveBlobAndMimeType(fileOrDataUrl);
   if (!isAllowedKycMimeType(contentType)) {
@@ -476,100 +507,113 @@ export async function uploadKYCDocument(
     throw createKYCStepError('KYC-STEP-B', 'Le document dépasse la taille maximale autorisée de 10 Mo.');
   }
 
-  const ext = getExtensionForMimeType(contentType);
-  const timestamp = Date.now();
-  const uniqueSuffix = Math.random().toString(36).slice(2, 8);
-  const fileName = `${docType}_${timestamp}_${uniqueSuffix}.${ext}`;
-  const storagePath = `kyc/${cleanUserId}/${fileName}`;
+  const resolvedOriginalName =
+    (options?.originalFileName || (typeof fileOrDataUrl !== 'string' ? (fileOrDataUrl as File).name : '') || '')
+      .trim()
+      .slice(0, 140);
 
-  const metadata = {
-    contentType,
-    customMetadata: {
-      uploadedBy: currentUser.uid,
-      uploadedAt: new Date().toISOString(),
-    },
-  };
+  let token = '';
+  try {
+    token = await currentUser.getIdToken(true);
+  } catch (authErr: any) {
+    throw createKYCStepError(
+      'KYC-STEP-A',
+      'Session Firebase expirée. Reconnectez-vous puis réessayez.',
+      { originalCode: String(authErr?.code || 'auth/session-expired') }
+    );
+  }
+
+  options?.onProgress?.(35);
+
+  const ext = getExtensionForMimeType(contentType);
+  const expectedFallbackPath = `kyc/${cleanUserId}/${docType}/${docType}_${Date.now()}.${ext}`;
+
+  const dataBase64 = await blobToBase64(blob);
+  options?.onProgress?.(60);
+
+  if (typeof fetch !== 'function') {
+    throw createKYCStepError('KYC-STEP-B', 'Client HTTP indisponible pour le téléversement sécurisé KYC.');
+  }
+
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_UPLOAD_TIMEOUT_MS;
+  const timeoutController = new AbortController();
+  const externalSignal = options?.signal;
+  const abortFromExternal = () => timeoutController.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      throw createKYCStepError('KYC-STEP-B', 'Téléversement annulé par l’utilisateur.', {
+        originalCode: 'storage/canceled',
+      });
+    }
+    externalSignal.addEventListener('abort', abortFromExternal, { once: true });
+  }
+  const timer = setTimeout(() => timeoutController.abort(), timeoutMs);
 
   try {
-    const storageRef = ref(storage, storagePath);
-    await uploadResumableWithTimeout(storageRef, blob, metadata, options);
-    return {
-      storagePath,
-      contentType,
-      fileName,
-      size: blob.size,
-    };
-  } catch (error: any) {
-    const errCode = String(error?.code || '');
-    const errMsg = String(error?.message || '');
-    const isCancelled = errCode === 'storage/canceled' || options?.signal?.aborted;
-    const isClientStorageDenied =
-      !isCancelled &&
-      (errCode === 'storage/unauthorized' || /403|unauthorized|permission/i.test(errMsg));
+    const res = await fetch('/api/courier/kyc/upload', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        docType,
+        contentType,
+        originalFileName: resolvedOriginalName || undefined,
+        dataBase64,
+      }),
+      signal: timeoutController.signal,
+    });
 
-    if (isClientStorageDenied && typeof fetch === 'function') {
-      try {
-        options?.onProgress?.(40);
-        const token = await currentUser.getIdToken(true);
-        const dataBase64 = await blobToBase64(blob);
-        const res = await fetch('/api/courier/kyc/upload', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            docType,
-            contentType,
-            dataBase64,
-          }),
-          signal: options?.signal,
-        });
-        const payload = await res.json().catch(() => null);
-        if (res.ok && payload?.success && payload?.storagePath) {
-          options?.onProgress?.(100);
-          return {
-            storagePath: String(payload.storagePath),
-            contentType: String(payload.contentType || contentType),
-            fileName: String(payload.fileName || fileName),
-            size: Number(payload.size || blob.size),
-          };
-        }
-        if (payload?.stepCode || payload?.error) {
-          const targetStep = (payload.stepCode || 'KYC-STEP-B') as KYCStepCode;
-          throw createKYCStepError(
-            targetStep,
-            String(payload.error || formatStorageErrorMessage(error, storagePath, targetStep)),
-            { originalCode: String(payload.code || errCode) }
-          );
-        }
-        if (!res.ok) {
-          throw createKYCStepError(
-            'KYC-STEP-B',
-            `Accès direct Firebase Storage refusé (403) et échec du relais serveur (HTTP ${res.status}). Vérifiez les règles storage.rules et votre session.`,
-            { originalCode: errCode || `http_${res.status}` }
-          );
-        }
-      } catch (fallbackErr: any) {
-        if (fallbackErr?.stepCode) {
-          throw fallbackErr;
-        }
-        if (fallbackErr?.name === 'AbortError' || options?.signal?.aborted) {
-          throw createKYCStepError('KYC-STEP-B', 'Téléversement annulé par l’utilisateur.', {
-            originalCode: 'storage/canceled',
-          });
-        }
-        throw createKYCStepError(
-          'KYC-STEP-B',
-          `Accès Firebase Storage refusé (403) et relais serveur inaccessible (${fallbackErr?.message || 'erreur réseau'}).`,
-          { originalCode: errCode || 'storage/unauthorized' }
-        );
-      }
+    const payload = await res.json().catch(() => null);
+    if (res.ok && payload?.success && payload?.storagePath) {
+      options?.onProgress?.(100);
+      return {
+        storagePath: String(payload.storagePath),
+        docType: (payload.docType || docType) as KycStorageDocType,
+        contentType: String(payload.contentType || contentType),
+        fileName: String(payload.fileName || expectedFallbackPath.split('/').pop() || `${docType}.${ext}`),
+        originalFileName: payload.originalFileName
+          ? String(payload.originalFileName)
+          : resolvedOriginalName || undefined,
+        size: Number(payload.size || blob.size),
+        uploadedAt: String(payload.uploadedAt || new Date().toISOString()),
+      };
     }
 
-    throw createKYCStepError('KYC-STEP-B', formatStorageErrorMessage(error, storagePath, 'KYC-STEP-B'), {
-      originalCode: errCode,
-    });
+    const targetStep = (payload?.stepCode || (res.status === 401 ? 'KYC-STEP-A' : res.status === 409 ? 'KYC-STEP-C' : 'KYC-STEP-B')) as KYCStepCode;
+    throw createKYCStepError(
+      targetStep,
+      String(
+        payload?.error ||
+          formatStorageErrorMessage(
+            { code: res.status === 403 ? 'storage/unauthorized' : '', message: `HTTP ${res.status}` },
+            expectedFallbackPath,
+            targetStep
+          )
+      ),
+      { originalCode: String(payload?.code || `http_${res.status}`) }
+    );
+  } catch (err: any) {
+    if (err?.stepCode) {
+      throw err;
+    }
+    if (err?.name === 'AbortError' || externalSignal?.aborted) {
+      const msg = externalSignal?.aborted
+        ? 'Téléversement annulé par l’utilisateur.'
+        : `Délai de téléversement dépassé (${Math.round(timeoutMs / 1000)} s). Vérifiez votre connexion et réessayez.`;
+      throw createKYCStepError('KYC-STEP-B', msg, { originalCode: 'storage/canceled' });
+    }
+    throw createKYCStepError(
+      'KYC-STEP-B',
+      `Impossible de contacter le serveur sécurisé pour téléverser votre document (${err?.message || 'erreur réseau'}).`,
+      { originalCode: String(err?.code || 'network_error') }
+    );
+  } finally {
+    clearTimeout(timer);
+    if (externalSignal) {
+      externalSignal.removeEventListener('abort', abortFromExternal);
+    }
   }
 }
 
@@ -651,7 +695,13 @@ export async function fetchAuthorizedKYCDocumentBlob(params: {
  */
 export async function cleanupOrphanKYCDocument(storagePath: string): Promise<void> {
   const currentUser = auth.currentUser;
-  if (!currentUser || !storagePath || !storagePath.startsWith(`kyc/${currentUser.uid}/`)) {
+  const trimmed = String(storagePath || '').trim();
+  if (
+    !currentUser ||
+    !trimmed ||
+    trimmed.includes('..') ||
+    !trimmed.startsWith(`kyc/${currentUser.uid}/`)
+  ) {
     return;
   }
   try {
@@ -662,7 +712,7 @@ export async function cleanupOrphanKYCDocument(storagePath: string): Promise<voi
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ storagePath }),
+      body: JSON.stringify({ storagePath: trimmed }),
     });
   } catch {
     // Non-blocking cleanup

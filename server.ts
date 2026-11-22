@@ -3757,18 +3757,217 @@ app.post('/api/courier/kyc/authorize-upload', requireVerifiedUser as any, async 
 });
 
 // =========================================================================
+// NOTIFICATION ADMIN PERSISTANTE & LOCK CLAIM APRÈS SOUMISSION KYC
+// =========================================================================
+app.post('/api/courier/kyc/notify-submitted', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+    if (!activeDb) {
+      return res.status(503).json({
+        success: false,
+        error: 'Firestore Admin SDK indisponible pour notifier l’administration.',
+      });
+    }
+
+    const callerUid = String(req.user?.uid || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!callerUid || callerUid !== req.user?.uid) {
+      return res.status(401).json({ success: false, error: 'Identifiant Firebase Auth invalide.' });
+    }
+
+    const kycSnap = await activeDb.collection('kyc').doc(callerUid).get();
+    if (!kycSnap.exists) {
+      return res.status(404).json({ success: false, error: 'Dossier KYC introuvable dans Firestore.' });
+    }
+    const kycData = kycSnap.data() || {};
+    if (kycData.status !== 'en_attente') {
+      return res.status(409).json({
+        success: false,
+        error: 'Le dossier KYC n’est pas au statut en_attente.',
+      });
+    }
+
+    // Best-effort sync of kycLocked: true custom claim while dossier is pending review
+    if (firebaseAdminApp && process.env.NODE_ENV !== 'test') {
+      try {
+        const authAdmin = getAuth(firebaseAdminApp);
+        const userRecord = await authAdmin.getUser(callerUid);
+        const existingClaims = userRecord.customClaims || {};
+        if (existingClaims.kycLocked !== true) {
+          await authAdmin.setCustomUserClaims(callerUid, {
+            ...existingClaims,
+            kycLocked: true,
+          });
+        }
+      } catch {
+        // Non-blocking if Auth Admin IAM unavailable
+      }
+    }
+
+    const adminRecipients = new Map<string, string>();
+    const adminEmails = new Set<string>(['pamphile.gbede@gmail.com']);
+
+    try {
+      const adminsSnap = await activeDb.collection('admins').get();
+      adminsSnap?.docs?.forEach((docSnap: any) => {
+        const d = docSnap.data() || {};
+        const uid = String(d.uid || docSnap.id || '').trim();
+        const email = typeof d.email === 'string' ? d.email.trim().toLowerCase() : '';
+        if (uid) adminRecipients.set(uid, email);
+        if (email) adminEmails.add(email);
+      });
+    } catch {
+      // Continue with fallback admin discovery
+    }
+
+    try {
+      const usersSnap = await activeDb.collection('users').get();
+      usersSnap?.docs?.forEach((docSnap: any) => {
+        const d = docSnap.data() || {};
+        const role = String(d.role || '').toLowerCase();
+        const email = typeof d.email === 'string' ? d.email.trim().toLowerCase() : '';
+        const uid = String(d.uid || docSnap.id || '').trim();
+        if (uid && (role === 'admin' || email === 'pamphile.gbede@gmail.com')) {
+          adminRecipients.set(uid, email);
+          if (email) adminEmails.add(email);
+        }
+      });
+    } catch {
+      // Continue
+    }
+
+    if (firebaseAdminApp && process.env.NODE_ENV !== 'test') {
+      try {
+        const superAdminRec = await getAuth(firebaseAdminApp).getUserByEmail('pamphile.gbede@gmail.com');
+        if (superAdminRec?.uid) {
+          adminRecipients.set(superAdminRec.uid, 'pamphile.gbede@gmail.com');
+        }
+      } catch {
+        // Super-admin account may not exist in test/sandbox auth
+      }
+    }
+
+    const fullName = String(kycData.fullName || 'Livreur LivraLink').trim().slice(0, 128);
+    const idType = String(kycData.idType || 'Pièce').trim().slice(0, 24);
+    const vehicleType = String(kycData.vehicleType || 'Engin').trim().slice(0, 64);
+    const isResubmission = Boolean(kycData.reviewedAt);
+    const submittedKey = String(kycData.submittedAt || kycData.updatedAt || 'latest');
+    const nowEpoch = Date.now();
+    const timeLabel = new Date(nowEpoch).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+    const title = isResubmission
+      ? '🔄 Dossier KYC re-soumis pour contrôle'
+      : '🛡️ Nouveau dossier KYC à vérifier';
+    const message = `${fullName} (${vehicleType} • ${idType}) a transmis ses 4 pièces justificatives pour vérification à ${timeLabel}.`;
+
+    let notifiedAdminCount = 0;
+    const batch = activeDb.batch();
+    for (const [adminUid] of adminRecipients.entries()) {
+      const cleanAdminUid = adminUid.replace(/[^a-zA-Z0-9_-]/g, '');
+      if (!cleanAdminUid) continue;
+      const notifId = `notif_kyc_sub_${crypto
+        .createHash('sha256')
+        .update(JSON.stringify(['kyc_submitted', cleanAdminUid, callerUid, submittedKey]))
+        .digest('hex')
+        .slice(0, 24)}`;
+      batch.set(
+        activeDb.collection('notifications').doc(notifId),
+        {
+          id: notifId,
+          senderId: callerUid,
+          recipientId: cleanAdminUid,
+          type: 'kyc',
+          title,
+          message,
+          actionView: 'admin_kyc',
+          isRead: false,
+          read: false,
+          createdAt: nowEpoch,
+          timestamp: timeLabel,
+        },
+        { merge: false }
+      );
+      notifiedAdminCount += 1;
+    }
+
+    if (notifiedAdminCount > 0) {
+      await batch.commit();
+    }
+
+    const p1 = getP1EmailService();
+    for (const adminEmail of adminEmails) {
+      if (!adminEmail) continue;
+      await p1
+        .dispatchOrQueueEmail({
+          type: 'kyc_submitted',
+          to: adminEmail,
+          recipientName: 'Administration LivraLink',
+          recipientRole: 'admin',
+          dedupKey: `kyc_admin_alert_${callerUid}_${submittedKey}_${adminEmail}`,
+          subject: isResubmission
+            ? `🔄 Dossier KYC re-soumis : ${fullName}`
+            : `🛡️ Nouveau dossier KYC soumis : ${fullName}`,
+          previewText: `${fullName} a transmis un dossier KYC complet (4 pièces) pour contrôle.`,
+          textContent: `Bonjour,\n\nLe livreur ${fullName} (${vehicleType}) a ${isResubmission ? 're-soumis' : 'soumis'} son dossier KYC complet avec ses 4 documents justificatifs.\nConnectez-vous à la Console Admin > Vérifications KYC pour l'examiner.`,
+          htmlContent: `
+            <div style="font-family: 'Plus Jakarta Sans', sans-serif; padding: 24px; color: #0f172a;">
+              <h2 style="color: #1d4ed8;">${isResubmission ? '🔄 Dossier KYC re-soumis' : '🛡️ Nouveau dossier KYC à contrôler'}</h2>
+              <p>Le partenaire livreur <strong>${escapeHtml(fullName)}</strong> (${escapeHtml(vehicleType)}) a transmis ses 4 justificatifs obligatoires.</p>
+              <p>Rendez-vous dans la <strong>Console Admin &rsaquo; Vérifications KYC</strong> pour consulter les pièces et statuer.</p>
+            </div>
+          `,
+          allowQueue: true,
+        })
+        .catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      notifiedAdminCount,
+      emailedAdmins: adminEmails.size,
+    });
+  } catch (err: any) {
+    console.warn('[KYC NOTIFY ADMIN ERROR]:', err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: 'Impossible d’enregistrer la notification administrateur KYC.',
+    });
+  }
+});
+
+// =========================================================================
 // ACCÈS SÉCURISÉ AUX JUSTIFICATIFS KYC & NETTOYAGE DES FICHIERS ORPHELINS
 // =========================================================================
+const KYC_STORAGE_PATH_REGEX =
+  /^kyc\/([a-zA-Z0-9_-]+)\/(?:(id_front|id_back|driving_license|vehicle_insurance)\/)?([a-zA-Z0-9_.-]+)$/;
+
+const collectReferencedKycPaths = (kycData: Record<string, any> | undefined): Set<string> => {
+  const paths = new Set<string>();
+  if (!kycData || typeof kycData !== 'object') return paths;
+  if (typeof kycData.documentStoragePath === 'string' && kycData.documentStoragePath.trim()) {
+    paths.add(kycData.documentStoragePath.trim());
+  }
+  const docs = kycData.documents;
+  if (docs && typeof docs === 'object') {
+    for (const slotKey of ['idFront', 'idBack', 'drivingLicense', 'vehicleInsurance']) {
+      const slot = docs[slotKey];
+      if (slot && typeof slot.storagePath === 'string' && slot.storagePath.trim()) {
+        paths.add(slot.storagePath.trim());
+      }
+    }
+  }
+  return paths;
+};
+
 app.get('/api/kyc/document', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const rawPath = String(req.query?.path || '').trim();
-    const match = rawPath.match(/^kyc\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)$/);
+    const match = rawPath.match(KYC_STORAGE_PATH_REGEX);
     if (!match || rawPath.includes('..')) {
       return res.status(400).json({ success: false, error: 'Chemin de justificatif KYC invalide.' });
     }
 
     const targetUid = match[1];
-    const fileName = match[2];
+    const fileName = match[3];
     const isOwner = req.user?.uid === targetUid;
     const isAdminCaller = isOwner ? false : await checkCallerIsAdmin(req.user);
 
@@ -3829,7 +4028,7 @@ app.post('/api/courier/kyc/cleanup-orphan', requireVerifiedUser as any, async (r
   try {
     const rawPath = String(req.body?.storagePath || '').trim();
     const callerUid = req.user!.uid;
-    const match = rawPath.match(/^kyc\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)$/);
+    const match = rawPath.match(KYC_STORAGE_PATH_REGEX);
     if (!match || rawPath.includes('..') || match[1] !== callerUid) {
       return res.status(403).json({
         success: false,
@@ -3842,10 +4041,13 @@ app.post('/api/courier/kyc/cleanup-orphan', requireVerifiedUser as any, async (r
       const kycSnap = await activeDb.collection('kyc').doc(callerUid).get();
       if (kycSnap.exists) {
         const kycData = kycSnap.data() || {};
+        const referencedPaths = collectReferencedKycPaths(kycData);
+        const isProtectedByUrl =
+          typeof kycData.documentPhotoUrl === 'string' &&
+          kycData.documentPhotoUrl.includes(encodeURIComponent(rawPath));
         if (
           (kycData.status === 'en_attente' || kycData.status === 'valide') &&
-          (kycData.documentStoragePath === rawPath ||
-            (typeof kycData.documentPhotoUrl === 'string' && kycData.documentPhotoUrl.includes(encodeURIComponent(rawPath))))
+          (referencedPaths.has(rawPath) || isProtectedByUrl)
         ) {
           return res.status(409).json({
             success: false,
@@ -4023,7 +4225,12 @@ const canUserAccessConversationMedia = (
 };
 
 const MAX_KYC_MEDIA_BYTES = 10 * 1024 * 1024;
-const ALLOWED_KYC_DOC_TYPES = new Set(['cni', 'permis', 'assurance', 'identity_photo']);
+const ALLOWED_KYC_DOC_TYPES = new Set([
+  'id_front',
+  'id_back',
+  'driving_license',
+  'vehicle_insurance',
+]);
 const ALLOWED_KYC_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -4059,20 +4266,42 @@ app.post('/api/courier/kyc/upload', requireVerifiedUser as any, async (req: Auth
       });
     }
 
-    const rawDocType = String(req.body?.docType || 'cni').trim();
+    const rawDocType = String(req.body?.docType || '').trim();
     if (!ALLOWED_KYC_DOC_TYPES.has(rawDocType)) {
       return res.status(400).json({
         success: false,
         stepCode: 'KYC-STEP-B',
-        error: '[KYC-STEP-B] Type de document KYC non autorisé.',
+        error:
+          '[KYC-STEP-B] Type de document KYC non autorisé (attendu : id_front, id_back, driving_license ou vehicle_insurance).',
       });
     }
 
-    // Contrôle préalable Firestore : empêche tout nouvel upload si le dossier est déjà en attente ou validé
+    // Contrôle préalable Firestore : rôle livreur + blocage si dossier en attente ou validé
     let firestoreLockChecked = false;
     if (activeDb) {
       try {
-        const kycSnap = await activeDb.collection('kyc').doc(callerUid).get();
+        const [kycSnap, userSnap] = await Promise.all([
+          activeDb.collection('kyc').doc(callerUid).get(),
+          activeDb.collection('users').doc(callerUid).get(),
+        ]);
+        if (userSnap.exists) {
+          const userData = userSnap.data() || {};
+          const userRole = String(userData.role || '').trim().toLowerCase();
+          if (userRole && userRole !== 'livreur') {
+            return res.status(403).json({
+              success: false,
+              stepCode: 'KYC-STEP-A',
+              error: '[KYC-STEP-A] Seuls les comptes livreurs peuvent déposer des pièces justificatives KYC.',
+            });
+          }
+          if (userData.isKycVerified === true || userData.kycStatus === 'valide') {
+            return res.status(409).json({
+              success: false,
+              stepCode: 'KYC-STEP-C',
+              error: '[KYC-STEP-C] Votre dossier KYC est déjà validé.',
+            });
+          }
+        }
         const kycStatus = kycSnap.exists ? String(kycSnap.data()?.status || 'non_soumis') : 'non_soumis';
         if (kycStatus === 'en_attente') {
           return res.status(409).json({
@@ -4088,24 +4317,14 @@ app.post('/api/courier/kyc/upload', requireVerifiedUser as any, async (req: Auth
             error: '[KYC-STEP-C] Votre dossier KYC est déjà validé.',
           });
         }
-        if (kycStatus !== 'refuse') {
-          const userSnap = await activeDb.collection('users').doc(callerUid).get();
-          if (userSnap.exists) {
-            const userData = userSnap.data() || {};
-            if (userData.isKycVerified === true || userData.kycStatus === 'valide') {
-              return res.status(409).json({
-                success: false,
-                stepCode: 'KYC-STEP-C',
-                error: '[KYC-STEP-C] Votre dossier KYC est déjà validé.',
-              });
-            }
-            if (userData.kycStatus === 'en_attente') {
-              return res.status(409).json({
-                success: false,
-                stepCode: 'KYC-STEP-C',
-                error: '[KYC-STEP-C] Votre dossier KYC est déjà en cours de vérification par l’administration.',
-              });
-            }
+        if (kycStatus !== 'refuse' && userSnap.exists) {
+          const userData = userSnap.data() || {};
+          if (userData.kycStatus === 'en_attente') {
+            return res.status(409).json({
+              success: false,
+              stepCode: 'KYC-STEP-C',
+              error: '[KYC-STEP-C] Votre dossier KYC est déjà en cours de vérification par l’administration.',
+            });
           }
         }
         firestoreLockChecked = true;
@@ -4159,7 +4378,14 @@ app.post('/api/courier/kyc/upload', requireVerifiedUser as any, async (req: Auth
 
     const ext = extensionForUploadedMime(decoded.contentType, 'jpg');
     const fileName = `${rawDocType}_${Date.now()}_${crypto.randomBytes(3).toString('hex')}.${ext}`;
-    const storagePath = `kyc/${callerUid}/${fileName}`;
+    const storagePath = `kyc/${callerUid}/${rawDocType}/${fileName}`;
+    const uploadedAt = new Date().toISOString();
+    const rawOrigName = typeof req.body?.originalFileName === 'string' ? req.body.originalFileName : '';
+    const originalFileName = rawOrigName
+      .replace(/[/\\]/g, '_')
+      .replace(/[^a-zA-Z0-9À-ÿ _.-]/g, '')
+      .trim()
+      .slice(0, 128);
 
     await activeBucket.file(storagePath).save(decoded.buffer, {
       resumable: false,
@@ -4167,8 +4393,9 @@ app.post('/api/courier/kyc/upload', requireVerifiedUser as any, async (req: Auth
         contentType: decoded.contentType,
         metadata: {
           uploadedBy: callerUid,
-          uploadedAt: new Date().toISOString(),
+          uploadedAt,
           docType: rawDocType,
+          ...(originalFileName ? { originalFileName } : {}),
         },
       },
     });
@@ -4176,9 +4403,12 @@ app.post('/api/courier/kyc/upload', requireVerifiedUser as any, async (req: Auth
     return res.json({
       success: true,
       storagePath,
+      docType: rawDocType,
       contentType: decoded.contentType,
       fileName,
+      ...(originalFileName ? { originalFileName } : {}),
       size: decoded.buffer.length,
+      uploadedAt,
     });
   } catch (err: any) {
     const msg = String(err?.message || err || '');
