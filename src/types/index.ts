@@ -257,14 +257,15 @@ export interface DeliveryOrder {
 export type KycStorageDocType =
   | 'id_front'
   | 'id_back'
-  | 'driving_license'
-  | 'vehicle_insurance';
+  | 'driving_license_front'
+  | 'driving_license_back'
+  | 'driving_license';
 
 export type KycDocumentSlotKey =
   | 'idFront'
   | 'idBack'
-  | 'drivingLicense'
-  | 'vehicleInsurance';
+  | 'drivingLicenseFront'
+  | 'drivingLicenseBack';
 
 export interface KycUploadedDocumentMeta {
   uploaded: boolean;
@@ -281,11 +282,11 @@ export interface KycUploadedDocumentMeta {
 export interface KycDocumentsMap {
   idFront?: KycUploadedDocumentMeta;
   idBack?: KycUploadedDocumentMeta;
+  drivingLicenseFront?: KycUploadedDocumentMeta;
+  drivingLicenseBack?: KycUploadedDocumentMeta;
   drivingLicense?: KycUploadedDocumentMeta;
-  vehicleInsurance?: KycUploadedDocumentMeta;
   cni?: boolean;
   permis?: boolean;
-  assurance?: boolean;
 }
 
 export type KycAiAnalysisStatus = 'not_started' | 'processing' | 'completed' | 'failed';

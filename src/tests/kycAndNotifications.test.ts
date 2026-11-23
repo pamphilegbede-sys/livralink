@@ -27,7 +27,7 @@ class MockKycNotificationSimulator {
       vehicleType: 'Moto 125cc',
       idNumber: data.idNumber,
       operatingZone: 'Cotonou',
-      documents: { cni: true, permis: true, assurance: true },
+      documents: { cni: true, permis: true },
       status: 'en_attente',
       submittedAt: new Date().toISOString(),
     };
@@ -378,7 +378,7 @@ describe('Suite de tests — KYC, Notifications & Isolation (LivraLink)', () => 
     assert.equal(brice?.kycStatus, 'valide');
   });
 
-  test('7. Modèle 4 documents KYC : getKycDocumentSlots reflète exactement les pièces fournies ou manquantes et préserve aiAnalysis', async () => {
+  test('7. Modèle KYC sans assurance + permis recto/verso facultatif : getKycDocumentSlots et rétrocompatibilité', async () => {
     const { mapFirestoreKycToRequest, getKycDocumentSlots } = await import('../utils/adminReconciliation');
     const { formatFileSizeFr } = await import('../firebase/storageService');
 
@@ -386,7 +386,7 @@ describe('Suite de tests — KYC, Notifications & Isolation (LivraLink)', () => 
     assert.equal(formatFileSizeFr(1536), '1,5 Ko');
     assert.equal(formatFileSizeFr(2 * 1024 * 1024), '2,00 Mo');
 
-    // Cas partiel : seul idFront possède un vrai storagePath; idBack sans storagePath ne doit jamais être considéré fourni
+    // Cas partiel : idFront présent, idBack vide, drivingLicenseFront fourni, drivingLicenseBack omis
     const partialKyc = mapFirestoreKycToRequest(
       {
         userId: 'courier_4slots',
@@ -409,17 +409,16 @@ describe('Suite de tests — KYC, Notifications & Isolation (LivraLink)', () => 
             uploaded: true,
             storagePath: '',
           },
-          drivingLicense: {
+          drivingLicenseFront: {
             uploaded: true,
-            storagePath: 'kyc/courier_4slots/driving_license/driving_license_101_bb.pdf',
-            docType: 'driving_license',
-            fileName: 'driving_license_101_bb.pdf',
-            mimeType: 'application/pdf',
+            storagePath: 'kyc/courier_4slots/driving_license_front/driving_license_front_101_bb.jpg',
+            docType: 'driving_license_front',
+            fileName: 'driving_license_front_101_bb.jpg',
+            mimeType: 'image/jpeg',
             size: 512000,
             uploadedAt: '2026-01-01T10:01:00.000Z',
             uploadedBy: 'courier_4slots',
           },
-          assurance: true,
         },
         aiAnalysis: {
           status: 'not_started',
@@ -432,18 +431,129 @@ describe('Suite de tests — KYC, Notifications & Isolation (LivraLink)', () => 
 
     const slots = getKycDocumentSlots(partialKyc);
     assert.equal(slots.length, 4);
+    assert.equal(slots.some((s) => (s.slotKey as string) === 'vehicleInsurance'), false);
     assert.equal(slots[0].slotKey, 'idFront');
+    assert.equal(slots[0].optional, false);
     assert.equal(slots[0].uploaded, true);
     assert.equal(slots[0].meta?.originalFileName, 'cni_recto.jpg');
     assert.equal(slots[1].slotKey, 'idBack');
+    assert.equal(slots[1].optional, false);
     assert.equal(slots[1].uploaded, false);
-    assert.equal(slots[2].slotKey, 'drivingLicense');
+    assert.equal(slots[2].slotKey, 'drivingLicenseFront');
+    assert.equal(slots[2].optional, true);
     assert.equal(slots[2].uploaded, true);
-    assert.equal(slots[3].slotKey, 'vehicleInsurance');
+    assert.equal(slots[3].slotKey, 'drivingLicenseBack');
+    assert.equal(slots[3].optional, true);
     assert.equal(slots[3].uploaded, false);
-    assert.equal(partialKyc.documents.assurance, true);
+    assert.equal(partialKyc.documents.permis, true);
+    assert.equal((partialKyc.documents as Record<string, unknown>).assurance, undefined);
     assert.equal(partialKyc.aiAnalysis?.status, 'not_started');
     assert.equal(partialKyc.aiAnalysis?.provider, 'gemini');
   });
+
+  test('8. Validation KYC : pièce d’identité obligatoire + 4 cas permis de conduire facultatif (aucun, recto, verso, recto+verso)', async () => {
+    const {
+      KYC_ACTIVE_DOCUMENT_SLOTS,
+      getMissingRequiredKycSlots,
+      buildActiveKycDocumentsSubmissionMap,
+    } = await import('../utils/kycSlots');
+    const { mapFirestoreKycToRequest, getKycDocumentSlots } = await import('../utils/adminReconciliation');
+
+    // Aucun champ assurance présent dans les définitions actives
+    assert.equal(
+      KYC_ACTIVE_DOCUMENT_SLOTS.some((s) => (s.docType as string) === 'vehicle_insurance'),
+      false
+    );
+    assert.deepEqual(
+      KYC_ACTIVE_DOCUMENT_SLOTS.map((s) => s.slotKey),
+      ['idFront', 'idBack', 'drivingLicenseFront', 'drivingLicenseBack']
+    );
+
+    // Sans pièce d'identité obligatoire -> bloqué
+    const missingBothId = getMissingRequiredKycSlots({
+      drivingLicenseFront: { hasFile: true },
+      drivingLicenseBack: { hasFile: true },
+    });
+    assert.deepEqual(
+      missingBothId.map((m) => m.slotKey),
+      ['idFront', 'idBack']
+    );
+
+    const makeMeta = (slot: 'id_front' | 'id_back' | 'driving_license_front' | 'driving_license_back') => ({
+      uploaded: true,
+      storagePath: `kyc/courier_cases/${slot}/${slot}_1_abc.jpg`,
+      docType: slot,
+      fileName: `${slot}_1_abc.jpg`,
+      mimeType: 'image/jpeg',
+      size: 102400,
+      uploadedAt: '2026-04-01T12:00:00.000Z',
+      uploadedBy: 'courier_cases',
+    });
+
+    const cases: Array<{
+      name: string;
+      front: boolean;
+      back: boolean;
+      expectedPermis: boolean;
+    }> = [
+      { name: 'aucune photo de permis', front: false, back: false, expectedPermis: false },
+      { name: 'recto permis uniquement', front: true, back: false, expectedPermis: true },
+      { name: 'verso permis uniquement', front: false, back: true, expectedPermis: true },
+      { name: 'recto et verso du permis', front: true, back: true, expectedPermis: true },
+    ];
+
+    for (const c of cases) {
+      const missing = getMissingRequiredKycSlots({
+        idFront: { hasFile: true },
+        idBack: { hasFile: true },
+        drivingLicenseFront: c.front ? { hasFile: true } : {},
+        drivingLicenseBack: c.back ? { hasFile: true } : {},
+      });
+      assert.equal(missing.length, 0, `Soumission autorisée pour le cas : ${c.name}`);
+
+      const builtDocs = buildActiveKycDocumentsSubmissionMap({
+        idFront: makeMeta('id_front'),
+        idBack: makeMeta('id_back'),
+        ...(c.front ? { drivingLicenseFront: makeMeta('driving_license_front') } : {}),
+        ...(c.back ? { drivingLicenseBack: makeMeta('driving_license_back') } : {}),
+      });
+      const mapped = mapFirestoreKycToRequest(
+        {
+          userId: 'courier_cases',
+          fullName: 'Codjo Cas',
+          phone: '+22997112233',
+          status: 'en_attente',
+          documents: builtDocs,
+        },
+        'courier_cases'
+      );
+      const slots = getKycDocumentSlots(mapped);
+      assert.equal(mapped.documents.permis, c.expectedPermis, c.name);
+      assert.equal(slots.find((s) => s.slotKey === 'drivingLicenseFront')?.uploaded, c.front, c.name);
+      assert.equal(slots.find((s) => s.slotKey === 'drivingLicenseBack')?.uploaded, c.back, c.name);
+    }
+  });
+
+  test('9. Interface KYCSubmissionModal : absence complète de carte d’assurance, présence caméra/galerie/aperçu/remplacement/suppression', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const modalSource = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/components/modals/KYCSubmissionModal.tsx'),
+      'utf8'
+    );
+
+    assert.equal(modalSource.includes('vehicleInsurance'), false);
+    assert.equal(modalSource.includes('vehicle_insurance'), false);
+    assert.equal(modalSource.includes('hasInsurance'), false);
+    assert.equal(modalSource.includes("Attestation d'assurance"), false);
+    assert.equal(modalSource.includes('Permis de conduire (facultatif)'), true);
+    assert.equal(modalSource.includes('capture="environment"'), true);
+    assert.equal(modalSource.includes('Prendre une photo'), true);
+    assert.equal(modalSource.includes('Galerie / Fichier'), true);
+    assert.equal(modalSource.includes('Remplacer'), true);
+    assert.equal(modalSource.includes('Supprimer'), true);
+    assert.equal(modalSource.includes('handleDeleteSlot'), true);
+  });
 });
+
 

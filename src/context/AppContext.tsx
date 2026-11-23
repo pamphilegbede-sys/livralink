@@ -5107,24 +5107,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    // KYC-STEP-B : Téléversement privé des 4 justificatifs obligatoires via le serveur sécurisé
+    // KYC-STEP-B : Téléversement privé des justificatifs (pièce d'identité obligatoire, permis recto/verso facultatif)
     const slotOrder: KycDocumentSlotKey[] = [
       'idFront',
       'idBack',
-      'drivingLicense',
-      'vehicleInsurance',
+      'drivingLicenseFront',
+      'drivingLicenseBack',
     ];
+    const requiredSlots = new Set<KycDocumentSlotKey>(['idFront', 'idBack']);
     const slotToDocType: Record<KycDocumentSlotKey, KycStorageDocType> = {
       idFront: 'id_front',
       idBack: 'id_back',
-      drivingLicense: 'driving_license',
-      vehicleInsurance: 'vehicle_insurance',
+      drivingLicenseFront: 'driving_license_front',
+      drivingLicenseBack: 'driving_license_back',
     };
     const slotLabels: Record<KycDocumentSlotKey, string> = {
       idFront: "Recto de la pièce d'identité",
       idBack: "Verso de la pièce d'identité",
-      drivingLicense: 'Permis de conduire',
-      vehicleInsurance: "Attestation d'assurance du véhicule",
+      drivingLicenseFront: 'Recto du permis de conduire',
+      drivingLicenseBack: 'Verso du permis de conduire',
     };
 
     const uploadedAssetsBySlot: Partial<Record<KycDocumentSlotKey, UploadedKYCDocumentResult>> = {
@@ -5132,6 +5133,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     const finalDocsMeta: Partial<Record<KycDocumentSlotKey, KycUploadedDocumentMeta>> = {};
     const pendingFiles = data.pendingFiles || {};
+    const hasExplicitDocumentsMap = Boolean(data.documents && typeof data.documents === 'object');
 
     for (let idx = 0; idx < slotOrder.length; idx += 1) {
       const slotKey = slotOrder[idx];
@@ -5193,7 +5195,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         continue;
       }
 
-      const providedSlot = data.documents?.[slotKey] || existingKycData?.documents?.[slotKey];
+      const providedSlot = hasExplicitDocumentsMap
+        ? data.documents?.[slotKey]
+        : existingKycData?.documents?.[slotKey];
       if (
         providedSlot &&
         typeof providedSlot === 'object' &&
@@ -5217,19 +5221,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         continue;
       }
 
-      throw createKYCStepError(
-        'KYC-STEP-B',
-        `Justificatif obligatoire manquant : ${slotLabels[slotKey]}.`,
-        { uploadedAssetsBySlot }
-      );
+      if (requiredSlots.has(slotKey)) {
+        throw createKYCStepError(
+          'KYC-STEP-B',
+          `Justificatif obligatoire manquant : ${slotLabels[slotKey]}.`,
+          { uploadedAssetsBySlot }
+        );
+      }
+      options?.onProgress?.(Math.round(((idx + 1) / slotOrder.length) * 100));
     }
 
     const idFrontMeta = finalDocsMeta.idFront!;
-    const firestoreDocumentsPayload = {
+    const firestoreDocumentsPayload: Record<string, KycUploadedDocumentMeta> = {
       idFront: finalDocsMeta.idFront!,
       idBack: finalDocsMeta.idBack!,
-      drivingLicense: finalDocsMeta.drivingLicense!,
-      vehicleInsurance: finalDocsMeta.vehicleInsurance!,
+      ...(finalDocsMeta.drivingLicenseFront ? { drivingLicenseFront: finalDocsMeta.drivingLicenseFront } : {}),
+      ...(finalDocsMeta.drivingLicenseBack ? { drivingLicenseBack: finalDocsMeta.drivingLicenseBack } : {}),
     };
 
     const cleanFullName = (data.fullName || userProfile?.fullName || courierSettings.fullName || 'Coursier LivraLink').trim();
@@ -5262,8 +5269,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       documents: {
         ...firestoreDocumentsPayload,
         cni: true,
-        permis: true,
-        assurance: true,
+        permis: Boolean(finalDocsMeta.drivingLicenseFront || finalDocsMeta.drivingLicenseBack),
       },
     };
 
@@ -5369,12 +5375,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     // Nettoyage sécurisé des anciens fichiers remplacés APRÈS succès du commit Firestore
-    const activePaths = new Set([
-      firestoreDocumentsPayload.idFront.storagePath,
-      firestoreDocumentsPayload.idBack.storagePath,
-      firestoreDocumentsPayload.drivingLicense.storagePath,
-      firestoreDocumentsPayload.vehicleInsurance.storagePath,
-    ]);
+    const activePaths = new Set(
+      [
+        firestoreDocumentsPayload.idFront?.storagePath,
+        firestoreDocumentsPayload.idBack?.storagePath,
+        firestoreDocumentsPayload.drivingLicenseFront?.storagePath,
+        firestoreDocumentsPayload.drivingLicenseBack?.storagePath,
+      ].filter((p): p is string => Boolean(p))
+    );
     if (Array.isArray(options?.replacedStoragePaths)) {
       for (const oldPath of options.replacedStoragePaths) {
         if (oldPath && !activePaths.has(oldPath)) {
@@ -5415,11 +5423,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setUserProfile(prev => (prev ? { ...prev, isKycVerified: false, kycStatus: 'en_attente' } : null));
     }
 
-    addAuditLog('kyc', 'Dépôt Dossier KYC', `Dossier #${cleanCourierId} soumis par ${newReq.fullName} (4 pièces justificatives)`);
+    const submittedDocCount = Object.keys(firestoreDocumentsPayload).length;
+    addAuditLog('kyc', 'Dépôt Dossier KYC', `Dossier #${cleanCourierId} soumis par ${newReq.fullName} (${submittedDocCount} justificatif(s))`);
     addNotification({
       type: 'kyc',
       title: '📁 Dossier KYC transmis',
-      message: `Votre dossier complet avec vos 4 justificatifs (${newReq.idType} #${newReq.idNumber}) a été transmis pour accréditation.`,
+      message: `Votre dossier KYC avec ${submittedDocCount} justificatif(s) (${newReq.idType} #${newReq.idNumber}) a été transmis pour accréditation.`,
       actionView: 'livreur_dashboard',
     });
 

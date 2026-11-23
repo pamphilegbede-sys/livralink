@@ -143,21 +143,21 @@ function buildFourDocDossier(uid: string, overrides?: Record<string, any>) {
         uploadedAt: '2026-03-01T10:01:00.000Z',
         uploadedBy: uid,
       },
-      drivingLicense: {
+      drivingLicenseFront: {
         uploaded: true,
-        storagePath: `kyc/${uid}/driving_license/driving_license_1.pdf`,
-        docType: 'driving_license',
-        fileName: 'driving_license_1.pdf',
+        storagePath: `kyc/${uid}/driving_license_front/driving_license_front_1.pdf`,
+        docType: 'driving_license_front',
+        fileName: 'driving_license_front_1.pdf',
         mimeType: 'application/pdf',
         size: PDF_BYTES.length,
         uploadedAt: '2026-03-01T10:02:00.000Z',
         uploadedBy: uid,
       },
-      vehicleInsurance: {
+      drivingLicenseBack: {
         uploaded: true,
-        storagePath: `kyc/${uid}/vehicle_insurance/vehicle_insurance_1.webp`,
-        docType: 'vehicle_insurance',
-        fileName: 'vehicle_insurance_1.webp',
+        storagePath: `kyc/${uid}/driving_license_back/driving_license_back_1.webp`,
+        docType: 'driving_license_back',
+        fileName: 'driving_license_back_1.webp',
         mimeType: 'image/webp',
         size: WEBP_BYTES.length,
         uploadedAt: '2026-03-01T10:03:00.000Z',
@@ -219,8 +219,8 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
     const files = new Map([
       [`kyc/${uid}/id_front/id_front_1.jpg`, { contentType: 'image/jpeg', data: JPEG_BYTES }],
       [`kyc/${uid}/id_back/id_back_1.png`, { contentType: 'image/png', data: PNG_BYTES }],
-      [`kyc/${uid}/driving_license/driving_license_1.pdf`, { contentType: 'application/pdf', data: PDF_BYTES }],
-      [`kyc/${uid}/vehicle_insurance/vehicle_insurance_1.webp`, { contentType: 'image/webp', data: WEBP_BYTES }],
+      [`kyc/${uid}/driving_license_front/driving_license_front_1.pdf`, { contentType: 'application/pdf', data: PDF_BYTES }],
+      [`kyc/${uid}/driving_license_back/driving_license_back_1.webp`, { contentType: 'image/webp', data: WEBP_BYTES }],
     ]);
     const { store, db, bucket } = createMockFirestoreAndStorage(
       {
@@ -241,7 +241,7 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
         .map((p) => p.inlineData.mimeType);
       return {
         text: JSON.stringify({
-          summary: 'Les 4 justificatifs sont lisibles et concordants avec la fiche déclarée.',
+          summary: 'Les justificatifs fournis sont lisibles et concordants avec la fiche déclarée.',
           extractedData: {
             lastName: 'GBEDE',
             firstName: 'Koffi Jean',
@@ -254,9 +254,6 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
             licenseCategories: 'A, B',
             licenseExpiresAt: '2031-06-30',
             vehiclePlate: 'BJ-4455-RB',
-            insurancePolicyNumber: 'ASSUR-8821',
-            insuranceInsurer: 'NSIA Assurances',
-            insuranceExpiresAt: '2027-01-15',
           },
           documents: {
             idFront: {
@@ -277,23 +274,23 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
               anomalies: [],
               summary: 'Verso lisible avec NPI.',
             },
-            drivingLicense: {
-              identifiedDocumentType: 'Permis de conduire',
+            drivingLicenseFront: {
+              identifiedDocumentType: 'Permis de conduire (Recto)',
               readabilityStatus: 'readable',
               extractionConfidence: 'high',
               confidencePercent: 90,
-              extractedFields: { documentNumber: 'PC-BJ-7741', licenseCategories: 'A, B', expiresAt: '2031-06-30' },
+              extractedFields: { documentNumber: 'PC-BJ-7741', expiresAt: '2031-06-30' },
               anomalies: [],
-              summary: 'Permis PDF lisible.',
+              summary: 'Recto du permis PDF lisible.',
             },
-            vehicleInsurance: {
-              identifiedDocumentType: "Attestation d'assurance",
+            drivingLicenseBack: {
+              identifiedDocumentType: 'Permis de conduire (Verso)',
               readabilityStatus: 'readable',
               extractionConfidence: 'high',
               confidencePercent: 89,
-              extractedFields: { vehiclePlate: 'BJ-4455-RB', policyNumber: 'ASSUR-8821', coverageEnd: '2027-01-15' },
+              extractedFields: { licenseCategories: 'A, B' },
               anomalies: [],
-              summary: 'Attestation valide.',
+              summary: 'Verso du permis WebP lisible.',
             },
           },
           crossChecks: [
@@ -319,7 +316,8 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
     assert.equal(body.aiAnalysis.status, 'completed');
     assert.equal(body.aiAnalysis.provider, 'gemini');
     assert.equal(body.aiAnalysis.usage.totalTokens, 1610);
-    assert.equal(body.aiAnalysis.documents.drivingLicense.readabilityStatus, 'readable');
+    assert.equal(body.aiAnalysis.documents.drivingLicenseFront.readabilityStatus, 'readable');
+    assert.equal(body.aiAnalysis.documents.drivingLicenseBack.readabilityStatus, 'readable');
 
     // Vérification absolue : Gemini n'a jamais approuvé ou modifié le statut métier du compte
     const savedKyc = store.kyc.get(uid)!;
@@ -331,7 +329,7 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
     assert.equal(savedUser.kycStatus, 'en_attente');
   });
 
-  await t.test('3. Document manquant (dossier partiel) + document illisible + incohérence + document expiré', async () => {
+  await t.test('3. Document obligatoire manquant + permis facultatif omis sans fausse alerte + document illisible + expiration', async () => {
     const uid = 'courier_partial_issues';
     const partialDoc = buildFourDocDossier(uid, {
       documents: {
@@ -344,11 +342,11 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
           uploadedAt: '2026-03-01T10:00:00.000Z',
           uploadedBy: uid,
         },
-        drivingLicense: {
+        drivingLicenseFront: {
           uploaded: true,
-          storagePath: `kyc/${uid}/driving_license/driving_license_1.pdf`,
-          docType: 'driving_license',
-          fileName: 'driving_license_1.pdf',
+          storagePath: `kyc/${uid}/driving_license_front/driving_license_front_1.pdf`,
+          docType: 'driving_license_front',
+          fileName: 'driving_license_front_1.pdf',
           mimeType: 'application/pdf',
           uploadedAt: '2026-03-01T10:02:00.000Z',
           uploadedBy: uid,
@@ -358,7 +356,7 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
 
     const files = new Map([
       [`kyc/${uid}/id_front/id_front_1.jpg`, { contentType: 'image/jpeg', data: JPEG_BYTES }],
-      [`kyc/${uid}/driving_license/driving_license_1.pdf`, { contentType: 'application/pdf', data: PDF_BYTES }],
+      [`kyc/${uid}/driving_license_front/driving_license_front_1.pdf`, { contentType: 'application/pdf', data: PDF_BYTES }],
     ]);
     const { store, db, bucket } = createMockFirestoreAndStorage(
       { kyc: new Map([[uid, partialDoc]]) },
@@ -384,8 +382,8 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
             anomalies: ['Image fortement floue, numéro illisible.'],
             summary: 'Photo illisible.',
           },
-          drivingLicense: {
-            identifiedDocumentType: 'Permis de conduire',
+          drivingLicenseFront: {
+            identifiedDocumentType: 'Permis de conduire (Recto)',
             readabilityStatus: 'readable',
             extractionConfidence: 'high',
             confidencePercent: 88,
@@ -403,9 +401,9 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
             details: 'Le nom lu sur le permis ne correspond pas au nom déclaré.',
           },
         ],
-        warnings: ['Verso et attestation d’assurance absents.'],
+        warnings: ['Verso de la pièce d’identité absent.'],
         issues: ['Contradiction identité et permis expiré.'],
-        recommendations: ['Demander un nouveau scan net et un permis valide.'],
+        recommendations: ['Demander un nouveau scan net.'],
       }),
     }));
 
@@ -417,10 +415,12 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
     const body = await res.json();
     const ai = body.aiAnalysis;
 
-    // Slots absents forcés côté serveur à 'missing' / 'unavailable'
+    // Slot obligatoire absent -> 'missing' + warning; slot permis facultatif absent -> 'missing' sans anomalie ni faux avertissement
     assert.equal(ai.documents.idBack.readabilityStatus, 'missing');
     assert.equal(ai.documents.idBack.documentPresent, false);
-    assert.equal(ai.documents.vehicleInsurance.readabilityStatus, 'missing');
+    assert.equal(ai.documents.drivingLicenseBack.readabilityStatus, 'missing');
+    assert.equal(ai.documents.drivingLicenseBack.documentPresent, false);
+    assert.deepEqual(ai.documents.drivingLicenseBack.anomalies, []);
     // Slot illisible préservé
     assert.equal(ai.documents.idFront.readabilityStatus, 'unreadable');
     // Incohérence + expiration détectées

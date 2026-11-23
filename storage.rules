@@ -105,7 +105,7 @@ service firebase.storage {
       allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow create: if isAdmin()
                     && isSafeFileName(userId)
-                    && docSlot in ['id_front', 'id_back', 'driving_license', 'vehicle_insurance']
+                    && docSlot in ['id_front', 'id_back', 'driving_license_front', 'driving_license_back']
                     && isSafeFileName(fileName)
                     && request.resource != null
                     && request.resource.size > 0

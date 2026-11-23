@@ -99,12 +99,12 @@
         "documentFileName": { "type": "string", "maxLength": 128, "description": "Nom de fichier du justificatif" },
         "documents": {
           "type": "object",
-          "description": "Métadonnées individuelles des 4 pièces obligatoires (idFront, idBack, drivingLicense, vehicleInsurance)",
+          "description": "Métadonnées des pièces KYC (idFront et idBack obligatoires ; drivingLicenseFront et drivingLicenseBack facultatifs)",
           "properties": {
-            "idFront": { "type": "object", "description": "Recto de la pièce d'identité" },
-            "idBack": { "type": "object", "description": "Verso de la pièce d'identité" },
-            "drivingLicense": { "type": "object", "description": "Permis de conduire" },
-            "vehicleInsurance": { "type": "object", "description": "Attestation d'assurance du véhicule" }
+            "idFront": { "type": "object", "description": "Recto de la pièce d'identité (obligatoire)" },
+            "idBack": { "type": "object", "description": "Verso de la pièce d'identité (obligatoire)" },
+            "drivingLicenseFront": { "type": "object", "description": "Recto du permis de conduire (facultatif)" },
+            "drivingLicenseBack": { "type": "object", "description": "Verso du permis de conduire (facultatif)" }
           }
         },
         "aiAnalysis": {

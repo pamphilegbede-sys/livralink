@@ -478,8 +478,8 @@ export async function uploadKYCDocument(
   const allowedDocTypes: Set<KycStorageDocType> = new Set([
     'id_front',
     'id_back',
-    'driving_license',
-    'vehicle_insurance',
+    'driving_license_front',
+    'driving_license_back',
   ]);
   if (!allowedDocTypes.has(docType)) {
     throw createKYCStepError('KYC-STEP-B', 'Type de document KYC non pris en charge.');

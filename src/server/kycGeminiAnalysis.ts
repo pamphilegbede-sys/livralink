@@ -31,11 +31,12 @@ const SLOT_DESCRIPTORS: Array<{
   slotKey: KycDocumentSlotKey;
   docType: KycStorageDocType;
   label: string;
+  optional?: boolean;
 }> = [
   { slotKey: 'idFront', docType: 'id_front', label: "Recto de la pièce d'identité" },
   { slotKey: 'idBack', docType: 'id_back', label: "Verso de la pièce d'identité" },
-  { slotKey: 'drivingLicense', docType: 'driving_license', label: 'Permis de conduire' },
-  { slotKey: 'vehicleInsurance', docType: 'vehicle_insurance', label: "Attestation d'assurance du véhicule" },
+  { slotKey: 'drivingLicenseFront', docType: 'driving_license_front', label: 'Permis de conduire (Recto — facultatif)', optional: true },
+  { slotKey: 'drivingLicenseBack', docType: 'driving_license_back', label: 'Permis de conduire (Verso — facultatif)', optional: true },
 ];
 
 export class KycGeminiAnalysisError extends Error {
@@ -225,8 +226,8 @@ const GEMINI_KYC_RESPONSE_SCHEMA: Record<string, any> = {
       properties: {
         idFront: extractSlotResponseSchema(),
         idBack: extractSlotResponseSchema(),
-        drivingLicense: extractSlotResponseSchema(),
-        vehicleInsurance: extractSlotResponseSchema(),
+        drivingLicenseFront: extractSlotResponseSchema(),
+        drivingLicenseBack: extractSlotResponseSchema(),
       },
     },
     crossChecks: {
@@ -316,6 +317,7 @@ interface DownloadedSlotInput {
   slotKey: KycDocumentSlotKey;
   docType: KycStorageDocType;
   label: string;
+  optional?: boolean;
   presentInDossier: boolean;
   storagePath?: string;
   mimeType?: string;
@@ -347,6 +349,18 @@ export function validateAndNormalizeGeminiKycOutput(params: {
 
   for (const slot of slotInputs) {
     if (!slot.presentInDossier || !slot.buffer) {
+      if (!slot.preFailureAnomaly && slot.optional) {
+        normalizedDocs[slot.slotKey] = {
+          slotKey: slot.slotKey,
+          docType: slot.docType,
+          documentPresent: false,
+          readabilityStatus: 'missing',
+          extractionConfidence: 'unavailable',
+          anomalies: [],
+          summary: 'Pièce facultative non fournie par le candidat.',
+        };
+        continue;
+      }
       const anomaly = slot.preFailureAnomaly || `${slot.label} absent du dossier ou fichier non disponible dans le stockage privé.`;
       normalizedDocs[slot.slotKey] = {
         slotKey: slot.slotKey,
@@ -489,8 +503,13 @@ export function validateAndNormalizeGeminiKycOutput(params: {
   // Ajouter automatiquement une vérification d'expiration déterministe si manquante dans crossChecks
   const expiryTargets = [
     { label: "Validité pièce d'identité", dateStr: extractedData.idExpiresAt || normalizedDocs.idFront?.detectedDates?.expiresAt },
-    { label: 'Validité permis de conduire', dateStr: extractedData.licenseExpiresAt || normalizedDocs.drivingLicense?.detectedDates?.expiresAt },
-    { label: "Validité attestation d'assurance", dateStr: extractedData.insuranceExpiresAt || normalizedDocs.vehicleInsurance?.detectedDates?.coverageEnd || normalizedDocs.vehicleInsurance?.detectedDates?.expiresAt },
+    {
+      label: 'Validité permis de conduire',
+      dateStr:
+        extractedData.licenseExpiresAt ||
+        normalizedDocs.drivingLicenseFront?.detectedDates?.expiresAt ||
+        normalizedDocs.drivingLicenseBack?.detectedDates?.expiresAt,
+    },
   ];
   for (const target of expiryTargets) {
     const ms = tryParseDateMs(target.dateStr);
@@ -828,13 +847,16 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
 
     for (const def of SLOT_DESCRIPTORS) {
       const slotMeta = docsMap[def.slotKey];
+      // Rétrocompatibilité lecture pour ancien dossier mono-document ou ancien permis unique
+      const resolvedMeta =
+        slotMeta ||
+        (def.slotKey === 'drivingLicenseFront' && docsMap.drivingLicense ? docsMap.drivingLicense : undefined);
       let storagePath =
-        slotMeta && slotMeta.uploaded !== false && typeof slotMeta.storagePath === 'string'
-          ? slotMeta.storagePath.trim()
+        resolvedMeta && resolvedMeta.uploaded !== false && typeof resolvedMeta.storagePath === 'string'
+          ? resolvedMeta.storagePath.trim()
           : '';
-      let declaredMime = slotMeta?.mimeType;
+      let declaredMime = resolvedMeta?.mimeType || slotMeta?.mimeType;
 
-      // Rétrocompatibilité lecture pour ancien dossier mono-document dans idFront
       if (!storagePath && def.slotKey === 'idFront' && typeof kycData.documentStoragePath === 'string') {
         storagePath = kycData.documentStoragePath.trim();
         declaredMime = declaredMime || kycData.documentMimeType;
@@ -845,6 +867,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
           slotKey: def.slotKey,
           docType: def.docType,
           label: def.label,
+          optional: Boolean(def.optional),
           presentInDossier: false,
         });
         continue;
@@ -856,6 +879,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
           slotKey: def.slotKey,
           docType: def.docType,
           label: def.label,
+          optional: Boolean(def.optional),
           presentInDossier: true,
           storagePath,
           preFailureAnomaly: `${def.label} : chemin Storage invalide ou hors périmètre utilisateur.`,
@@ -871,6 +895,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
             slotKey: def.slotKey,
             docType: def.docType,
             label: def.label,
+            optional: Boolean(def.optional),
             presentInDossier: false,
             storagePath,
             preFailureAnomaly: `${def.label} introuvable dans Firebase Storage.`,
@@ -887,6 +912,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
             slotKey: def.slotKey,
             docType: def.docType,
             label: def.label,
+            optional: Boolean(def.optional),
             presentInDossier: true,
             storagePath,
             preFailureAnomaly: `${def.label} : format MIME non supporté (${resolvedMime || 'inconnu'}).`,
@@ -899,6 +925,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
             slotKey: def.slotKey,
             docType: def.docType,
             label: def.label,
+            optional: Boolean(def.optional),
             presentInDossier: true,
             storagePath,
             preFailureAnomaly: `${def.label} : taille invalide (vide ou supérieure à 10 Mo).`,
@@ -911,6 +938,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
             slotKey: def.slotKey,
             docType: def.docType,
             label: def.label,
+            optional: Boolean(def.optional),
             presentInDossier: true,
             storagePath,
             preFailureAnomaly: `${def.label} : signature binaire corrompue ou non conforme au type ${resolvedMime}.`,
@@ -922,6 +950,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
           slotKey: def.slotKey,
           docType: def.docType,
           label: def.label,
+          optional: Boolean(def.optional),
           presentInDossier: true,
           storagePath,
           mimeType: resolvedMime,
@@ -932,6 +961,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
           slotKey: def.slotKey,
           docType: def.docType,
           label: def.label,
+          optional: Boolean(def.optional),
           presentInDossier: true,
           storagePath,
           preFailureAnomaly: `${def.label} : lecture Storage impossible (${redactSensitiveForLogs(storageErr?.message || 'erreur')}).`,
@@ -965,6 +995,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
       operatingZone: cleanText(kycData.operatingZone, 100) || '',
       providedDocumentSlots: slotInputs.map((s) => ({
         slotKey: s.slotKey,
+        optional: Boolean(s.optional),
         presentAndReadableBinary: Boolean(s.buffer),
         mimeType: s.mimeType || null,
         issue: s.preFailureAnomaly || null,
@@ -975,13 +1006,14 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
       {
         text: [
           'Analyse les documents KYC fournis ci-après pour ce livreur LivraLink.',
+          'Note importante : le permis de conduire (recto et verso) est facultatif ; ne signale aucune erreur si ces emplacements facultatifs sont absents.',
           'Données déclarées par le candidat (à comparer avec les pièces) :',
           '<declared_dossier_json>',
           JSON.stringify(declaredMetadata, null, 2),
           '</declared_dossier_json>',
           'Contrôles attendus :',
           '- Identifier chaque document fourni, évaluer sa lisibilité et la confiance de lecture.',
-          '- Extraire nom, prénoms, numéros de pièce/NPI, dates de naissance/délivrance/expiration, catégories permis, immatriculation et assurance.',
+          '- Extraire nom, prénoms, numéros de pièce/NPI, dates de naissance/délivrance/expiration et, si le permis est fourni, ses catégories et dates.',
           '- Comparer aux données déclarées (nom, prénom, numéro pièce/NPI, plaque) et vérifier les dates par rapport à referenceDateIso.',
           '- Ne prendre aucune décision d’approbation ou de rejet.',
         ].join('\n'),

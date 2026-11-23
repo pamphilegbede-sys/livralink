@@ -2345,7 +2345,7 @@ export const AdminConsole: React.FC = () => {
                         </span>
                       </div>
 
-                      {/* Documents Preview Badges (4 slots obligatoires + compatibilité héritée) */}
+                      {/* Documents Preview Badges (pièces obligatoires + permis facultatif + compatibilité héritée) */}
                       <div className="space-y-2 p-3 bg-white rounded-xl border border-slate-200 text-xs mb-3">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           {getKycDocumentSlots(kyc).map((slot) => (
@@ -2356,10 +2356,14 @@ export const AdminConsole: React.FC = () => {
                               <span className="font-semibold text-slate-700 truncate">{slot.shortLabel}</span>
                               <span
                                 className={`text-[10px] font-bold px-2 py-0.5 rounded shrink-0 ${
-                                  slot.uploaded ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                                  slot.uploaded
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : slot.optional
+                                    ? 'bg-slate-200 text-slate-700'
+                                    : 'bg-red-100 text-red-800'
                                 }`}
                               >
-                                {slot.uploaded ? '✓ Fourni' : '✗ Manquant'}
+                                {slot.uploaded ? '✓ Fourni' : slot.optional ? 'Facultatif' : '✗ Manquant'}
                               </span>
                             </div>
                           ))}
@@ -5237,32 +5241,15 @@ export const AdminConsole: React.FC = () => {
                         {reviewingKycItem.operatingZone || 'Cotonou'}
                       </p>
                     </div>
-
-                    <div className="p-2 bg-slate-50 rounded-xl col-span-2 flex items-center justify-between gap-2">
-                      <span className="text-[11px] font-bold text-slate-600">Attestation d&apos;assurance véhicule :</span>
-                      <span
-                        className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-                          reviewingKycItem.documents.vehicleInsurance?.uploaded
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : reviewingKycItem.documents.assurance
-                            ? 'bg-amber-100 text-amber-800'
-                            : 'bg-red-100 text-red-800'
-                        }`}
-                      >
-                        {reviewingKycItem.documents.vehicleInsurance?.uploaded
-                          ? '✓ Attestation jointe'
-                          : reviewingKycItem.documents.assurance
-                          ? 'Déclarée (attestation manquante)'
-                          : '✗ Attestation manquante'}
-                      </span>
-                    </div>
                   </div>
                 </div>
               </div>
 
-              {/* 4 Documents Justificatifs KYC (Inspection indépendante par pièce) */}
+              {/* Documents Justificatifs KYC (Inspection indépendante par pièce) */}
               {(() => {
                 const slots = getKycDocumentSlots(reviewingKycItem);
+                const requiredUploadedCount = slots.filter((s) => !s.optional && s.uploaded).length;
+                const optionalUploadedCount = slots.filter((s) => s.optional && s.uploaded).length;
                 const hasLegacyOnly =
                   slots.every((s) => !s.uploaded) &&
                   Boolean(reviewingKycItem.documentStoragePath || reviewingKycItem.documentPhotoUrl);
@@ -5273,11 +5260,11 @@ export const AdminConsole: React.FC = () => {
                     <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2 flex-wrap">
                       <h4 className="font-extrabold text-xs uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
                         <span className="material-symbols-outlined text-blue-600 text-sm">badge</span>
-                        <span>3. Pièces Justificatives Transmises (4 documents)</span>
+                        <span>3. Pièces Justificatives Transmises</span>
                       </h4>
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">
-                          {slots.filter((s) => s.uploaded).length} / 4 pièces fournies
+                          {requiredUploadedCount}/2 obligatoires • {optionalUploadedCount}/2 permis facultatif
                         </span>
                         <button
                           type="button"
@@ -5310,6 +5297,10 @@ export const AdminConsole: React.FC = () => {
                                   <p className="text-[10px] text-slate-500 truncate mt-0.5" title={displayFileName}>
                                     {displayFileName}
                                   </p>
+                                ) : slot.optional ? (
+                                  <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+                                    Pièce facultative non fournie
+                                  </p>
                                 ) : (
                                   <p className="text-[10px] text-red-600 font-semibold mt-0.5">
                                     Aucune pièce déposée pour ce champ
@@ -5322,10 +5313,12 @@ export const AdminConsole: React.FC = () => {
                                     ? 'bg-red-100 text-red-800'
                                     : slot.uploaded
                                     ? 'bg-emerald-100 text-emerald-800'
+                                    : slot.optional
+                                    ? 'bg-slate-200 text-slate-700'
                                     : 'bg-red-100 text-red-800'
                                 }`}
                               >
-                                {media?.error ? 'Erreur' : slot.uploaded ? '✓ Fourni' : '✗ Manquant'}
+                                {media?.error ? 'Erreur' : slot.uploaded ? '✓ Fourni' : slot.optional ? 'Facultatif' : '✗ Manquant'}
                               </span>
                             </div>
 
@@ -5335,7 +5328,9 @@ export const AdminConsole: React.FC = () => {
                                   <span className="material-symbols-outlined text-2xl text-slate-400">
                                     image_not_supported
                                   </span>
-                                  <p className="text-[11px] font-bold text-slate-300">Document manquant</p>
+                                  <p className="text-[11px] font-bold text-slate-300">
+                                    {slot.optional ? 'Non fourni (facultatif)' : 'Document manquant'}
+                                  </p>
                                 </div>
                               ) : media?.isLoading || !media ? (
                                 <div className="text-center p-3 space-y-1.5 text-slate-200">
@@ -5492,15 +5487,15 @@ export const AdminConsole: React.FC = () => {
                       <p className="font-bold text-slate-800">Directives de contrôle pour l&apos;administrateur :</p>
                       <ul className="list-disc list-inside space-y-0.5 text-[11px] text-slate-500 leading-relaxed">
                         <li>
-                          Vérifier que l&apos;identité <strong>{reviewingKycItem.fullName}</strong> correspond au recto/verso de la pièce et au permis.
+                          Vérifier que l&apos;identité <strong>{reviewingKycItem.fullName}</strong> correspond au recto/verso de la pièce d&apos;identité.
                         </li>
                         <li>
                           Contrôler le numéro de pièce <strong>{reviewingKycItem.idNumber || '—'}</strong>
                           {reviewingKycItem.npi ? ` (NPI : ${reviewingKycItem.npi})` : ''}.
                         </li>
                         <li>
-                          Vérifier la validité de l&apos;attestation d&apos;assurance et la concordance de l&apos;immatriculation{' '}
-                          <strong>{reviewingKycItem.vehiclePlate || 'Non renseignée'}</strong>.
+                          Si le permis de conduire (facultatif) est joint, vérifier sa lisibilité et la concordance avec l&apos;engin déclaré (plaque{' '}
+                          <strong>{reviewingKycItem.vehiclePlate || 'Non renseignée'}</strong>).
                         </li>
                       </ul>
                     </div>
@@ -5590,8 +5585,8 @@ export const AdminConsole: React.FC = () => {
                 const slotOrder: Array<{ key: KycDocumentSlotKey; title: string }> = [
                   { key: 'idFront', title: "1. Recto pièce d'identité" },
                   { key: 'idBack', title: "2. Verso pièce d'identité" },
-                  { key: 'drivingLicense', title: '3. Permis de conduire' },
-                  { key: 'vehicleInsurance', title: "4. Attestation d'assurance" },
+                  { key: 'drivingLicenseFront', title: '3. Permis de conduire — Recto (facultatif)' },
+                  { key: 'drivingLicenseBack', title: '4. Permis de conduire — Verso (facultatif)' },
                 ];
 
                 return (
@@ -5680,7 +5675,7 @@ export const AdminConsole: React.FC = () => {
                     {aiStatus === 'not_started' && (
                       <p className="text-xs text-slate-600 bg-white p-3.5 rounded-xl border border-slate-200 leading-relaxed">
                         Aucune analyse Gemini n&apos;a encore été exécutée pour ce dossier. Cliquez sur{' '}
-                        <strong>Lancer l&apos;analyse IA</strong> pour extraire les informations clés des 4 documents privés, contrôler la lisibilité, les dates d&apos;expiration et la concordance avec la fiche déclarée.
+                        <strong>Lancer l&apos;analyse IA</strong> pour extraire les informations clés des documents privés, contrôler la lisibilité, les dates d&apos;expiration et la concordance avec la fiche déclarée.
                       </p>
                     )}
 
@@ -5774,18 +5769,6 @@ export const AdminConsole: React.FC = () => {
                                 <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
                                   <p className="text-[10px] text-slate-400 font-bold uppercase">Immatriculation lue</p>
                                   <p className="font-mono font-bold text-blue-700 mt-0.5">{ai.extractedData.vehiclePlate}</p>
-                                </div>
-                              )}
-                              {ai.extractedData.insurancePolicyNumber && (
-                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
-                                  <p className="text-[10px] text-slate-400 font-bold uppercase">N° police assurance</p>
-                                  <p className="font-mono font-bold text-slate-900 mt-0.5">{ai.extractedData.insurancePolicyNumber}</p>
-                                </div>
-                              )}
-                              {ai.extractedData.insuranceExpiresAt && (
-                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
-                                  <p className="text-[10px] text-slate-400 font-bold uppercase">Fin couverture assurance</p>
-                                  <p className="font-bold text-slate-900 mt-0.5">{ai.extractedData.insuranceExpiresAt}</p>
                                 </div>
                               )}
                             </div>

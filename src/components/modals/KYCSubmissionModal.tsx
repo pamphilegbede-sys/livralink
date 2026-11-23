@@ -16,6 +16,12 @@ import {
   normalizeMimeType,
 } from '../../firebase/storageService';
 
+import {
+  KYC_ACTIVE_DOCUMENT_SLOTS,
+  KycFormSlotDescriptor,
+  getMissingRequiredKycSlots,
+} from '../../utils/kycSlots';
+
 export const BENIN_VEHICLE_OPTIONS = [
   'Moto Haujue 115 / 125cc',
   'Moto Bajaj Boxer 100 / 125cc',
@@ -31,44 +37,7 @@ export const BENIN_VEHICLE_OPTIONS = [
   'Autre engin (préciser)',
 ];
 
-interface KycSlotDescriptor {
-  slotKey: KycDocumentSlotKey;
-  docType: KycStorageDocType;
-  title: string;
-  description: string;
-  icon: string;
-}
-
-const KYC_DOCUMENT_SLOTS: KycSlotDescriptor[] = [
-  {
-    slotKey: 'idFront',
-    docType: 'id_front',
-    title: "1. Recto de la pièce d'identité *",
-    description: 'Face avant lisible (CIP, CNI biométrique ou passeport). Les 4 coins doivent être visibles.',
-    icon: 'badge',
-  },
-  {
-    slotKey: 'idBack',
-    docType: 'id_back',
-    title: "2. Verso de la pièce d'identité *",
-    description: 'Face arrière de votre pièce (ou page secondaire / couverture pour passeport).',
-    icon: 'flip_to_back',
-  },
-  {
-    slotKey: 'drivingLicense',
-    docType: 'driving_license',
-    title: '3. Permis de conduire *',
-    description: 'Permis de conduire valide (catégorie A/B ou équivalent) sans reflet ni flou.',
-    icon: 'directions_car',
-  },
-  {
-    slotKey: 'vehicleInsurance',
-    docType: 'vehicle_insurance',
-    title: "4. Attestation d'assurance du véhicule *",
-    description: "Attestation d'assurance circulation en cours de validité pour l'engin déclaré.",
-    icon: 'verified_user',
-  },
-];
+const KYC_DOCUMENT_SLOTS: KycFormSlotDescriptor[] = KYC_ACTIVE_DOCUMENT_SLOTS;
 
 interface KycSlotUiState {
   file: File | null;
@@ -99,8 +68,8 @@ const createEmptySlotState = (): KycSlotUiState => ({
 const createInitialSlotsState = (): Record<KycDocumentSlotKey, KycSlotUiState> => ({
   idFront: createEmptySlotState(),
   idBack: createEmptySlotState(),
-  drivingLicense: createEmptySlotState(),
-  vehicleInsurance: createEmptySlotState(),
+  drivingLicenseFront: createEmptySlotState(),
+  drivingLicenseBack: createEmptySlotState(),
 });
 
 const formatMimeBadge = (mime?: string, fileName?: string): string => {
@@ -169,7 +138,6 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
   );
 
   const [vehiclePlate, setVehiclePlate] = useState(existingKyc?.vehiclePlate || '');
-  const [hasInsurance, setHasInsurance] = useState(true);
   const [hasAgreedTerms, setHasAgreedTerms] = useState(true);
 
   const [slots, setSlots] = useState<Record<KycDocumentSlotKey, KycSlotUiState>>(createInitialSlotsState);
@@ -451,13 +419,13 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     }
   };
 
-  const handleSlotFileChange = (slotDef: KycSlotDescriptor, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSlotFileChange = (slotDef: KycFormSlotDescriptor, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const resolvedMime = normalizeMimeType(file.type, file.name);
     if (!isAllowedKycMimeType(resolvedMime)) {
-      const msg = `${slotDef.title.replace(' *', '')} : format non supporté. Formats acceptés : JPG, JPEG, PNG, WebP ou PDF.`;
+      const msg = `${slotDef.shortTitle} : format non supporté. Formats acceptés : JPG, JPEG, PNG, WebP ou PDF.`;
       setSlots((prev) => ({
         ...prev,
         [slotDef.slotKey]: {
@@ -476,8 +444,8 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     if (file.size <= 0 || file.size >= maxBytes) {
       const msg =
         file.size <= 0
-          ? `${slotDef.title.replace(' *', '')} : le fichier sélectionné est vide.`
-          : `${slotDef.title.replace(' *', '')} : le fichier dépasse la taille maximale autorisée de 10 Mo.`;
+          ? `${slotDef.shortTitle} : le fichier sélectionné est vide.`
+          : `${slotDef.shortTitle} : le fichier dépasse la taille maximale autorisée de 10 Mo.`;
       setSlots((prev) => ({
         ...prev,
         [slotDef.slotKey]: {
@@ -528,8 +496,37 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     e.target.value = '';
   };
 
-  const countCompletedSlots = (): number => {
-    return KYC_DOCUMENT_SLOTS.filter((def) => {
+  const handleDeleteSlot = (slotDef: KycFormSlotDescriptor) => {
+    const previousSlot = slots[slotDef.slotKey];
+    if (previousSlot.uploadedAsset?.storagePath) {
+      const prevPath = previousSlot.uploadedAsset.storagePath;
+      if (sessionUploadedPathsRef.current.has(prevPath)) {
+        sessionUploadedPathsRef.current.delete(prevPath);
+        void cleanupOrphanKYCDocument(prevPath);
+      } else {
+        replacedSavedPathsRef.current.add(prevPath);
+      }
+    }
+    revokeSlotObjectUrl(slotDef.slotKey);
+    setSlots((prev) => ({
+      ...prev,
+      [slotDef.slotKey]: createEmptySlotState(),
+    }));
+    setSubmitError(null);
+  };
+
+  const requiredSlotsList = KYC_DOCUMENT_SLOTS.filter((def) => !def.optional);
+  const optionalLicenseSlotsList = KYC_DOCUMENT_SLOTS.filter((def) => def.optional);
+
+  const countCompletedRequiredSlots = (): number => {
+    return requiredSlotsList.filter((def) => {
+      const s = slots[def.slotKey];
+      return Boolean(s.file || s.uploadedAsset?.storagePath);
+    }).length;
+  };
+
+  const countCompletedOptionalLicenseSlots = (): number => {
+    return optionalLicenseSlotsList.filter((def) => {
       const s = slots[def.slotKey];
       return Boolean(s.file || s.uploadedAsset?.storagePath);
     }).length;
@@ -609,13 +606,21 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       return;
     }
 
-    const missingSlots = KYC_DOCUMENT_SLOTS.filter((def) => {
-      const s = slots[def.slotKey];
-      return !s.file && !s.uploadedAsset?.storagePath;
+    const missingSlots = getMissingRequiredKycSlots({
+      idFront: { hasFile: Boolean(slots.idFront.file), storagePath: slots.idFront.uploadedAsset?.storagePath },
+      idBack: { hasFile: Boolean(slots.idBack.file), storagePath: slots.idBack.uploadedAsset?.storagePath },
+      drivingLicenseFront: {
+        hasFile: Boolean(slots.drivingLicenseFront.file),
+        storagePath: slots.drivingLicenseFront.uploadedAsset?.storagePath,
+      },
+      drivingLicenseBack: {
+        hasFile: Boolean(slots.drivingLicenseBack.file),
+        storagePath: slots.drivingLicenseBack.uploadedAsset?.storagePath,
+      },
     });
 
     if (missingSlots.length > 0) {
-      const missingNames = missingSlots.map((m) => m.title.replace(/^\d+\.\s*/, '').replace(' *', '')).join(', ');
+      const missingNames = missingSlots.map((m) => m.shortTitle).join(', ');
       const msg = `Tous les justificatifs obligatoires doivent être fournis avant la soumission. Manquant(s) : ${missingNames}.`;
       setSlots((prev) => {
         const updated = { ...prev };
@@ -676,6 +681,14 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
 
     const fullFormattedName = `${lastName.trim()} ${firstName.trim()}`.trim();
 
+    const retainedDocuments: KYCUserRequest['documents'] = {};
+    for (const def of KYC_DOCUMENT_SLOTS) {
+      const slot = slots[def.slotKey];
+      if (!slot.file && slot.uploadedAsset?.storagePath && existingKyc?.documents?.[def.slotKey]) {
+        retainedDocuments[def.slotKey] = existingKyc.documents[def.slotKey];
+      }
+    }
+
     const newKycData: Partial<KYCUserRequest> = {
       courierId: activeCourierId,
       lastName: lastName.trim(),
@@ -691,12 +704,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
       ifuNumber: ifuNumber.trim() || undefined,
       operatingZone: operatingZone.trim(),
       pendingFiles,
-      documents: {
-        idFront: existingKyc?.documents?.idFront,
-        idBack: existingKyc?.documents?.idBack,
-        drivingLicense: existingKyc?.documents?.drivingLicense,
-        vehicleInsurance: existingKyc?.documents?.vehicleInsurance,
-      },
+      documents: retainedDocuments,
       status: 'en_attente',
     };
 
@@ -786,7 +794,195 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
     await performSubmit();
   };
 
-  const completedCount = countCompletedSlots();
+  const completedRequiredCount = countCompletedRequiredSlots();
+  const completedOptionalLicenseCount = countCompletedOptionalLicenseSlots();
+
+  const renderSlotCard = (slotDef: KycFormSlotDescriptor) => {
+    const slot = slots[slotDef.slotKey];
+    const hasDoc = Boolean(slot.file || slot.uploadedAsset?.storagePath);
+    const isPdf = normalizeMimeType(slot.mimeType, slot.originalFileName) === 'application/pdf';
+    const formatBadge = hasDoc ? formatMimeBadge(slot.mimeType, slot.originalFileName) : null;
+
+    return (
+      <div
+        key={slotDef.slotKey}
+        data-testid={`kyc-slot-${slotDef.slotKey}`}
+        className={`p-3.5 rounded-2xl border transition-all flex flex-col justify-between gap-2.5 ${
+          slot.uploadStatus === 'error'
+            ? 'bg-red-50/50 dark:bg-red-950/20 border-red-300 dark:border-red-800'
+            : slot.uploadStatus === 'uploaded'
+            ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800'
+            : hasDoc
+            ? 'bg-blue-50/40 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800'
+            : 'bg-slate-50 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700'
+        }`}
+      >
+        <div className="space-y-1">
+          <div className="flex items-start justify-between gap-2">
+            <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5 text-xs">
+              <span className="material-symbols-outlined text-blue-600 text-sm shrink-0">
+                {slotDef.icon}
+              </span>
+              <span>{slotDef.title}</span>
+            </span>
+
+            {slot.uploadStatus === 'uploading' ? (
+              <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold shrink-0">
+                {slot.progress}%
+              </span>
+            ) : slot.uploadStatus === 'uploaded' ? (
+              <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold shrink-0">
+                ✓ Téléversé
+              </span>
+            ) : slot.file ? (
+              <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold shrink-0">
+                Prêt
+              </span>
+            ) : slotDef.optional ? (
+              <span className="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300 text-[10px] font-bold shrink-0">
+                Facultatif
+              </span>
+            ) : (
+              <span className="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300 text-[10px] font-bold shrink-0">
+                Requis
+              </span>
+            )}
+          </div>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+            {slotDef.description}
+          </p>
+        </div>
+
+        {/* Preview Area */}
+        {slot.isLoadingExisting ? (
+          <div className="h-28 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center text-slate-400 bg-white/60 dark:bg-slate-900/40">
+            <span className="material-symbols-outlined text-xl animate-spin">sync</span>
+            <span className="text-[10px] mt-1">Chargement sécurisé...</span>
+          </div>
+        ) : hasDoc ? (
+          <div className="space-y-2 p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+            {isPdf ? (
+              <div className="h-24 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 flex flex-col items-center justify-center text-red-700 dark:text-red-300 gap-1">
+                <span className="material-symbols-outlined text-3xl">picture_as_pdf</span>
+                {slot.previewUrl && (
+                  <a
+                    href={slot.previewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] font-bold underline"
+                  >
+                    Ouvrir le PDF
+                  </a>
+                )}
+              </div>
+            ) : slot.previewUrl ? (
+              <div className="w-full h-32 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-950 flex items-center justify-center">
+                <img
+                  src={slot.previewUrl}
+                  alt={slotDef.shortTitle}
+                  className="w-full h-full object-contain"
+                />
+              </div>
+            ) : (
+              <div className="h-24 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500">
+                <span className="material-symbols-outlined text-3xl">description</span>
+              </div>
+            )}
+
+            <div className="min-w-0 space-y-1 px-0.5">
+              <p className="font-bold text-slate-800 dark:text-slate-100 text-[11px] truncate" title={slot.originalFileName}>
+                {slot.originalFileName || 'Document enregistré'}
+              </p>
+              <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-slate-500 dark:text-slate-400">
+                {formatBadge && (
+                  <span className="px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 font-mono font-bold text-slate-700 dark:text-slate-300">
+                    {formatBadge}
+                  </span>
+                )}
+                {slot.size ? <span>{formatFileSizeFr(slot.size)}</span> : null}
+              </div>
+              {slot.uploadStatus === 'uploading' && (
+                <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                  <div
+                    className="h-full bg-blue-600 transition-all duration-200"
+                    style={{ width: `${Math.max(10, slot.progress)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="h-24 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center text-slate-400 bg-white/50 dark:bg-slate-900/30">
+            <span className="material-symbols-outlined text-xl">add_photo_alternate</span>
+            <span className="text-[10px] mt-0.5">
+              {slotDef.optional ? 'Optionnel • Photo ou fichier (< 10 Mo)' : 'JPG, PNG, WebP ou PDF (< 10 Mo)'}
+            </span>
+          </div>
+        )}
+
+        {slot.error && (
+          <p className="text-[10px] font-bold text-red-700 dark:text-red-300 leading-tight">
+            {slot.error}
+          </p>
+        )}
+
+        {/* Action Buttons: Camera Capture + Gallery/File + Replace + Delete */}
+        <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+          <label
+            className={`flex-1 min-w-[110px] justify-center px-2.5 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl text-slate-800 dark:text-slate-200 font-bold text-[11px] shadow-2xs transition-colors inline-flex items-center gap-1 ${
+              isSubmissionLocked || isSubmitting
+                ? 'opacity-50 pointer-events-none'
+                : 'cursor-pointer'
+            }`}
+          >
+            <span className="material-symbols-outlined text-sm">photo_camera</span>
+            <span>{hasDoc ? 'Reprendre' : 'Prendre une photo'}</span>
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              disabled={isSubmissionLocked || isSubmitting}
+              onChange={(e) => handleSlotFileChange(slotDef, e)}
+              className="hidden"
+            />
+          </label>
+
+          <label
+            className={`flex-1 min-w-[110px] justify-center px-2.5 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl text-slate-800 dark:text-slate-200 font-bold text-[11px] shadow-2xs transition-colors inline-flex items-center gap-1 ${
+              isSubmissionLocked || isSubmitting
+                ? 'opacity-50 pointer-events-none'
+                : 'cursor-pointer'
+            }`}
+          >
+            <span className="material-symbols-outlined text-sm">
+              {hasDoc ? 'swap_horiz' : 'photo_library'}
+            </span>
+            <span>{hasDoc ? 'Remplacer' : 'Galerie / Fichier'}</span>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf"
+              disabled={isSubmissionLocked || isSubmitting}
+              onChange={(e) => handleSlotFileChange(slotDef, e)}
+              className="hidden"
+            />
+          </label>
+
+          {hasDoc && !isSubmissionLocked && (
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={() => handleDeleteSlot(slotDef)}
+              aria-label={`Supprimer ${slotDef.shortTitle}`}
+              className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 dark:bg-red-950/40 dark:hover:bg-red-900/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl font-bold text-[11px] inline-flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-sm">delete</span>
+              <span>Supprimer</span>
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div
@@ -825,7 +1021,7 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                 )}
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Saisie obligatoire de vos informations et dépôt des 4 justificatifs distincts pour validation.
+                Saisie obligatoire de vos informations, pièce d&apos;identité requise et permis de conduire facultatif.
               </p>
             </div>
           </div>
@@ -908,9 +1104,12 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             <div className="flex items-center gap-3 p-3 rounded-2xl bg-blue-100/70 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200 text-xs">
               <span className="material-symbols-outlined text-blue-600 text-2xl shrink-0">shield</span>
               <div>
-                <p className="font-bold">Dossier d&apos;identification complet requis ({completedCount}/4 justificatifs prêts)</p>
+                <p className="font-bold">
+                  Pièce d&apos;identité obligatoire ({completedRequiredCount}/2 pièces prêtes
+                  {completedOptionalLicenseCount > 0 ? ` • permis ${completedOptionalLicenseCount}/2` : ''})
+                </p>
                 <p className="text-[11px] text-blue-800 dark:text-blue-300 mt-0.5">
-                  Téléversez chacun des 4 documents séparément (JPG, PNG, WebP ou PDF, &lt; 10 Mo par fichier).
+                  Téléversez le recto et le verso de votre pièce d&apos;identité (JPG, PNG, WebP ou PDF, &lt; 10 Mo). Le permis de conduire reste facultatif.
                 </p>
               </div>
             </div>
@@ -1101,179 +1300,52 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
               </div>
             )}
 
-            {vehicleSelect === 'Vélo / Deux-roues non motorisé' && (
-              <p className="text-[11px] text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl px-3 py-2">
-                Note : conformément aux règles actuelles d&apos;accréditation, les 4 justificatifs (incluant permis et attestation d&apos;assurance) restent exigés pour valider le dossier.
-              </p>
-            )}
           </div>
 
-          {/* 4 SEPARATE KYC DOCUMENT UPLOAD SLOTS */}
+          {/* 1. REQUIRED IDENTITY DOCUMENTS (RECTO / VERSO) */}
           <div className="space-y-3">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-blue-600 text-base">folder_shared</span>
                 <span className="font-extrabold text-slate-900 dark:text-white text-xs sm:text-sm">
-                  Pièces justificatives obligatoires (4 fichiers distincts)
+                  Pièces d&apos;identité obligatoires
                 </span>
               </div>
               <span
                 className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
-                  completedCount === 4
+                  completedRequiredCount === 2
                     ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
                     : 'bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
                 }`}
               >
-                {completedCount}/4 documents sélectionnés
+                {completedRequiredCount}/2 obligatoires
               </span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {KYC_DOCUMENT_SLOTS.map((slotDef) => {
-                const slot = slots[slotDef.slotKey];
-                const hasDoc = Boolean(slot.file || slot.uploadedAsset?.storagePath);
-                const isPdf = normalizeMimeType(slot.mimeType, slot.originalFileName) === 'application/pdf';
-                const formatBadge = hasDoc ? formatMimeBadge(slot.mimeType, slot.originalFileName) : null;
+              {requiredSlotsList.map((slotDef) => renderSlotCard(slotDef))}
+            </div>
+          </div>
 
-                return (
-                  <div
-                    key={slotDef.slotKey}
-                    className={`p-3.5 rounded-2xl border transition-all flex flex-col justify-between gap-2.5 ${
-                      slot.uploadStatus === 'error'
-                        ? 'bg-red-50/50 dark:bg-red-950/20 border-red-300 dark:border-red-800'
-                        : slot.uploadStatus === 'uploaded'
-                        ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800'
-                        : hasDoc
-                        ? 'bg-blue-50/40 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800'
-                        : 'bg-slate-50 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700'
-                    }`}
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5 text-xs">
-                          <span className="material-symbols-outlined text-blue-600 text-sm shrink-0">
-                            {slotDef.icon}
-                          </span>
-                          <span>{slotDef.title}</span>
-                        </span>
+          {/* 2. OPTIONAL DRIVING LICENSE SECTION (RECTO / VERSO) */}
+          <div className="space-y-3 pt-1">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-blue-600 text-base">directions_car</span>
+                <span className="font-extrabold text-slate-900 dark:text-white text-xs sm:text-sm">
+                  Permis de conduire (facultatif)
+                </span>
+              </div>
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                Facultatif • {completedOptionalLicenseCount}/2 photo{completedOptionalLicenseCount > 1 ? 's' : ''}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              Vous pouvez photographier directement avec votre téléphone ou choisir depuis votre galerie le recto et/ou le verso de votre permis. Leur absence n&apos;empêche pas la soumission du dossier.
+            </p>
 
-                        {slot.uploadStatus === 'uploading' ? (
-                          <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold shrink-0">
-                            {slot.progress}%
-                          </span>
-                        ) : slot.uploadStatus === 'uploaded' ? (
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold shrink-0">
-                            ✓ Téléversé
-                          </span>
-                        ) : slot.file ? (
-                          <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold shrink-0">
-                            Prêt
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300 text-[10px] font-bold shrink-0">
-                            Requis
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                        {slotDef.description}
-                      </p>
-                    </div>
-
-                    {/* Preview Area */}
-                    {slot.isLoadingExisting ? (
-                      <div className="h-24 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center text-slate-400 bg-white/60 dark:bg-slate-900/40">
-                        <span className="material-symbols-outlined text-xl animate-spin">sync</span>
-                        <span className="text-[10px] mt-1">Chargement sécurisé...</span>
-                      </div>
-                    ) : hasDoc ? (
-                      <div className="flex items-center gap-2.5 p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
-                        {isPdf ? (
-                          <div className="w-16 h-16 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 flex flex-col items-center justify-center shrink-0 text-red-700 dark:text-red-300">
-                            <span className="material-symbols-outlined text-2xl">picture_as_pdf</span>
-                            {slot.previewUrl && (
-                              <a
-                                href={slot.previewUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-[9px] font-bold underline"
-                              >
-                                Ouvrir
-                              </a>
-                            )}
-                          </div>
-                        ) : slot.previewUrl ? (
-                          <img
-                            src={slot.previewUrl}
-                            alt={slotDef.title}
-                            className="w-16 h-16 rounded-lg object-cover border border-slate-200 dark:border-slate-700 shrink-0 bg-slate-100"
-                          />
-                        ) : (
-                          <div className="w-16 h-16 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0 text-slate-500">
-                            <span className="material-symbols-outlined text-2xl">description</span>
-                          </div>
-                        )}
-
-                        <div className="min-w-0 flex-1 space-y-1">
-                          <p className="font-bold text-slate-800 dark:text-slate-100 text-[11px] truncate" title={slot.originalFileName}>
-                            {slot.originalFileName || 'Document enregistré'}
-                          </p>
-                          <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-slate-500 dark:text-slate-400">
-                            {formatBadge && (
-                              <span className="px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 font-mono font-bold text-slate-700 dark:text-slate-300">
-                                {formatBadge}
-                              </span>
-                            )}
-                            {slot.size ? <span>{formatFileSizeFr(slot.size)}</span> : null}
-                          </div>
-                          {slot.uploadStatus === 'uploading' && (
-                            <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-                              <div
-                                className="h-full bg-blue-600 transition-all duration-200"
-                                style={{ width: `${Math.max(10, slot.progress)}%` }}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="h-20 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center text-slate-400 bg-white/50 dark:bg-slate-900/30">
-                        <span className="material-symbols-outlined text-xl">add_photo_alternate</span>
-                        <span className="text-[10px] mt-0.5">JPG, PNG, WebP ou PDF (&lt; 10 Mo)</span>
-                      </div>
-                    )}
-
-                    {slot.error && (
-                      <p className="text-[10px] font-bold text-red-700 dark:text-red-300 leading-tight">
-                        {slot.error}
-                      </p>
-                    )}
-
-                    {/* Action Picker / Replace Button */}
-                    <div className="flex items-center justify-between gap-2 pt-0.5">
-                      <label
-                        className={`w-full justify-center px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl text-slate-800 dark:text-slate-200 font-bold text-[11px] shadow-2xs transition-colors inline-flex items-center gap-1.5 ${
-                          isSubmissionLocked || isSubmitting
-                            ? 'opacity-50 pointer-events-none'
-                            : 'cursor-pointer'
-                        }`}
-                      >
-                        <span className="material-symbols-outlined text-sm">
-                          {hasDoc ? 'swap_horiz' : 'upload_file'}
-                        </span>
-                        <span>{hasDoc ? 'Remplacer le fichier' : 'Sélectionner un fichier'}</span>
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf"
-                          disabled={isSubmissionLocked || isSubmitting}
-                          onChange={(e) => handleSlotFileChange(slotDef, e)}
-                          className="hidden"
-                        />
-                      </label>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {optionalLicenseSlotsList.map((slotDef) => renderSlotCard(slotDef))}
             </div>
           </div>
 
@@ -1295,26 +1367,13 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
             <label className="flex items-start gap-2.5 cursor-pointer">
               <input
                 type="checkbox"
-                checked={hasInsurance}
-                disabled={isSubmissionLocked || isSubmitting}
-                onChange={(e) => setHasInsurance(e.target.checked)}
-                className="mt-0.5 rounded text-blue-600 focus:ring-blue-500"
-              />
-              <span className="text-slate-600 dark:text-slate-400 text-[11px]">
-                Mon engin / véhicule dispose d&apos;une assurance circulation valide au Bénin (attestation jointe ci-dessus).
-              </span>
-            </label>
-
-            <label className="flex items-start gap-2.5 cursor-pointer">
-              <input
-                type="checkbox"
                 checked={hasAgreedTerms}
                 disabled={isSubmissionLocked || isSubmitting}
                 onChange={(e) => setHasAgreedTerms(e.target.checked)}
                 className="mt-0.5 rounded text-blue-600 focus:ring-blue-500"
               />
               <span className="text-slate-600 dark:text-slate-400 text-[11px]">
-                Je certifie sur l&apos;honneur l&apos;exactitude des informations et des 4 pièces fournies et accepte le contrôle d&apos;accréditation LivraLink (incluant l&apos;analyse documentaire assistée décrite ci-dessus).
+                Je certifie sur l&apos;honneur l&apos;exactitude des informations et des pièces justificatives fournies et accepte le contrôle d&apos;accréditation LivraLink (incluant l&apos;analyse documentaire assistée décrite ci-dessus).
               </span>
             </label>
           </div>

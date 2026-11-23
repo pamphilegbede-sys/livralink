@@ -924,14 +924,16 @@ test('Express API security & health integration tests', async (t) => {
       assert.equal(vendorRes.status, 403);
       assert.equal((await vendorRes.json()).stepCode, 'KYC-STEP-A');
 
-      // 2c. Unsupported docType (ex: legacy 'cni' or arbitrary string) -> 400 KYC-STEP-B
-      const badDocTypeRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-verified-tok' },
-        body: JSON.stringify({ docType: 'cni', contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
-      });
-      assert.equal(badDocTypeRes.status, 400);
-      assert.equal((await badDocTypeRes.json()).stepCode, 'KYC-STEP-B');
+      // 2c. Unsupported docType (ex: removed 'vehicle_insurance', legacy 'cni', or arbitrary string) -> 400 KYC-STEP-B
+      for (const forbiddenDocType of ['cni', 'vehicle_insurance', 'driving_license']) {
+        const badDocTypeRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-verified-tok' },
+          body: JSON.stringify({ docType: forbiddenDocType, contentType: 'image/jpeg', dataBase64: validJpgBase64 }),
+        });
+        assert.equal(badDocTypeRes.status, 400);
+        assert.equal((await badDocTypeRes.json()).stepCode, 'KYC-STEP-B');
+      }
 
       // 3. Pending or validated KYC dossier -> 409 KYC-STEP-C
       for (const blockedStatus of ['en_attente', 'valide'] as const) {
@@ -1111,8 +1113,8 @@ test('Express API security & health integration tests', async (t) => {
       assert.equal((await lockedClaimRes.json()).stepCode, 'KYC-STEP-C');
       simulateFirestorePrecheckError = false;
 
-      // 2. Courier uploads all 4 distinct KYC documents
-      const docTypes = ['id_front', 'id_back', 'driving_license', 'vehicle_insurance'] as const;
+      // 2. Courier uploads required ID docs + optional 2-sided driving license (recto & verso)
+      const docTypes = ['id_front', 'id_back', 'driving_license_front', 'driving_license_back'] as const;
       const uploadedByType: Record<string, any> = {};
       for (const dt of docTypes) {
         const upRes = await fetch(`${baseUrl}/api/courier/kyc/upload`, {
@@ -1127,7 +1129,7 @@ test('Express API security & health integration tests', async (t) => {
         uploadedByType[dt] = upBody;
       }
 
-      // Persist 4-slot KYC dossier as client batch.commit() does
+      // Persist KYC dossier (with required idFront/idBack + optional drivingLicenseFront/Back)
       const submittedAtIso = new Date().toISOString();
       getCol('kyc').set('courier_e2e', {
         id: 'courier_e2e',
@@ -1163,29 +1165,28 @@ test('Express API security & health integration tests', async (t) => {
             uploadedAt: submittedAtIso,
             uploadedBy: 'courier_e2e',
           },
-          drivingLicense: {
+          drivingLicenseFront: {
             uploaded: true,
-            storagePath: uploadedByType.driving_license.storagePath,
-            docType: 'driving_license',
-            fileName: uploadedByType.driving_license.fileName,
+            storagePath: uploadedByType.driving_license_front.storagePath,
+            docType: 'driving_license_front',
+            fileName: uploadedByType.driving_license_front.fileName,
             mimeType: 'application/pdf',
-            size: uploadedByType.driving_license.size,
+            size: uploadedByType.driving_license_front.size,
             uploadedAt: submittedAtIso,
             uploadedBy: 'courier_e2e',
           },
-          vehicleInsurance: {
+          drivingLicenseBack: {
             uploaded: true,
-            storagePath: uploadedByType.vehicle_insurance.storagePath,
-            docType: 'vehicle_insurance',
-            fileName: uploadedByType.vehicle_insurance.fileName,
+            storagePath: uploadedByType.driving_license_back.storagePath,
+            docType: 'driving_license_back',
+            fileName: uploadedByType.driving_license_back.fileName,
             mimeType: 'application/pdf',
-            size: uploadedByType.vehicle_insurance.size,
+            size: uploadedByType.driving_license_back.size,
             uploadedAt: submittedAtIso,
             uploadedBy: 'courier_e2e',
           },
           cni: true,
           permis: true,
-          assurance: true,
         },
       });
 
@@ -1209,11 +1210,11 @@ test('Express API security & health integration tests', async (t) => {
       assert.equal(adminNotif.recipientId, 'super_admin_e2e');
       assert.equal(adminNotif.actionView, 'admin_kyc');
 
-      // 2c. Active 4-slot documents cannot be deleted via cleanup-orphan (409), while unreferenced orphan succeeds
+      // 2c. Active documents cannot be deleted via cleanup-orphan (409), while unreferenced orphan succeeds
       const protectedCleanupRes = await fetch(`${baseUrl}/api/courier/kyc/cleanup-orphan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-e2e-tok' },
-        body: JSON.stringify({ storagePath: uploadedByType.vehicle_insurance.storagePath }),
+        body: JSON.stringify({ storagePath: uploadedByType.driving_license_back.storagePath }),
       });
       assert.equal(protectedCleanupRes.status, 409);
 
@@ -1236,13 +1237,13 @@ test('Express API security & health integration tests', async (t) => {
       assert.equal(syncBody.kycRequests.length, 1);
       assert.equal(syncBody.kycRequests[0].documentStoragePath, uploadedByType.id_front.storagePath);
 
-      const adminDocRes = await fetch(`${baseUrl}/api/kyc/document?path=${encodeURIComponent(uploadedByType.vehicle_insurance.storagePath)}`, {
+      const adminDocRes = await fetch(`${baseUrl}/api/kyc/document?path=${encodeURIComponent(uploadedByType.driving_license_back.storagePath)}`, {
         headers: { Authorization: 'Bearer admin-e2e-tok' },
       });
       assert.equal(adminDocRes.status, 200);
       assert.equal(adminDocRes.headers.get('content-type'), 'application/pdf');
 
-      const ownerDocRes = await fetch(`${baseUrl}/api/kyc/document?path=${encodeURIComponent(uploadedByType.driving_license.storagePath)}`, {
+      const ownerDocRes = await fetch(`${baseUrl}/api/kyc/document?path=${encodeURIComponent(uploadedByType.driving_license_front.storagePath)}`, {
         headers: { Authorization: 'Bearer courier-e2e-tok' },
       });
       assert.equal(ownerDocRes.status, 200);
@@ -1289,5 +1290,159 @@ test('Express API security & health integration tests', async (t) => {
       serverMod.setTokenVerifierForTests(null);
     }
   });
+
+  await t.test('KYC optional driving license combinations (none, front-only, back-only, both) pass notify-submitted and admin decision', async () => {
+    const serverMod = await import('../../server');
+    const combinations: Array<{
+      label: string;
+      includeFront: boolean;
+      includeBack: boolean;
+      expectedCount: number;
+    }> = [
+      { label: '0 license photo (idFront+idBack only)', includeFront: false, includeBack: false, expectedCount: 2 },
+      { label: 'front only', includeFront: true, includeBack: false, expectedCount: 3 },
+      { label: 'back only', includeFront: false, includeBack: true, expectedCount: 3 },
+      { label: 'both front and back', includeFront: true, includeBack: true, expectedCount: 4 },
+    ];
+
+    for (let idx = 0; idx < combinations.length; idx += 1) {
+      const combo = combinations[idx];
+      const uid = `courier_opt_${idx}`;
+      const collections = new Map<string, Map<string, Record<string, any>>>([
+        [
+          'users',
+          new Map([
+            [uid, { uid, email: `${uid}@livralink.bj`, fullName: `Courier ${idx}`, role: 'livreur', isKycVerified: false, kycStatus: 'non_soumis' }],
+            ['super_admin_opt', { uid: 'super_admin_opt', email: 'pamphile.gbede@gmail.com', fullName: 'Super Admin', role: 'admin' }],
+          ]),
+        ],
+        ['admins', new Map([['super_admin_opt', { uid: 'super_admin_opt', email: 'pamphile.gbede@gmail.com' }]])],
+        ['kyc', new Map()],
+        ['notifications', new Map()],
+      ]);
+
+      serverMod.setTokenVerifierForTests(async (tok) => {
+        if (tok === 'courier-opt-tok') return { uid, email: `${uid}@livralink.bj`, email_verified: true };
+        if (tok === 'admin-opt-tok') return { uid: 'super_admin_opt', email: 'pamphile.gbede@gmail.com', email_verified: true };
+        throw new Error('Invalid token');
+      });
+
+      const getCol = (name: string) => {
+        if (!collections.has(name)) collections.set(name, new Map());
+        return collections.get(name)!;
+      };
+
+      serverMod.setFirestoreAdminForTests({
+        collection: (name: string) => ({
+          get: async () => ({
+            docs: Array.from(getCol(name).entries()).map(([id, data]) => ({ id, data: () => data })),
+            forEach: (cb: (snap: { id: string; data: () => Record<string, any> }) => void) => {
+              for (const [id, data] of getCol(name).entries()) cb({ id, data: () => data });
+            },
+          }),
+          doc: (id: string) => ({
+            _col: name,
+            _id: id,
+            get: async () => {
+              const col = getCol(name);
+              return { id, exists: col.has(id), data: () => col.get(id) };
+            },
+            set: async (payload: Record<string, any>, opts?: { merge?: boolean }) => {
+              const col = getCol(name);
+              const prev = opts?.merge ? col.get(id) || {} : {};
+              col.set(id, { ...prev, ...payload });
+            },
+          }),
+        }),
+        batch: () => {
+          const ops: Array<() => void> = [];
+          return {
+            set: (ref: { _col: string; _id: string }, payload: Record<string, any>, opts?: { merge?: boolean }) => {
+              ops.push(() => {
+                const col = getCol(ref._col);
+                const prev = opts?.merge ? col.get(ref._id) || {} : {};
+                col.set(ref._id, { ...prev, ...payload });
+              });
+            },
+            commit: async () => ops.forEach((fn) => fn()),
+          };
+        },
+      });
+
+      try {
+        const docs: Record<string, any> = {
+          idFront: {
+            uploaded: true,
+            storagePath: `kyc/${uid}/id_front/id_front_1.pdf`,
+            docType: 'id_front',
+            fileName: 'id_front_1.pdf',
+            mimeType: 'application/pdf',
+            uploadedBy: uid,
+          },
+          idBack: {
+            uploaded: true,
+            storagePath: `kyc/${uid}/id_back/id_back_1.pdf`,
+            docType: 'id_back',
+            fileName: 'id_back_1.pdf',
+            mimeType: 'application/pdf',
+            uploadedBy: uid,
+          },
+          cni: true,
+          permis: combo.includeFront || combo.includeBack,
+        };
+        if (combo.includeFront) {
+          docs.drivingLicenseFront = {
+            uploaded: true,
+            storagePath: `kyc/${uid}/driving_license_front/dl_front_1.pdf`,
+            docType: 'driving_license_front',
+            fileName: 'dl_front_1.pdf',
+            mimeType: 'application/pdf',
+            uploadedBy: uid,
+          };
+        }
+        if (combo.includeBack) {
+          docs.drivingLicenseBack = {
+            uploaded: true,
+            storagePath: `kyc/${uid}/driving_license_back/dl_back_1.pdf`,
+            docType: 'driving_license_back',
+            fileName: 'dl_back_1.pdf',
+            mimeType: 'application/pdf',
+            uploadedBy: uid,
+          };
+        }
+
+        getCol('kyc').set(uid, {
+          id: uid,
+          userId: uid,
+          courierId: uid,
+          fullName: `Courier ${idx}`,
+          status: 'en_attente',
+          submittedAt: new Date().toISOString(),
+          documentStoragePath: `kyc/${uid}/id_front/id_front_1.pdf`,
+          documents: docs,
+        });
+
+        const notifyRes = await fetch(`${baseUrl}/api/courier/kyc/notify-submitted`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer courier-opt-tok' },
+        });
+        assert.equal(notifyRes.status, 200, `${combo.label}: notify-submitted failed`);
+        const adminNotif = Array.from(getCol('notifications').values())[0];
+        assert.equal(adminNotif.message.includes(`${combo.expectedCount} justificatif(s)`), true, `${combo.label}: expected ${combo.expectedCount} justificatif(s) in "${adminNotif.message}"`);
+
+        const approveRes = await fetch(`${baseUrl}/api/admin/kyc/decision`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer admin-opt-tok' },
+          body: JSON.stringify({ targetUid: uid, requestId: uid, decision: 'valide' }),
+        });
+        assert.equal(approveRes.status, 200, `${combo.label}: admin approval failed`);
+        assert.equal(getCol('kyc').get(uid)?.status, 'valide');
+      } finally {
+        serverMod.setFirestoreAdminForTests(null);
+        serverMod.setTokenVerifierForTests(null);
+      }
+    }
+  });
 });
+
 

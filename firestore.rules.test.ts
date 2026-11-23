@@ -1651,21 +1651,21 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
         uploadedAt: new Date().toISOString(),
         uploadedBy: 'courier_4slot_36',
       },
-      drivingLicense: {
+      drivingLicenseFront: {
         uploaded: true,
-        storagePath: 'kyc/courier_4slot_36/driving_license/driving_license_1_c.pdf',
-        docType: 'driving_license',
-        fileName: 'driving_license_1_c.pdf',
+        storagePath: 'kyc/courier_4slot_36/driving_license_front/driving_license_front_1_c.pdf',
+        docType: 'driving_license_front',
+        fileName: 'driving_license_front_1_c.pdf',
         mimeType: 'application/pdf',
         size: 25000,
         uploadedAt: new Date().toISOString(),
         uploadedBy: 'courier_4slot_36',
       },
-      vehicleInsurance: {
+      drivingLicenseBack: {
         uploaded: true,
-        storagePath: 'kyc/courier_4slot_36/vehicle_insurance/vehicle_insurance_1_d.pdf',
-        docType: 'vehicle_insurance',
-        fileName: 'vehicle_insurance_1_d.pdf',
+        storagePath: 'kyc/courier_4slot_36/driving_license_back/driving_license_back_1_d.pdf',
+        docType: 'driving_license_back',
+        fileName: 'driving_license_back_1_d.pdf',
         mimeType: 'application/pdf',
         size: 30000,
         uploadedAt: new Date().toISOString(),
@@ -1673,7 +1673,6 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
       },
       cni: true,
       permis: true,
-      assurance: true,
     };
 
     // 1. Client cannot inject aiAnalysis or reviewedAt
@@ -1709,7 +1708,7 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
       })
     );
 
-    // 3. Valid 4-slot dossier submission succeeds
+    // 3. Valid dossier submission succeeds (with or without optional driving license front/back)
     await assertSucceeds(
       courierDb.doc('kyc/courier_4slot_36').set({
         id: 'courier_4slot_36',

@@ -234,8 +234,8 @@ service cloud.firestore {
              slot.storagePath.size() >= 10 &&
              slot.storagePath.size() <= 300 &&
              !slot.storagePath.matches('.*\\.\\..*') &&
-             slot.storagePath.matches('^kyc/' + uid + '/(id_front|id_back|driving_license|vehicle_insurance)/[a-zA-Z0-9_.-]+$') &&
-             slot.docType in ['id_front', 'id_back', 'driving_license', 'vehicle_insurance'] &&
+             slot.storagePath.matches('^kyc/' + uid + '/(id_front|id_back|driving_license_front|driving_license_back|driving_license)/[a-zA-Z0-9_.-]+$') &&
+             slot.docType in ['id_front', 'id_back', 'driving_license_front', 'driving_license_back', 'driving_license'] &&
              slot.fileName is string &&
              slot.fileName.size() >= 1 &&
              slot.fileName.size() <= 180 &&
@@ -250,8 +250,9 @@ service cloud.firestore {
       return docs is map &&
              (!('idFront' in docs) || isValidKycSlotMeta(docs.idFront, uid)) &&
              (!('idBack' in docs) || isValidKycSlotMeta(docs.idBack, uid)) &&
-             (!('drivingLicense' in docs) || isValidKycSlotMeta(docs.drivingLicense, uid)) &&
-             (!('vehicleInsurance' in docs) || isValidKycSlotMeta(docs.vehicleInsurance, uid));
+             (!('drivingLicenseFront' in docs) || isValidKycSlotMeta(docs.drivingLicenseFront, uid)) &&
+             (!('drivingLicenseBack' in docs) || isValidKycSlotMeta(docs.drivingLicenseBack, uid)) &&
+             (!('drivingLicense' in docs) || isValidKycSlotMeta(docs.drivingLicense, uid));
     }
 
     function isValidKYCDossier(data) {

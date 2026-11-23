@@ -174,7 +174,7 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
     );
 
-    // Admin can store all 4 structured slots (JPG, PNG, WebP, PDF) and legacy 2-segment files
+    // Admin can store all structured slots (id_front, id_back, driving_license_front, driving_license_back) and legacy 2-segment files
     await assertSucceeds(
       superAdminStorage.ref('kyc/courier_kyc_1/id_front/recto.jpg').put(Buffer.from('jpg-bytes'), {
         contentType: 'image/jpeg',
@@ -188,19 +188,25 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
       })
     );
     await assertSucceeds(
-      superAdminStorage.ref('kyc/courier_kyc_1/driving_license/permis.webp').put(Buffer.from('webp-bytes'), {
+      superAdminStorage.ref('kyc/courier_kyc_1/driving_license_front/permis_recto.webp').put(Buffer.from('webp-bytes'), {
         contentType: 'image/webp',
         customMetadata: { uploadedBy: 'super_admin' },
       })
     );
     await assertSucceeds(
-      claimAdminStorage.ref('kyc/courier_kyc_1/vehicle_insurance/assurance.pdf').put(Buffer.from('%PDF-1.4\n1 0 obj'), {
+      claimAdminStorage.ref('kyc/courier_kyc_1/driving_license_back/permis_verso.pdf').put(Buffer.from('%PDF-1.4\n1 0 obj'), {
         contentType: 'application/pdf',
         customMetadata: { uploadedBy: 'sub_admin' },
       })
     );
 
-    // Invalid docSlot, invalid MIME, empty/oversized file, and missing/forged uploadedBy rejected even for Admin
+    // Invalid/removed docSlot (vehicle_insurance), invalid MIME, empty/oversized file, and missing/forged uploadedBy rejected even for Admin
+    await assertFails(
+      superAdminStorage.ref('kyc/courier_kyc_1/vehicle_insurance/assurance.pdf').put(Buffer.from('%PDF-1.4\n1 0 obj'), {
+        contentType: 'application/pdf',
+        customMetadata: { uploadedBy: 'super_admin' },
+      })
+    );
     await assertFails(
       superAdminStorage.ref('kyc/courier_kyc_1/unknown_slot/doc.jpg').put(Buffer.from('jpg-bytes'), {
         contentType: 'image/jpeg',
@@ -246,12 +252,12 @@ describe('LivraLink Firebase Storage Security Rules Test Suite', () => {
     );
 
     // Owner, Super-Admin (verified), and claim-Admin can read/inspect; unverified Super-Admin & outsider strictly denied
-    await assertSucceeds(courierStorage.ref('kyc/courier_kyc_1/vehicle_insurance/assurance.pdf').getMetadata());
-    await assertSucceeds(courierStorage.ref('kyc/courier_kyc_1/vehicle_insurance/assurance.pdf').getDownloadURL());
-    await assertSucceeds(superAdminStorage.ref('kyc/courier_kyc_1/vehicle_insurance/assurance.pdf').getMetadata());
-    await assertSucceeds(claimAdminStorage.ref('kyc/courier_kyc_1/vehicle_insurance/assurance.pdf').getMetadata());
-    await assertFails(unverifiedSuperAdminStorage.ref('kyc/courier_kyc_1/vehicle_insurance/assurance.pdf').getMetadata());
-    await assertFails(outsiderStorage.ref('kyc/courier_kyc_1/vehicle_insurance/assurance.pdf').getMetadata());
+    await assertSucceeds(courierStorage.ref('kyc/courier_kyc_1/driving_license_back/permis_verso.pdf').getMetadata());
+    await assertSucceeds(courierStorage.ref('kyc/courier_kyc_1/driving_license_back/permis_verso.pdf').getDownloadURL());
+    await assertSucceeds(superAdminStorage.ref('kyc/courier_kyc_1/driving_license_back/permis_verso.pdf').getMetadata());
+    await assertSucceeds(claimAdminStorage.ref('kyc/courier_kyc_1/driving_license_back/permis_verso.pdf').getMetadata());
+    await assertFails(unverifiedSuperAdminStorage.ref('kyc/courier_kyc_1/driving_license_back/permis_verso.pdf').getMetadata());
+    await assertFails(outsiderStorage.ref('kyc/courier_kyc_1/driving_license_back/permis_verso.pdf').getMetadata());
     await assertFails(outsiderStorage.ref('kyc/courier_kyc_1/id_front/recto.jpg').getDownloadURL());
   });
 

@@ -429,41 +429,46 @@ export const mergeRemoteUsersIntoAdminLists = (params: {
 };
 
 const KYC_SLOT_DEFS: Array<{
-  slotKey: 'idFront' | 'idBack' | 'drivingLicense' | 'vehicleInsurance';
-  docType: 'id_front' | 'id_back' | 'driving_license' | 'vehicle_insurance';
+  slotKey: 'idFront' | 'idBack' | 'drivingLicenseFront' | 'drivingLicenseBack';
+  docType: 'id_front' | 'id_back' | 'driving_license_front' | 'driving_license_back';
   label: string;
   shortLabel: string;
+  optional: boolean;
 }> = [
   {
     slotKey: 'idFront',
     docType: 'id_front',
     label: "Recto de la pièce d'identité",
     shortLabel: 'Recto pièce',
+    optional: false,
   },
   {
     slotKey: 'idBack',
     docType: 'id_back',
     label: "Verso de la pièce d'identité",
     shortLabel: 'Verso pièce',
+    optional: false,
   },
   {
-    slotKey: 'drivingLicense',
-    docType: 'driving_license',
-    label: 'Permis de conduire',
-    shortLabel: 'Permis',
+    slotKey: 'drivingLicenseFront',
+    docType: 'driving_license_front',
+    label: 'Permis de conduire — Recto (facultatif)',
+    shortLabel: 'Permis recto',
+    optional: true,
   },
   {
-    slotKey: 'vehicleInsurance',
-    docType: 'vehicle_insurance',
-    label: "Attestation d'assurance du véhicule",
-    shortLabel: 'Assurance',
+    slotKey: 'drivingLicenseBack',
+    docType: 'driving_license_back',
+    label: 'Permis de conduire — Verso (facultatif)',
+    shortLabel: 'Permis verso',
+    optional: true,
   },
 ];
 
 const parseKycUploadedMeta = (
   raw: any,
-  slotKey: 'idFront' | 'idBack' | 'drivingLicense' | 'vehicleInsurance',
-  fallbackDocType: 'id_front' | 'id_back' | 'driving_license' | 'vehicle_insurance'
+  slotKey: 'idFront' | 'idBack' | 'drivingLicenseFront' | 'drivingLicenseBack' | 'drivingLicense',
+  fallbackDocType: 'id_front' | 'id_back' | 'driving_license_front' | 'driving_license_back' | 'driving_license'
 ) => {
   if (!raw || typeof raw !== 'object') return undefined;
   const storagePath = typeof raw.storagePath === 'string' ? raw.storagePath.trim() : '';
@@ -487,10 +492,11 @@ const parseKycUploadedMeta = (
 };
 
 export interface NormalizedKycSlotEntry {
-  slotKey: 'idFront' | 'idBack' | 'drivingLicense' | 'vehicleInsurance';
-  docType: 'id_front' | 'id_back' | 'driving_license' | 'vehicle_insurance';
+  slotKey: 'idFront' | 'idBack' | 'drivingLicenseFront' | 'drivingLicenseBack';
+  docType: 'id_front' | 'id_back' | 'driving_license_front' | 'driving_license_back';
   label: string;
   shortLabel: string;
+  optional: boolean;
   uploaded: boolean;
   meta?: NonNullable<KYCUserRequest['documents']['idFront']>;
 }
@@ -498,13 +504,16 @@ export interface NormalizedKycSlotEntry {
 export const getKycDocumentSlots = (kyc?: Partial<KYCUserRequest> | null): NormalizedKycSlotEntry[] => {
   const docs = (kyc?.documents || {}) as KYCUserRequest['documents'];
   return KYC_SLOT_DEFS.map((def) => {
-    const meta = docs[def.slotKey];
+    const meta =
+      docs[def.slotKey] ||
+      (def.slotKey === 'drivingLicenseFront' ? docs.drivingLicense : undefined);
     const isUploaded = Boolean(meta && meta.uploaded !== false && typeof meta.storagePath === 'string' && meta.storagePath.trim().length > 0);
     return {
       slotKey: def.slotKey,
       docType: def.docType,
       label: def.label,
       shortLabel: def.shortLabel,
+      optional: def.optional,
       uploaded: isUploaded,
       meta: isUploaded ? meta : undefined,
     };
@@ -543,8 +552,11 @@ export const mapFirestoreKycToRequest = (data: any, docId: string): KYCUserReque
   const rawDocs = data.documents && typeof data.documents === 'object' ? data.documents : {};
   const idFront = parseKycUploadedMeta(rawDocs.idFront, 'idFront', 'id_front');
   const idBack = parseKycUploadedMeta(rawDocs.idBack, 'idBack', 'id_back');
-  const drivingLicense = parseKycUploadedMeta(rawDocs.drivingLicense, 'drivingLicense', 'driving_license');
-  const vehicleInsurance = parseKycUploadedMeta(rawDocs.vehicleInsurance, 'vehicleInsurance', 'vehicle_insurance');
+  const drivingLicenseFront = parseKycUploadedMeta(rawDocs.drivingLicenseFront, 'drivingLicenseFront', 'driving_license_front');
+  const drivingLicenseBack = parseKycUploadedMeta(rawDocs.drivingLicenseBack, 'drivingLicenseBack', 'driving_license_back');
+  const legacyDrivingLicense = !drivingLicenseFront
+    ? parseKycUploadedMeta(rawDocs.drivingLicense, 'drivingLicense', 'driving_license')
+    : undefined;
 
   const legacyPath = typeof data.documentStoragePath === 'string' ? data.documentStoragePath.trim() : '';
   const legacyUrl = typeof (data.documentPhotoUrl || data.cniUrl) === 'string' ? String(data.documentPhotoUrl || data.cniUrl).trim() : '';
@@ -568,8 +580,9 @@ export const mapFirestoreKycToRequest = (data: any, docId: string): KYCUserReque
     documents: {
       ...(idFront ? { idFront } : {}),
       ...(idBack ? { idBack } : {}),
-      ...(drivingLicense ? { drivingLicense } : {}),
-      ...(vehicleInsurance ? { vehicleInsurance } : {}),
+      ...(drivingLicenseFront ? { drivingLicenseFront } : {}),
+      ...(drivingLicenseBack ? { drivingLicenseBack } : {}),
+      ...(legacyDrivingLicense ? { drivingLicense: legacyDrivingLicense } : {}),
       cni: Boolean(
         idFront?.uploaded ||
           idBack?.uploaded ||
@@ -578,14 +591,11 @@ export const mapFirestoreKycToRequest = (data: any, docId: string): KYCUserReque
           legacyPath
       ),
       permis: Boolean(
-        drivingLicense?.uploaded ||
+        drivingLicenseFront?.uploaded ||
+          drivingLicenseBack?.uploaded ||
+          legacyDrivingLicense?.uploaded ||
           rawDocs.permis === true ||
           data.permisUrl
-      ),
-      assurance: Boolean(
-        vehicleInsurance?.uploaded ||
-          rawDocs.assurance === true ||
-          data.assuranceUrl
       ),
     },
     status: data.status || 'en_attente',

@@ -4326,10 +4326,15 @@ app.post('/api/courier/kyc/notify-submitted', requireVerifiedUser as any, async 
     const nowEpoch = Date.now();
     const timeLabel = new Date(nowEpoch).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
+    const docsObj = kycData?.documents && typeof kycData.documents === 'object' ? kycData.documents : {};
+    const uploadedDocsCount = ['idFront', 'idBack', 'drivingLicenseFront', 'drivingLicenseBack'].filter(
+      (k) => docsObj[k] && docsObj[k].uploaded !== false && docsObj[k].storagePath
+    ).length || 2;
+
     const title = isResubmission
       ? '🔄 Dossier KYC re-soumis pour contrôle'
       : '🛡️ Nouveau dossier KYC à vérifier';
-    const message = `${fullName} (${vehicleType} • ${idType}) a transmis ses 4 pièces justificatives pour vérification à ${timeLabel}.`;
+    const message = `${fullName} (${vehicleType} • ${idType}) a transmis son dossier KYC (${uploadedDocsCount} justificatif(s)) pour vérification à ${timeLabel}.`;
 
     let notifiedAdminCount = 0;
     const batch = activeDb.batch();
@@ -4378,12 +4383,12 @@ app.post('/api/courier/kyc/notify-submitted', requireVerifiedUser as any, async 
           subject: isResubmission
             ? `🔄 Dossier KYC re-soumis : ${fullName}`
             : `🛡️ Nouveau dossier KYC soumis : ${fullName}`,
-          previewText: `${fullName} a transmis un dossier KYC complet (4 pièces) pour contrôle.`,
-          textContent: `Bonjour,\n\nLe livreur ${fullName} (${vehicleType}) a ${isResubmission ? 're-soumis' : 'soumis'} son dossier KYC complet avec ses 4 documents justificatifs.\nConnectez-vous à la Console Admin > Vérifications KYC pour l'examiner.`,
+          previewText: `${fullName} a transmis un dossier KYC (${uploadedDocsCount} justificatif(s)) pour contrôle.`,
+          textContent: `Bonjour,\n\nLe livreur ${fullName} (${vehicleType}) a ${isResubmission ? 're-soumis' : 'soumis'} son dossier KYC (${uploadedDocsCount} document(s) justificatif(s)).\nConnectez-vous à la Console Admin > Vérifications KYC pour l'examiner.`,
           htmlContent: `
             <div style="font-family: 'Plus Jakarta Sans', sans-serif; padding: 24px; color: #0f172a;">
               <h2 style="color: #1d4ed8;">${isResubmission ? '🔄 Dossier KYC re-soumis' : '🛡️ Nouveau dossier KYC à contrôler'}</h2>
-              <p>Le partenaire livreur <strong>${escapeHtml(fullName)}</strong> (${escapeHtml(vehicleType)}) a transmis ses 4 justificatifs obligatoires.</p>
+              <p>Le partenaire livreur <strong>${escapeHtml(fullName)}</strong> (${escapeHtml(vehicleType)}) a transmis son dossier KYC (${uploadedDocsCount} justificatif(s)).</p>
               <p>Rendez-vous dans la <strong>Console Admin &rsaquo; Vérifications KYC</strong> pour consulter les pièces et statuer.</p>
             </div>
           `,
@@ -4410,7 +4415,7 @@ app.post('/api/courier/kyc/notify-submitted', requireVerifiedUser as any, async 
 // ACCÈS SÉCURISÉ AUX JUSTIFICATIFS KYC & NETTOYAGE DES FICHIERS ORPHELINS
 // =========================================================================
 const KYC_STORAGE_PATH_REGEX =
-  /^kyc\/([a-zA-Z0-9_-]+)\/(?:(id_front|id_back|driving_license|vehicle_insurance)\/)?([a-zA-Z0-9_.-]+)$/;
+  /^kyc\/([a-zA-Z0-9_-]+)\/(?:(id_front|id_back|driving_license_front|driving_license_back|driving_license|vehicle_insurance)\/)?([a-zA-Z0-9_.-]+)$/;
 
 const collectReferencedKycPaths = (kycData: Record<string, any> | undefined): Set<string> => {
   const paths = new Set<string>();
@@ -4420,7 +4425,7 @@ const collectReferencedKycPaths = (kycData: Record<string, any> | undefined): Se
   }
   const docs = kycData.documents;
   if (docs && typeof docs === 'object') {
-    for (const slotKey of ['idFront', 'idBack', 'drivingLicense', 'vehicleInsurance']) {
+    for (const slotKey of ['idFront', 'idBack', 'drivingLicenseFront', 'drivingLicenseBack', 'drivingLicense', 'vehicleInsurance']) {
       const slot = docs[slotKey];
       if (slot && typeof slot.storagePath === 'string' && slot.storagePath.trim()) {
         paths.add(slot.storagePath.trim());
@@ -4700,8 +4705,8 @@ const MAX_KYC_MEDIA_BYTES = 10 * 1024 * 1024;
 const ALLOWED_KYC_DOC_TYPES = new Set([
   'id_front',
   'id_back',
-  'driving_license',
-  'vehicle_insurance',
+  'driving_license_front',
+  'driving_license_back',
 ]);
 const ALLOWED_KYC_MIME_TYPES = new Set([
   'image/jpeg',
@@ -4744,7 +4749,7 @@ app.post('/api/courier/kyc/upload', requireVerifiedUser as any, async (req: Auth
         success: false,
         stepCode: 'KYC-STEP-B',
         error:
-          '[KYC-STEP-B] Type de document KYC non autorisé (attendu : id_front, id_back, driving_license ou vehicle_insurance).',
+          '[KYC-STEP-B] Type de document KYC non autorisé (attendu : id_front, id_back, driving_license_front ou driving_license_back).',
       });
     }
 
