@@ -13,7 +13,18 @@ import { downloadCsvFile } from '../../utils/csvExport';
 import { buildSandboxedEmailPreviewDocument } from '../../utils/htmlSanitizer';
 import { AdminOverviewDashboard } from './AdminOverviewDashboard';
 import { AdminCommunicationsSection } from '../admin/AdminCommunicationsSection';
+import { AdminMerchantsPanel } from '../admin/AdminMerchantsPanel';
+import { AdminCouriersPanel } from '../admin/AdminCouriersPanel';
+import { AdminClientsPanel } from '../admin/AdminClientsPanel';
+import { AdminDeliveriesDisputesPanel } from '../admin/AdminDeliveriesDisputesPanel';
+import { AdminPricingFinancePanel } from '../admin/AdminPricingFinancePanel';
+import { AdminEmailTemplatesPanel } from '../admin/AdminEmailTemplatesPanel';
+import { AdminContactsPanel } from '../admin/AdminContactsPanel';
+import { AdminGeneralSettingsPanel } from '../admin/AdminGeneralSettingsPanel';
+import { AdminRbacSecurityPanel } from '../admin/AdminRbacSecurityPanel';
+import { AdminAuditLogsPanel } from '../admin/AdminAuditLogsPanel';
 import { ResetUserAccessModal, TargetResetUser } from '../modals/ResetUserAccessModal';
+import { AdminPermission } from '../../types';
 import {
   fetchSmtpConfig,
   updateSmtpConfig,
@@ -37,6 +48,9 @@ const AdminSidebarContent: React.FC<{
   disputesCount: number;
   onOpenVendorSpace: () => void;
   onOpenCourierSpace: () => void;
+  hasPermission: (perm: AdminPermission) => boolean;
+  appName?: string;
+  adminRoleLabel?: string;
 }> = ({
   activeTab,
   onSelectTab,
@@ -49,48 +63,73 @@ const AdminSidebarContent: React.FC<{
   disputesCount,
   onOpenVendorSpace,
   onOpenCourierSpace,
+  hasPermission,
+  appName = 'LivraLink',
+  adminRoleLabel = 'Console Admin',
 }) => {
-  const categories = [
+  const rawCategories: Array<{
+    group: string;
+    items: Array<{
+      id: string;
+      label: string;
+      icon: string;
+      badge?: string;
+      badgeColor?: string;
+      permission?: AdminPermission;
+    }>;
+  }> = [
     {
       group: 'VUE D\'ENSEMBLE & ACTIVITÉ',
       items: [
-        { id: 'overview', label: 'Synthèse & KPIs', icon: 'dashboard' },
-        { id: 'deliveries', label: 'Supervision Courses', icon: 'local_shipping', badge: deliveriesCount > 0 ? `${deliveriesCount}` : undefined, badgeColor: 'bg-blue-600 text-white' },
-        { id: 'users', label: 'Annuaire Utilisateurs', icon: 'group', badge: `${usersCount}`, badgeColor: 'bg-slate-800 text-slate-200' },
+        { id: 'overview', label: 'Synthèse & KPIs', icon: 'dashboard', permission: 'overview.view' },
+        { id: 'deliveries', label: 'Supervision Courses', icon: 'local_shipping', badge: deliveriesCount > 0 ? `${deliveriesCount}` : undefined, badgeColor: 'bg-blue-600 text-white', permission: 'deliveries.read' },
+        { id: 'users', label: 'Annuaire Utilisateurs', icon: 'group', badge: `${usersCount}`, badgeColor: 'bg-slate-800 text-slate-200', permission: 'users.read' },
+        { id: 'clients', label: 'Clients & Destinataires', icon: 'person_search', permission: 'clients.read' },
       ],
     },
     {
-      group: 'ACCRÉDITATION & SÉCURITÉ',
+      group: 'EXPÉDITION & PARTENAIRES',
       items: [
-        { id: 'kyc', label: 'Vérifications KYC', icon: 'verified_user', badge: kycPendingCount > 0 ? `${kycPendingCount}` : undefined, badgeColor: 'bg-amber-400 text-slate-950 font-black' },
-        { id: 'security', label: 'Whitelist & Sécurité', icon: 'shield_person' },
-        { id: 'audit', label: 'Journal d\'Audit', icon: 'history' },
+        { id: 'merchants', label: 'Vendeurs & Boutiques', icon: 'storefront', badge: `${merchantsCount}`, badgeColor: 'bg-sky-950 text-sky-300 border border-sky-800', permission: 'vendors.read' },
+        { id: 'couriers', label: 'Livreurs & Rémunération', icon: 'two_wheeler', badge: `${couriersCount}`, badgeColor: 'bg-emerald-950 text-emerald-300 border border-emerald-800', permission: 'couriers.read' },
+        { id: 'kyc', label: 'Vérifications KYC', icon: 'verified_user', badge: kycPendingCount > 0 ? `${kycPendingCount}` : undefined, badgeColor: 'bg-amber-400 text-slate-950 font-black', permission: 'kyc.read' },
+        { id: 'disputes', label: 'Litiges & Arbitrage', icon: 'warning', badge: disputesCount > 0 ? `${disputesCount}` : undefined, badgeColor: 'bg-red-600 text-white', permission: 'disputes.read' },
       ],
     },
     {
-      group: 'EXPÉDITION & RÉSEAU',
+      group: 'TARIFICATION & FINANCES',
       items: [
-        { id: 'couriers', label: 'Flotte Livreurs', icon: 'two_wheeler', badge: `${couriersCount}`, badgeColor: 'bg-emerald-950 text-emerald-300 border border-emerald-800' },
-        { id: 'merchants', label: 'Boutiques Vendeurs', icon: 'storefront', badge: `${merchantsCount}`, badgeColor: 'bg-sky-950 text-sky-300 border border-sky-800' },
-        { id: 'disputes', label: 'Litiges & Arbitrage', icon: 'warning', badge: disputesCount > 0 ? `${disputesCount}` : undefined, badgeColor: 'bg-red-600 text-white' },
+        { id: 'pricing', label: 'Tarifs & Rémunération/km', icon: 'tune', permission: 'pricing.read' },
+        { id: 'finance', label: 'Finances & Remboursements', icon: 'account_balance', permission: 'finance.read' },
       ],
     },
     {
-      group: 'COMMUNICATIONS & ANNONCES',
+      group: 'COMMUNICATIONS & CONTACTS',
       items: [
-        { id: 'communications', label: 'Diffusion & Annonces', icon: 'campaign', badge: 'Diffuser', badgeColor: 'bg-amber-400 text-slate-950 font-extrabold' },
+        { id: 'communications', label: 'Diffusion & Annonces', icon: 'campaign', badge: 'Diffuser', badgeColor: 'bg-amber-400 text-slate-950 font-extrabold', permission: 'notifications.manage' },
+        { id: 'email_templates', label: 'Adresses & 14 Modèles E-mail', icon: 'mark_email_read', badge: '14', badgeColor: 'bg-indigo-950 text-indigo-300 border border-indigo-800', permission: 'emails.read' },
+        { id: 'email_settings', label: 'Passerelle Gmail SMTP', icon: 'mail', badge: 'Gmail', badgeColor: 'bg-emerald-950 text-emerald-300 border border-emerald-800', permission: 'emails.manage' },
+        { id: 'contacts', label: 'Numéros Officiels (8)', icon: 'call', permission: 'contacts.manage' },
       ],
     },
     {
-      group: 'CONFIGURATION & SYSTÈME',
+      group: 'SYSTÈME, RBAC & AUDIT',
       items: [
-        { id: 'features', label: 'Directeur Fonctionnalités', icon: 'toggle_on', badge: 'Directeur', badgeColor: 'bg-purple-900/80 text-purple-200 border border-purple-700' },
-        { id: 'pricing', label: 'Tarifs & Commissions', icon: 'tune' },
-        { id: 'email_settings', label: 'Paramètres E-mail (SMTP)', icon: 'mail', badge: 'Gmail', badgeColor: 'bg-emerald-950 text-emerald-300 border border-emerald-800' },
-        { id: 'tests', label: 'Suite Tests (8 Pôles)', icon: 'science', badge: '8/8', badgeColor: 'bg-indigo-950 text-indigo-300 border border-indigo-800' },
+        { id: 'general_settings', label: 'Paramètres Généraux', icon: 'settings', permission: 'settings.manage' },
+        { id: 'features', label: 'Directeur Fonctionnalités', icon: 'toggle_on', badge: 'Directeur', badgeColor: 'bg-purple-900/80 text-purple-200 border border-purple-700', permission: 'settings.manage' },
+        { id: 'rbac_admins', label: 'Admins & Rôles RBAC (7)', icon: 'admin_panel_settings', badge: 'RBAC', badgeColor: 'bg-amber-950 text-amber-300 border border-amber-700', permission: 'admins.manage' },
+        { id: 'security', label: 'Whitelist Google & Pare-feu', icon: 'shield_person', permission: 'admins.manage' },
+        { id: 'audit', label: 'Journal d\'Audit Serveur', icon: 'history', permission: 'audit.read' },
+        { id: 'tests', label: 'Suite Tests (8 Pôles)', icon: 'science', badge: '8/8', badgeColor: 'bg-indigo-950 text-indigo-300 border border-indigo-800', permission: 'overview.view' },
       ],
     },
   ];
+  const categories = rawCategories
+    .map((cat) => ({
+      ...cat,
+      items: cat.items.filter((item) => !item.permission || hasPermission(item.permission)),
+    }))
+    .filter((cat) => cat.items.length > 0);
 
   return (
     <aside className="w-64 bg-slate-900 text-slate-200 border-r border-slate-800/90 flex flex-col h-full shrink-0 select-none shadow-xl">
@@ -102,10 +141,10 @@ const AdminSidebarContent: React.FC<{
           </div>
           <div>
             <div className="font-extrabold text-sm text-white tracking-tight leading-tight">
-              Livra<span className="text-amber-400">Link</span>
+              {appName}
             </div>
-            <p className="text-[10px] font-mono font-bold text-amber-400 uppercase tracking-wider">
-              Console Admin
+            <p className="text-[10px] font-mono font-bold text-amber-400 uppercase tracking-wider truncate max-w-[140px]">
+              {adminRoleLabel}
             </p>
           </div>
         </div>
@@ -263,6 +302,9 @@ export const AdminConsole: React.FC = () => {
     simulateNewPriorityMission,
     refreshAdminData,
     isSyncingAdminData,
+    platformConfig,
+    hasAdminPermission,
+    adminRoleId,
   } = useApp();
 
   // Whitelist management state
@@ -1311,6 +1353,9 @@ export const AdminConsole: React.FC = () => {
           disputesCount={disputeCount}
           onOpenVendorSpace={handleOpenVendorSpace}
           onOpenCourierSpace={handleOpenCourierSpace}
+          hasPermission={hasAdminPermission}
+          appName={platformConfig.general.appName}
+          adminRoleLabel={(adminRoleId || 'admin').replace(/_/g, ' ')}
         />
       </div>
 
@@ -1333,6 +1378,9 @@ export const AdminConsole: React.FC = () => {
               disputesCount={disputeCount}
               onOpenVendorSpace={handleOpenVendorSpace}
               onOpenCourierSpace={handleOpenCourierSpace}
+              hasPermission={hasAdminPermission}
+              appName={platformConfig.general.appName}
+              adminRoleLabel={(adminRoleId || 'admin').replace(/_/g, ' ')}
             />
           </div>
         </div>
@@ -1466,20 +1514,29 @@ export const AdminConsole: React.FC = () => {
         >
           <BackButton variant="dark" label="Retour" />
           {[
-            { id: 'overview', label: 'Synthèse', icon: 'dashboard' },
-            { id: 'deliveries', label: 'Courses', icon: 'local_shipping', badge: activeDeliveriesCount > 0 ? `${activeDeliveriesCount}` : undefined },
-            { id: 'users', label: 'Utilisateurs', icon: 'group' },
-            { id: 'kyc', label: 'KYC', icon: 'verified_user', badge: kycRequests.filter(k => k.status === 'en_attente').length > 0 ? `${kycRequests.filter(k => k.status === 'en_attente').length}` : undefined },
-            { id: 'communications', label: 'Annonces', icon: 'campaign' },
-            { id: 'couriers', label: 'Livreurs', icon: 'two_wheeler' },
-            { id: 'merchants', label: 'Boutiques', icon: 'storefront' },
-            { id: 'disputes', label: 'Litiges', icon: 'warning', badge: disputeCount > 0 ? `${disputeCount}` : undefined },
-            { id: 'pricing', label: 'Tarifs', icon: 'tune' },
-            { id: 'features', label: 'Directeur Features', icon: 'toggle_on' },
-            { id: 'tests', label: 'Tests (8)', icon: 'science' },
-            { id: 'audit', label: 'Audit', icon: 'history' },
-            { id: 'security', label: 'Sécurité', icon: 'shield_person' },
-          ].map((tab) => {
+            { id: 'overview', label: 'Synthèse', icon: 'dashboard', perm: 'overview.read' as AdminPermission },
+            { id: 'deliveries', label: 'Courses', icon: 'local_shipping', badge: activeDeliveriesCount > 0 ? `${activeDeliveriesCount}` : undefined, perm: 'deliveries.read' as AdminPermission },
+            { id: 'users', label: 'Utilisateurs', icon: 'group', perm: 'overview.read' as AdminPermission },
+            { id: 'clients', label: 'Clients', icon: 'person_search', perm: 'clients.read' as AdminPermission },
+            { id: 'merchants', label: 'Vendeurs', icon: 'storefront', perm: 'vendors.read' as AdminPermission },
+            { id: 'couriers', label: 'Livreurs', icon: 'two_wheeler', perm: 'couriers.read' as AdminPermission },
+            { id: 'kyc', label: 'KYC', icon: 'verified_user', badge: kycRequests.filter(k => k.status === 'en_attente').length > 0 ? `${kycRequests.filter(k => k.status === 'en_attente').length}` : undefined, perm: 'kyc.read' as AdminPermission },
+            { id: 'disputes', label: 'Litiges', icon: 'warning', badge: disputeCount > 0 ? `${disputeCount}` : undefined, perm: 'disputes.read' as AdminPermission },
+            { id: 'pricing', label: 'Tarifs', icon: 'tune', perm: 'pricing.read' as AdminPermission },
+            { id: 'finance', label: 'Finances', icon: 'account_balance', perm: 'finance.read' as AdminPermission },
+            { id: 'communications', label: 'Annonces', icon: 'campaign', perm: 'communications.manage' as AdminPermission },
+            { id: 'email_templates', label: '14 Modèles E-mail', icon: 'mark_email_read', perm: 'emails.read' as AdminPermission },
+            { id: 'email_settings', label: 'Gmail SMTP', icon: 'mail', perm: 'emails.manage' as AdminPermission },
+            { id: 'contacts', label: 'Numéros', icon: 'call', perm: 'contacts.manage' as AdminPermission },
+            { id: 'general_settings', label: 'Paramètres', icon: 'settings', perm: 'settings.read' as AdminPermission },
+            { id: 'features', label: 'Features', icon: 'toggle_on', perm: 'settings.manage' as AdminPermission },
+            { id: 'rbac_admins', label: 'RBAC Admins', icon: 'admin_panel_settings', perm: 'admins.manage' as AdminPermission },
+            { id: 'tests', label: 'Tests (8)', icon: 'science', perm: 'overview.read' as AdminPermission },
+            { id: 'audit', label: 'Audit', icon: 'history', perm: 'audit.read' as AdminPermission },
+            { id: 'security', label: 'Sécurité', icon: 'shield_person', perm: 'admins.manage' as AdminPermission },
+          ]
+            .filter((tab) => hasAdminPermission(tab.perm))
+            .map((tab) => {
             const isActive = activeViewTab === tab.id;
             return (
               <button
@@ -1514,7 +1571,7 @@ export const AdminConsole: React.FC = () => {
               <BackButton />
               <div>
                 <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 font-semibold mb-1">
-                  <span className="text-blue-600 font-bold">Plateforme LivraLink Bénin</span>
+                  <span className="text-blue-600 font-bold">{platformConfig.general.appName}</span>
                   <span>›</span>
                   <span>Console Administrateur</span>
                   <span>›</span>
@@ -1522,16 +1579,22 @@ export const AdminConsole: React.FC = () => {
                   {activeViewTab === 'overview' && 'Tableau de Bord & Vue d\'ensemble'}
                   {activeViewTab === 'deliveries' && 'Supervision des Courses'}
                   {activeViewTab === 'users' && 'Annuaire Utilisateurs'}
+                  {activeViewTab === 'clients' && 'Répertoire Clients & Destinataires'}
                   {activeViewTab === 'kyc' && 'Vérifications KYC'}
                   {activeViewTab === 'communications' && 'Communications & Annonces Massives'}
-                  {activeViewTab === 'couriers' && 'Flotte Livreurs'}
+                  {activeViewTab === 'couriers' && 'Flotte Livreurs & Rémunération'}
                   {activeViewTab === 'merchants' && 'Boutiques Vendeurs'}
                   {activeViewTab === 'disputes' && 'Litiges & Support'}
-                  {activeViewTab === 'pricing' && 'Tarifs & Commissions'}
+                  {activeViewTab === 'pricing' && 'Tarifs Kilométriques & Rémunération'}
+                  {activeViewTab === 'finance' && 'Finances, Commissions & Remboursements'}
+                  {activeViewTab === 'email_templates' && 'Adresses & 14 Modèles E-mail'}
+                  {activeViewTab === 'contacts' && 'Numéros Officiels & Support'}
+                  {activeViewTab === 'general_settings' && 'Paramètres Généraux & Contrôle Global'}
                   {activeViewTab === 'features' && 'Directeur Général des Fonctionnalités'}
                   {activeViewTab === 'email_settings' && 'Centre & Paramètres E-mail (Gmail SMTP)'}
+                  {activeViewTab === 'rbac_admins' && 'Administrateurs & 7 Rôles RBAC'}
                   {activeViewTab === 'tests' && 'Tests & Validations'}
-                  {activeViewTab === 'audit' && 'Journal d\'Audit'}
+                  {activeViewTab === 'audit' && 'Journal d\'Audit Serveur'}
                   {activeViewTab === 'security' && 'Whitelist & Sécurité'}
                 </span>
               </div>
@@ -1543,19 +1606,27 @@ export const AdminConsole: React.FC = () => {
                   activeViewTab === 'communications' ? 'bg-amber-500 text-slate-950 font-black' :
                   activeViewTab === 'features' ? 'bg-purple-600 shadow-sm' :
                   activeViewTab === 'email_settings' ? 'bg-emerald-600 shadow-sm' :
+                  activeViewTab === 'finance' ? 'bg-emerald-700 shadow-sm' :
+                  activeViewTab === 'rbac_admins' ? 'bg-amber-600 shadow-sm' :
                   activeViewTab === 'tests' ? 'bg-indigo-600' : 'bg-slate-900'
                 }`}>
                   {activeViewTab === 'deliveries' && 'local_shipping'}
                   {activeViewTab === 'overview' && 'dashboard'}
                   {activeViewTab === 'users' && 'group'}
+                  {activeViewTab === 'clients' && 'person_search'}
                   {activeViewTab === 'kyc' && 'verified_user'}
                   {activeViewTab === 'communications' && 'campaign'}
                   {activeViewTab === 'couriers' && 'two_wheeler'}
                   {activeViewTab === 'merchants' && 'storefront'}
                   {activeViewTab === 'disputes' && 'warning'}
                   {activeViewTab === 'pricing' && 'tune'}
+                  {activeViewTab === 'finance' && 'account_balance'}
+                  {activeViewTab === 'email_templates' && 'mark_email_read'}
+                  {activeViewTab === 'contacts' && 'call'}
+                  {activeViewTab === 'general_settings' && 'settings'}
                   {activeViewTab === 'features' && 'toggle_on'}
                   {activeViewTab === 'email_settings' && 'mail'}
+                  {activeViewTab === 'rbac_admins' && 'admin_panel_settings'}
                   {activeViewTab === 'tests' && 'science'}
                   {activeViewTab === 'audit' && 'history'}
                   {activeViewTab === 'security' && 'shield_person'}
@@ -1564,16 +1635,22 @@ export const AdminConsole: React.FC = () => {
                   {activeViewTab === 'deliveries' && 'Supervision des Courses & Live Dispatch'}
                   {activeViewTab === 'overview' && 'Tableau de Bord & Synthèse Générale'}
                   {activeViewTab === 'users' && 'Annuaire Global des Utilisateurs'}
+                  {activeViewTab === 'clients' && 'Annuaire Clients & Destinataires'}
                   {activeViewTab === 'kyc' && 'Centre d\'Accréditation KYC'}
                   {activeViewTab === 'communications' && 'Centre de Communications & Annonces Massives'}
-                  {activeViewTab === 'couriers' && 'Gestion Complète des Livreurs'}
-                  {activeViewTab === 'merchants' && 'Gestion des Boutiques Vendeurs'}
+                  {activeViewTab === 'couriers' && 'Gestion Complète des Livreurs & Rémunérations'}
+                  {activeViewTab === 'merchants' && 'Gestion Complète des Vendeurs & Boutiques'}
                   {activeViewTab === 'disputes' && 'Centre de Résolution des Litiges'}
-                  {activeViewTab === 'pricing' && 'Configuration Tarifs & Commissions'}
+                  {activeViewTab === 'pricing' && 'Tarification au Km, Zones & Rémunération Générale'}
+                  {activeViewTab === 'finance' && 'Finances, Commissions, Portefeuilles & Remboursements'}
+                  {activeViewTab === 'email_templates' && 'Adresses E-mail Officielles & 14 Modèles'}
+                  {activeViewTab === 'contacts' && 'Configuration des 8 Numéros de Téléphone'}
+                  {activeViewTab === 'general_settings' && 'Identité Plateforme & Contrôles Globaux'}
                   {activeViewTab === 'features' && 'Directeur des Fonctionnalités (Pages Vendeurs & Livreurs)'}
                   {activeViewTab === 'email_settings' && 'Centre de Gestion des E-mails & Configuration Gmail SMTP'}
+                  {activeViewTab === 'rbac_admins' && 'Gestion des Administrateurs & 7 Rôles RBAC'}
                   {activeViewTab === 'tests' && 'Suite de Tests & Validations'}
-                  {activeViewTab === 'audit' && 'Journal d\'Audit Système'}
+                  {activeViewTab === 'audit' && 'Journal d\'Audit Immuable'}
                   {activeViewTab === 'security' && 'Sécurité & Whitelist Super-Admin'}
                 </span>
               </h1>
@@ -2352,158 +2429,63 @@ export const AdminConsole: React.FC = () => {
           )}
 
           {/* =========================================================================
-              TAB 2: GESTION DES LIVREURS (Full Table & Actions)
+              TAB 2: GESTION COMPLÈTE DES LIVREURS & RÉMUNÉRATION INDIVIDUELLE
              ========================================================================= */}
           {activeViewTab === 'couriers' && (
-            <div className="space-y-4 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-                <div>
-                  <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <span className="material-symbols-outlined text-blue-600">two_wheeler</span>
-                    <span>Gestion Complète des Livreurs &amp; Flotte ({filteredCouriers.length})</span>
-                  </h2>
-                  <p className="text-xs text-slate-500">Ajout, modification, suspension, gestion des portefeuilles et KYC</p>
-                </div>
+            <AdminCouriersPanel onOpenAddCourier={() => setIsAddCourierModalOpen(true)} />
+          )}
 
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl text-xs font-bold">
-                    <button
-                      onClick={() => setCourierStatusFilter('all')}
-                      className={`px-2.5 py-1 rounded-lg ${courierStatusFilter === 'all' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-600'}`}
-                    >
-                      Tous
-                    </button>
-                    <button
-                      onClick={() => setCourierStatusFilter('en_ligne')}
-                      className={`px-2.5 py-1 rounded-lg ${courierStatusFilter === 'en_ligne' ? 'bg-white text-emerald-700 shadow-2xs' : 'text-slate-600'}`}
-                    >
-                      🟢 En ligne
-                    </button>
-                    <button
-                      onClick={() => setCourierStatusFilter('en_course')}
-                      className={`px-2.5 py-1 rounded-lg ${courierStatusFilter === 'en_course' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-600'}`}
-                    >
-                      🔵 En course
-                    </button>
-                    <button
-                      onClick={() => setCourierStatusFilter('suspendu')}
-                      className={`px-2.5 py-1 rounded-lg ${courierStatusFilter === 'suspendu' ? 'bg-white text-red-700 shadow-2xs' : 'text-slate-600'}`}
-                    >
-                      🔴 Suspendus
-                    </button>
-                  </div>
+          {/* =========================================================================
+              TAB 3: GESTION COMPLÈTE DES VENDEURS / MARCHANDS
+             ========================================================================= */}
+          {activeViewTab === 'merchants' && (
+            <AdminMerchantsPanel onOpenAddMerchant={() => setIsAddMerchantModalOpen(true)} />
+          )}
 
-                  <button
-                    onClick={() => setIsAddCourierModalOpen(true)}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1"
-                  >
-                    <span className="material-symbols-outlined text-sm">add</span>
-                    <span>Ajouter Livreur</span>
-                  </button>
-                </div>
-              </div>
+          {/* =========================================================================
+              TAB: RÉPERTOIRE CLIENTS & DESTINATAIRES
+             ========================================================================= */}
+          {activeViewTab === 'clients' && (
+            <AdminClientsPanel />
+          )}
 
-              {/* Couriers Table Header */}
-              {/* KYC Requests Module */}
-              {kycRequests.filter((k) => k.status === 'en_attente').length > 0 && (
-                <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200/80 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-amber-600 text-lg">verified_user</span>
-                      <h3 className="font-bold text-xs text-amber-950 uppercase tracking-wider">
-                        Demandes d'Accréditation KYC en Attente ({kycRequests.filter(k => k.status === 'en_attente').length})
-                      </h3>
-                    </div>
-                    <span className="text-[10px] text-amber-700 font-bold bg-amber-100 px-2 py-0.5 rounded-full">
-                      4 pièces contrôlées
-                    </span>
-                  </div>
+          {/* =========================================================================
+              TAB 4: SUPERVISION DES LIVRAISONS & SNAPSHOTS TARIFAIRES
+             ========================================================================= */}
+          {activeViewTab === 'deliveries' && (
+            <AdminDeliveriesDisputesPanel
+              mode="deliveries"
+              onOpenNewDelivery={() => setIsAddDeliveryModalOpen(true)}
+              onOpenArbitrateOrder={(id) => setSelectedDisputeOrder(id)}
+            />
+          )}
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {kycRequests
-                      .filter((k) => k.status === 'en_attente')
-                      .map((kyc) => (
-                      <div key={kyc.id} className="p-3 bg-white rounded-xl border border-amber-200/60 shadow-2xs flex items-center justify-between gap-3 text-xs">
-                        <div className="space-y-0.5 min-w-0">
-                          <p className="font-bold text-slate-900 flex items-center gap-1.5 truncate">
-                            <span>{kyc.fullName}</span>
-                            <span className="text-[10px] text-slate-400 font-mono">({kyc.idNumber || 'En cours'})</span>
-                          </p>
-                          <p className="text-[11px] text-slate-500">{kyc.phone} • {kyc.vehicleType || 'Moto'}</p>
-                          <div className="flex flex-wrap gap-1 pt-1">
-                            {getKycDocumentSlots(kyc).map((slot) => (
-                              <span
-                                key={slot.slotKey}
-                                className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
-                                  slot.uploaded
-                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                    : 'bg-red-50 text-red-700 border border-red-200'
-                                }`}
-                              >
-                                {slot.shortLabel} {slot.uploaded ? '✓' : '✗'}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
+          {/* =========================================================================
+              TAB 5: LITIGES & MODÉRATION
+             ========================================================================= */}
+          {activeViewTab === 'disputes' && (
+            <AdminDeliveriesDisputesPanel
+              mode="disputes"
+              onOpenArbitrateOrder={(id) => setSelectedDisputeOrder(id)}
+            />
+          )}
 
-                        <div className="flex flex-col gap-1 shrink-0">
-                          <button
-                            onClick={() => setReviewingKycItem(kyc)}
-                            className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold shadow-2xs transition-all flex items-center justify-center gap-1 cursor-pointer"
-                          >
-                            <span className="material-symbols-outlined text-xs">visibility</span>
-                            <span>Examiner</span>
-                          </button>
-                          {kyc.status === 'en_attente' ? (
-                            <>
-                              <button
-                                disabled={isSubmittingKycDecision}
-                                onClick={async () => {
-                                  setIsSubmittingKycDecision(true);
-                                  try {
-                                    await approveKYC(kyc.id);
-                                  } finally {
-                                    setIsSubmittingKycDecision(false);
-                                  }
-                                }}
-                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold shadow-2xs transition-all active:scale-95 flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                              >
-                                <span className="material-symbols-outlined text-xs">check</span>
-                                <span>Valider</span>
-                              </button>
-                              <button
-                                disabled={isSubmittingKycDecision}
-                                onClick={async () => {
-                                  setIsSubmittingKycDecision(true);
-                                  try {
-                                    await rejectKYC(kyc.id);
-                                  } finally {
-                                    setIsSubmittingKycDecision(false);
-                                  }
-                                }}
-                                className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-[10px] font-bold transition-all active:scale-95 flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                              >
-                                <span>Refuser</span>
-                              </button>
-                            </>
-                          ) : kyc.status === 'valide' ? (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 text-center">
-                              Validé ✓
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800 text-center">
-                              Refusé ✕
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+          {/* =========================================================================
+              TAB 6: MOTEUR TARIFAIRE AU KM & RÉMUNÉRATION GÉNÉRALE
+             ========================================================================= */}
+          {activeViewTab === 'pricing' && (
+            <AdminPricingFinancePanel mode="pricing" />
+          )}
 
-              {/* Réconciliation Retraits en Attente (P0 Wallet Idempotency) */}
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+          {/* =========================================================================
+              TAB: FINANCES, COMMISSIONS & REMBOURSEMENTS + RÉCONCILIATION RETRAITS
+             ========================================================================= */}
+          {activeViewTab === 'finance' && (
+            <div className="space-y-6">
+              <AdminPricingFinancePanel mode="finance" />
+
+              {/* Réconciliation Retraits en Attente / Incertains */}
+              <div className="p-5 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className="material-symbols-outlined text-indigo-600 text-lg">account_balance_wallet</span>
@@ -2515,7 +2497,7 @@ export const AdminConsole: React.FC = () => {
                     type="button"
                     disabled={isLoadingPendingPayouts}
                     onClick={() => void loadPendingPayouts()}
-                    className="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                    className="px-2.5 py-1 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
                   >
                     <span className={`material-symbols-outlined text-xs ${isLoadingPendingPayouts ? 'animate-spin' : ''}`}>sync</span>
                     <span>Actualiser</span>
@@ -2532,7 +2514,7 @@ export const AdminConsole: React.FC = () => {
                       const key = String(item.idempotencyKey || '');
                       const busy = reconcilingPayoutKey === key;
                       return (
-                        <div key={key} className="p-3 bg-white rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                        <div key={key} className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
                           <div className="space-y-0.5 min-w-0">
                             <div className="font-bold text-slate-900 flex items-center gap-2 flex-wrap">
                               <span className="font-mono text-[11px] truncate">{key}</span>
@@ -2571,1208 +2553,35 @@ export const AdminConsole: React.FC = () => {
                   </div>
                 )}
               </div>
-
-              {/* Mobile Cards for Couriers Fleet */}
-              <div className="md:hidden divide-y divide-slate-100 space-y-3">
-                {filteredCouriers.length === 0 ? (
-                  <div className="text-center py-8 text-slate-400 text-xs">
-                    Aucun livreur trouvé avec les filtres actuels.
-                  </div>
-                ) : (
-                  filteredCouriers.map((courier) => (
-                    <article key={courier.id} className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-9 h-9 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center text-xs shadow-xs">
-                            {courier.avatarInitials}
-                          </div>
-                          <div>
-                            <div className="font-bold text-slate-900 text-xs flex items-center gap-1">
-                              <span>{courier.name}</span>
-                              {courier.badge && (
-                                <span className="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.2 rounded-full font-bold">
-                                  {courier.badge}
-                                </span>
-                              )}
-                            </div>
-                            <span className="text-[10px] text-amber-500 font-bold">★ {courier.rating.toFixed(1)}</span>
-                          </div>
-                        </div>
-
-                        <div>
-                          {courier.status === 'en_ligne' && (
-                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                              🟢 En ligne
-                            </span>
-                          )}
-                          {courier.status === 'en_course' && (
-                            <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">
-                              🔵 En course
-                            </span>
-                          )}
-                          {courier.status === 'hors_ligne' && (
-                            <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold">
-                              ⚪ Hors ligne
-                            </span>
-                          )}
-                          {courier.status === 'suspendu' && (
-                            <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">
-                              🔴 Suspendu
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="space-y-1 text-xs">
-                        <div className="flex justify-between items-center text-slate-600">
-                          <span>📱 {courier.phone}</span>
-                          <span className="font-mono text-slate-400 text-[10px]">{courier.vehiclePlate}</span>
-                        </div>
-                        <div className="text-[11px] text-slate-500 flex items-center justify-between">
-                          <span>🛵 {courier.vehicle}</span>
-                          <span className="text-slate-700 font-semibold">{courier.zone}</span>
-                        </div>
-                        <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[11px]">
-                          <span className="text-slate-500">Caution / Portefeuille:</span>
-                          <span className="font-mono font-bold text-slate-900">{(courier.walletBalanceFCFA || 0).toLocaleString('fr-FR')} FCFA</span>
-                        </div>
-                      </div>
-
-                      {/* Courier Actions */}
-                      <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-100 flex-wrap">
-                        <button
-                          type="button"
-                          onClick={() => impersonateCourier(courier.id)}
-                          className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold active:scale-95 flex items-center gap-1 shadow-sm"
-                          title="Piloter ce livreur en direct (Mode Directeur)"
-                        >
-                          <span>👑</span>
-                          <span>Piloter</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setWalletModalCourier(courier)}
-                          className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold active:scale-95"
-                        >
-                          Portefeuille
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openEditCourier(courier)}
-                          className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold active:scale-95"
-                        >
-                          Éditer
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => toggleCourierStatus(courier.id)}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-bold active:scale-95 ${
-                            courier.status === 'suspendu'
-                              ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                              : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
-                          }`}
-                        >
-                          {courier.status === 'suspendu' ? 'Réactiver' : 'Suspendre'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeletingCourier(courier)}
-                          className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors active:scale-95"
-                          title="Supprimer le livreur"
-                        >
-                          <span className="material-symbols-outlined text-sm">delete</span>
-                        </button>
-                      </div>
-                    </article>
-                  ))
-                )}
-              </div>
-
-              {/* Couriers Table for Desktop */}
-              <div className="hidden md:block overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs min-w-[750px]">
-                  <thead>
-                    <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
-                      <th className="py-3 px-3">Livreur</th>
-                      <th className="py-3 px-3">Contact</th>
-                      <th className="py-3 px-3">Véhicule &amp; Plaque</th>
-                      <th className="py-3 px-3">Zone de Travail</th>
-                      <th className="py-3 px-3">Solde Portefeuille</th>
-                      <th className="py-3 px-3">Statut</th>
-                      <th className="py-3 px-3 text-right">Actions Administrateur</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredCouriers.map(courier => (
-                      <tr key={courier.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="py-3 px-3">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-8 h-8 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center text-xs">
-                              {courier.avatarInitials}
-                            </div>
-                            <div>
-                              <div className="font-bold text-slate-900 flex items-center gap-1">
-                                <span>{courier.name}</span>
-                                {courier.badge && (
-                                  <span className="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.2 rounded-full font-bold">
-                                    {courier.badge}
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-[10px] text-slate-400">ID: {courier.id}</span>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="font-semibold text-slate-800">{courier.phone}</div>
-                          <span className="text-[10px] text-slate-400">{courier.email || 'N/A'}</span>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="font-medium text-slate-900">{courier.vehicle}</div>
-                          <span className="text-[10px] font-mono text-slate-500">{courier.vehiclePlate || 'Non renseigné'}</span>
-                        </td>
-                        <td className="py-3 px-3 text-slate-700">{courier.zone}</td>
-                        <td className="py-3 px-3">
-                          <div className="font-mono font-bold text-blue-700">
-                            {(courier.walletBalanceFCFA || 0).toLocaleString('fr-FR')} FCFA
-                          </div>
-                          <button
-                            onClick={() => setWalletModalCourier(courier)}
-                            className="text-[10px] text-blue-600 hover:underline font-bold"
-                          >
-                            + Recharger
-                          </button>
-                        </td>
-                        <td className="py-3 px-3">
-                          {courier.status === 'en_ligne' && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                              🟢 En ligne
-                            </span>
-                          )}
-                          {courier.status === 'en_course' && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">
-                              🔵 En course
-                            </span>
-                          )}
-                          {courier.status === 'hors_ligne' && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold">
-                              ⚪ Hors ligne
-                            </span>
-                          )}
-                          {courier.status === 'suspendu' && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">
-                              🔴 Suspendu
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3 px-3 text-right">
-                          <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                            <button
-                              onClick={() => impersonateCourier(courier.id)}
-                              className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm active:scale-95"
-                              title="Piloter ce livreur en direct (Mode Directeur)"
-                            >
-                              <span>👑</span>
-                              <span>Piloter</span>
-                            </button>
-                            <button
-                              onClick={() => setResetAccessUser({
-                                id: courier.id,
-                                name: courier.name,
-                                email: courier.email || '',
-                                phone: courier.phone,
-                                role: 'livreur',
-                                status: courier.status,
-                                vehicle: courier.vehicle,
-                              })}
-                              className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg text-xs flex items-center gap-1 active:scale-95 shadow-xs cursor-pointer"
-                              title="Réinitialiser le mot de passe et les accès"
-                            >
-                              <span className="material-symbols-outlined text-xs">vpn_key</span>
-                              <span>Accès</span>
-                            </button>
-                            <button
-                              onClick={() => setWalletModalCourier(courier)}
-                              className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold"
-                              title="Recharger ou débiter la caution"
-                            >
-                              Portefeuille
-                            </button>
-                            <button
-                              onClick={() => openEditCourier(courier)}
-                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
-                              title="Modifier toutes les informations"
-                            >
-                              Éditer
-                            </button>
-                            <button
-                              onClick={() => toggleCourierStatus(courier.id)}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
-                                courier.status === 'suspendu'
-                                  ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                                  : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
-                              }`}
-                              title={courier.status === 'suspendu' ? 'Réactiver le livreur' : 'Suspendre le livreur'}
-                            >
-                              {courier.status === 'suspendu' ? 'Réactiver' : 'Suspendre'}
-                            </button>
-                            <button
-                              onClick={() => setDeletingCourier(courier)}
-                              className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                              title="Supprimer définitivement le livreur"
-                            >
-                              <span className="material-symbols-outlined text-sm">delete</span>
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
             </div>
           )}
 
           {/* =========================================================================
-              TAB 3: GESTION DES VENDEURS / MARCHANDS (Full Table & Actions)
+              TAB: ADRESSES E-MAIL OFFICIELLES & 14 MODÈLES ÉDITABLES
              ========================================================================= */}
-          {activeViewTab === 'merchants' && (
-            <div className="space-y-4 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-                <div>
-                  <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <span className="material-symbols-outlined text-emerald-600">storefront</span>
-                    <span>Gestion Complète des Vendeurs &amp; Marchands ({filteredMerchants.length})</span>
-                  </h2>
-                  <p className="text-xs text-slate-500">Supervision des boutiques, statut de vérification, remises et suspension</p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl text-xs font-bold">
-                    <button
-                      onClick={() => setMerchantStatusFilter('all')}
-                      className={`px-2.5 py-1 rounded-lg ${merchantStatusFilter === 'all' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-600'}`}
-                    >
-                      Tous
-                    </button>
-                    <button
-                      onClick={() => setMerchantStatusFilter('actif')}
-                      className={`px-2.5 py-1 rounded-lg ${merchantStatusFilter === 'actif' ? 'bg-white text-emerald-700 shadow-2xs' : 'text-slate-600'}`}
-                    >
-                      🟢 Actifs
-                    </button>
-                    <button
-                      onClick={() => setMerchantStatusFilter('suspendu')}
-                      className={`px-2.5 py-1 rounded-lg ${merchantStatusFilter === 'suspendu' ? 'bg-white text-red-700 shadow-2xs' : 'text-slate-600'}`}
-                    >
-                      🔴 Suspendus
-                    </button>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => refreshAdminData(false)}
-                    disabled={isSyncingAdminData}
-                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl text-xs shadow-2xs flex items-center gap-1 cursor-pointer disabled:opacity-60"
-                    title="Synchroniser les vendeurs depuis Firebase"
-                  >
-                    <span className={`material-symbols-outlined text-sm ${isSyncingAdminData ? 'animate-spin' : ''}`}>sync</span>
-                    <span>{isSyncingAdminData ? 'Synchro...' : 'Synchroniser'}</span>
-                  </button>
-
-                  <button
-                    onClick={() => setIsAddMerchantModalOpen(true)}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1"
-                  >
-                    <span className="material-symbols-outlined text-sm">add</span>
-                    <span>Ajouter Boutique</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Mobile Cards for Merchants */}
-              <div className="md:hidden divide-y divide-slate-100 space-y-3">
-                {filteredMerchants.length === 0 ? (
-                  <div className="text-center py-8 text-slate-400 text-xs">
-                    Aucune boutique trouvée avec les filtres actuels.
-                  </div>
-                ) : (
-                  filteredMerchants.map((merchant) => (
-                    <article key={merchant.id} className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 font-bold text-slate-900 text-xs">
-                          <span>🏪 {merchant.storeName}</span>
-                          {merchant.isVerified && (
-                            <span className="material-symbols-outlined text-blue-500 text-xs" title="Vérifié">verified</span>
-                          )}
-                        </div>
-                        <div>
-                          {merchant.status === 'actif' && (
-                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                              🟢 Actif
-                            </span>
-                          )}
-                          {merchant.status === 'suspendu' && (
-                            <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">
-                              🔴 Suspendu
-                            </span>
-                          )}
-                          {merchant.status === 'en_attente_kyc' && (
-                            <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
-                              🟡 En attente KYC
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="space-y-1 text-xs">
-                        <div className="flex items-center justify-between text-slate-600">
-                          <span>Gérant: <strong className="text-slate-800">{merchant.managerName}</strong></span>
-                          <span className={`px-2 py-0.2 rounded-full text-[9px] font-bold ${
-                            merchant.channel === 'WhatsApp' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' :
-                            merchant.channel === 'Instagram' ? 'bg-pink-50 text-pink-800 border border-pink-200' :
-                            merchant.channel === 'TikTok' ? 'bg-purple-50 text-purple-800 border border-purple-200' : 'bg-blue-50 text-blue-800'
-                          }`}>
-                            {merchant.channel}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-slate-500 flex items-center gap-1">
-                          <span className="material-symbols-outlined text-xs text-slate-400">location_on</span>
-                          <span>{merchant.commune} • {merchant.address}</span>
-                        </div>
-                        <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[11px]">
-                          <span>📱 {merchant.phone}</span>
-                          <span className="font-extrabold text-emerald-700">
-                            {(merchant.totalVolumeFCFA || 0).toLocaleString('fr-FR')} FCFA ({merchant.totalOrders} courses)
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-100 flex-wrap">
-                        <button
-                          type="button"
-                          onClick={() => impersonateMerchant(merchant.id)}
-                          className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold active:scale-95 flex items-center gap-1 shadow-sm"
-                          title="Piloter cette boutique en direct (Mode Directeur)"
-                        >
-                          <span>👑</span>
-                          <span>Piloter</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openEditMerchant(merchant)}
-                          className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold active:scale-95"
-                        >
-                          Éditer
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => toggleMerchantVerification(merchant.id)}
-                          className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold active:scale-95"
-                        >
-                          {merchant.isVerified ? 'Badge ✓' : '+ Badge'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => toggleMerchantStatus(merchant.id)}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-bold active:scale-95 ${
-                            merchant.status === 'suspendu'
-                              ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                              : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
-                          }`}
-                        >
-                          {merchant.status === 'suspendu' ? 'Débloquer' : 'Bloquer'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeletingMerchant(merchant)}
-                          className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors active:scale-95"
-                          title="Supprimer la boutique"
-                        >
-                          <span className="material-symbols-outlined text-sm">delete</span>
-                        </button>
-                      </div>
-                    </article>
-                  ))
-                )}
-              </div>
-
-              {/* Table for Desktop */}
-              <div className="hidden md:block overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs min-w-[700px]">
-                  <thead>
-                    <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
-                      <th className="py-3 px-3">Boutique &amp; Gérant</th>
-                      <th className="py-3 px-3">Canal de Vente</th>
-                      <th className="py-3 px-3">Commune &amp; Adresse</th>
-                      <th className="py-3 px-3">Volume &amp; Courses</th>
-                      <th className="py-3 px-3">Statut &amp; Badge</th>
-                      <th className="py-3 px-3 text-right">Actions Superviseur</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredMerchants.map(merchant => (
-                      <tr key={merchant.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="py-3 px-3">
-                          <div className="font-bold text-slate-900 flex items-center gap-1">
-                            <span>{merchant.storeName}</span>
-                            {merchant.isVerified && (
-                              <span className="material-symbols-outlined text-blue-500 text-xs" title="Vérifié">verified</span>
-                            )}
-                          </div>
-                          <p className="text-[11px] text-slate-500">Gérant : {merchant.managerName} ({merchant.phone})</p>
-                        </td>
-                        <td className="py-3 px-3">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            merchant.channel === 'WhatsApp' ? 'bg-emerald-100 text-emerald-800' :
-                            merchant.channel === 'Instagram' ? 'bg-pink-100 text-pink-800' :
-                            merchant.channel === 'TikTok' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
-                          }`}>
-                            {merchant.channel}
-                          </span>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="font-semibold text-slate-800">{merchant.commune}</div>
-                          <span className="text-[10px] text-slate-400">{merchant.address}</span>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="font-mono font-bold text-slate-900">{merchant.totalOrders} commandes</div>
-                          <span className="text-[10px] text-emerald-600 font-bold">
-                            {(merchant.totalVolumeFCFA || 0).toLocaleString('fr-FR')} FCFA COD
-                          </span>
-                        </td>
-                        <td className="py-3 px-3">
-                          {merchant.status === 'actif' && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                              🟢 Actif
-                            </span>
-                          )}
-                          {merchant.status === 'suspendu' && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">
-                              🔴 Suspendu
-                            </span>
-                          )}
-                          {merchant.status === 'en_attente_kyc' && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
-                              🟡 En attente KYC
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3 px-3 text-right">
-                          <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                            <button
-                              onClick={() => impersonateMerchant(merchant.id)}
-                              className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm active:scale-95"
-                              title="Piloter cette boutique en direct (Mode Directeur)"
-                            >
-                              <span>👑</span>
-                              <span>Piloter</span>
-                            </button>
-                            <button
-                              onClick={() => setResetAccessUser({
-                                id: merchant.id,
-                                name: merchant.storeName,
-                                email: merchant.email || '',
-                                phone: merchant.phone,
-                                role: 'vendeur',
-                                status: merchant.status,
-                                storeName: merchant.storeName,
-                              })}
-                              className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg text-xs flex items-center gap-1 active:scale-95 shadow-xs cursor-pointer"
-                              title="Réinitialiser le mot de passe et les accès"
-                            >
-                              <span className="material-symbols-outlined text-xs">vpn_key</span>
-                              <span>Accès</span>
-                            </button>
-                            <button
-                              onClick={() => openEditMerchant(merchant)}
-                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
-                              title="Modifier les coordonnées de la boutique"
-                            >
-                              Éditer
-                            </button>
-                            <button
-                              onClick={() => toggleMerchantVerification(merchant.id)}
-                              className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold"
-                              title="Basculer statut vérifié"
-                            >
-                              {merchant.isVerified ? 'Badge ✓' : '+ Badge'}
-                            </button>
-                            <button
-                              onClick={() => toggleMerchantStatus(merchant.id)}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
-                                merchant.status === 'suspendu'
-                                  ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                                  : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
-                              }`}
-                            >
-                              {merchant.status === 'suspendu' ? 'Débloquer' : 'Bloquer'}
-                            </button>
-                            <button
-                              onClick={() => setDeletingMerchant(merchant)}
-                              className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                              title="Supprimer la boutique"
-                            >
-                              <span className="material-symbols-outlined text-sm">delete</span>
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+          {activeViewTab === 'email_templates' && (
+            <AdminEmailTemplatesPanel onOpenSmtpSettings={() => setActiveViewTab('email_settings')} />
           )}
 
           {/* =========================================================================
-              TAB 4: SUPERVISION DES LIVRAISONS & LIVE DISPATCH
+              TAB: NUMÉROS DE TÉLÉPHONE OFFICIELS & CONTACTS
              ========================================================================= */}
-          {activeViewTab === 'deliveries' && (
-            <div className="space-y-6 animate-in fade-in duration-200">
-              {/* Deliveries Mini-KPIs Bar */}
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                <div
-                  onClick={() => setDeliveryStatusFilter('all')}
-                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
-                    deliveryStatusFilter === 'all'
-                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                      : 'bg-white border-slate-200 text-slate-800 hover:border-blue-400'
-                  }`}
-                >
-                  <span className={`text-[10px] uppercase font-bold block ${deliveryStatusFilter === 'all' ? 'text-blue-100' : 'text-slate-400'}`}>
-                    Total Courses
-                  </span>
-                  <div className="text-xl font-black">{deliveries.length}</div>
-                  <span className={`text-[10px] ${deliveryStatusFilter === 'all' ? 'text-blue-100' : 'text-slate-500'}`}>
-                    Toutes communes
-                  </span>
-                </div>
-
-                <div
-                  onClick={() => setDeliveryStatusFilter('en_attente')}
-                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
-                    deliveryStatusFilter === 'en_attente'
-                      ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs'
-                      : 'bg-white border-slate-200 text-slate-800 hover:border-amber-400'
-                  }`}
-                >
-                  <span className={`text-[10px] uppercase font-bold block ${deliveryStatusFilter === 'en_attente' ? 'text-slate-900' : 'text-amber-600'}`}>
-                    🟡 En Attente
-                  </span>
-                  <div className="text-xl font-black">
-                    {deliveries.filter(d => d.status === 'en_attente').length}
-                  </div>
-                  <span className={`text-[10px] ${deliveryStatusFilter === 'en_attente' ? 'text-slate-900' : 'text-slate-500'}`}>
-                    À assigner
-                  </span>
-                </div>
-
-                <div
-                  onClick={() => setDeliveryStatusFilter('en_cours')}
-                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
-                    deliveryStatusFilter === 'en_cours'
-                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                      : 'bg-white border-slate-200 text-slate-800 hover:border-blue-400'
-                  }`}
-                >
-                  <span className={`text-[10px] uppercase font-bold block ${deliveryStatusFilter === 'en_cours' ? 'text-blue-100' : 'text-blue-600'}`}>
-                    🟢 En Transit
-                  </span>
-                  <div className="text-xl font-black">
-                    {deliveries.filter(d => d.status === 'en_cours' || d.status === 'assignee').length}
-                  </div>
-                  <span className={`text-[10px] ${deliveryStatusFilter === 'en_cours' ? 'text-blue-100' : 'text-slate-500'}`}>
-                    Livreur en route
-                  </span>
-                </div>
-
-                <div
-                  onClick={() => setDeliveryStatusFilter('livree')}
-                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
-                    deliveryStatusFilter === 'livree'
-                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
-                      : 'bg-white border-slate-200 text-slate-800 hover:border-emerald-400'
-                  }`}
-                >
-                  <span className={`text-[10px] uppercase font-bold block ${deliveryStatusFilter === 'livree' ? 'text-emerald-100' : 'text-emerald-600'}`}>
-                    ✅ Livrées (POD)
-                  </span>
-                  <div className="text-xl font-black">
-                    {deliveries.filter(d => d.status === 'livree').length}
-                  </div>
-                  <span className={`text-[10px] ${deliveryStatusFilter === 'livree' ? 'text-emerald-100' : 'text-slate-500'}`}>
-                    Fonds sécurisés
-                  </span>
-                </div>
-
-                <div
-                  onClick={() => setDeliveryStatusFilter('echec')}
-                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
-                    deliveryStatusFilter === 'echec'
-                      ? 'bg-red-600 text-white border-red-600 shadow-xs'
-                      : 'bg-white border-slate-200 text-slate-800 hover:border-red-400'
-                  }`}
-                >
-                  <span className={`text-[10px] uppercase font-bold block ${deliveryStatusFilter === 'echec' ? 'text-red-100' : 'text-red-600'}`}>
-                    🔴 Litiges
-                  </span>
-                  <div className="text-xl font-black">
-                    {deliveries.filter(d => d.status === 'echec').length}
-                  </div>
-                  <span className={`text-[10px] ${deliveryStatusFilter === 'echec' ? 'text-red-100' : 'text-slate-500'}`}>
-                    Arbitrage requis
-                  </span>
-                </div>
-              </div>
-
-              {/* Main Deliveries Card */}
-              <div className="space-y-4 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-                  <div>
-                    <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                      <span className="material-symbols-outlined text-blue-600">local_shipping</span>
-                      <span>Live Dispatch &amp; Supervision des Livraisons ({filteredDeliveries.length})</span>
-                    </h2>
-                    <p className="text-xs text-slate-500">Contrôle en direct des courses, assignation aux coursiers et validation POD</p>
-                  </div>
-
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      onClick={() => setIsAddDeliveryModalOpen(true)}
-                      className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1.5 transition-all active:scale-95"
-                    >
-                      <span className="material-symbols-outlined text-sm">add_circle</span>
-                      <span>+ Nouvelle Course Directe</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setDeliveryStatusFilter('all');
-                        setAdminSearch('');
-                        showToast('Liste des courses actualisée', 'info');
-                      }}
-                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center gap-1"
-                      title="Réinitialiser les filtres"
-                    >
-                      <span className="material-symbols-outlined text-sm">refresh</span>
-                      <span>Actualiser</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Filter Chips Bar */}
-                <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl text-xs font-bold overflow-x-auto">
-                  <button
-                    onClick={() => setDeliveryStatusFilter('all')}
-                    className={`px-3 py-1.5 rounded-lg transition-all ${deliveryStatusFilter === 'all' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-600'}`}
-                  >
-                    Toutes ({deliveries.length})
-                  </button>
-                  <button
-                    onClick={() => setDeliveryStatusFilter('en_attente')}
-                    className={`px-3 py-1.5 rounded-lg transition-all ${deliveryStatusFilter === 'en_attente' ? 'bg-white text-amber-700 shadow-2xs' : 'text-slate-600'}`}
-                  >
-                    🟡 En attente ({deliveries.filter(d => d.status === 'en_attente').length})
-                  </button>
-                  <button
-                    onClick={() => setDeliveryStatusFilter('en_cours')}
-                    className={`px-3 py-1.5 rounded-lg transition-all ${deliveryStatusFilter === 'en_cours' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-600'}`}
-                  >
-                    🟢 En transit ({deliveries.filter(d => d.status === 'en_cours' || d.status === 'assignee').length})
-                  </button>
-                  <button
-                    onClick={() => setDeliveryStatusFilter('livree')}
-                    className={`px-3 py-1.5 rounded-lg transition-all ${deliveryStatusFilter === 'livree' ? 'bg-white text-emerald-700 shadow-2xs' : 'text-slate-600'}`}
-                  >
-                    ✅ Livrées ({deliveries.filter(d => d.status === 'livree').length})
-                  </button>
-                  <button
-                    onClick={() => setDeliveryStatusFilter('echec')}
-                    className={`px-3 py-1.5 rounded-lg transition-all ${deliveryStatusFilter === 'echec' ? 'bg-white text-red-700 shadow-2xs' : 'text-slate-600'}`}
-                  >
-                    🔴 Litiges ({deliveries.filter(d => d.status === 'echec').length})
-                  </button>
-                </div>
-
-                {/* Mobile Cards for Deliveries Supervision */}
-                <div className="md:hidden divide-y divide-slate-100 p-3 space-y-3">
-                  {filteredDeliveries.length === 0 ? (
-                    <div className="text-center py-8 text-slate-400 text-xs">
-                      Aucune course trouvée avec les filtres actuels.
-                    </div>
-                  ) : (
-                    filteredDeliveries.map((order) => (
-                      <article key={order.id} className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-2.5">
-                        <div className="flex items-center justify-between">
-                          <button
-                            type="button"
-                            onClick={() => setInspectingDelivery(order)}
-                            className="font-mono font-bold text-blue-700 text-xs hover:underline flex items-center gap-1"
-                          >
-                            <span>{order.id}</span>
-                            <span className="material-symbols-outlined text-xs">visibility</span>
-                          </button>
-                          <div>
-                            {order.status === 'en_cours' && (
-                              <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">
-                                🚚 En transit
-                              </span>
-                            )}
-                            {order.status === 'assignee' && (
-                              <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-bold">
-                                🟣 Assignée
-                              </span>
-                            )}
-                            {order.status === 'en_attente' && (
-                              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
-                                🟡 En attente
-                              </span>
-                            )}
-                            {order.status === 'echec' && (
-                              <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">
-                                🔴 Litige
-                              </span>
-                            )}
-                            {order.status === 'livree' && (
-                              <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                                ✅ Livrée (POD)
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="space-y-1.5 text-xs">
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <div className="font-bold text-slate-900">{order.clientName}</div>
-                              <div className="text-[11px] text-slate-500 font-mono">{order.clientPhone}</div>
-                            </div>
-                            <div className="text-right">
-                              <div className="font-extrabold text-emerald-700">{order.itemValueCOD.toLocaleString('fr-FR')} FCFA</div>
-                              <div className="text-[10px] text-slate-400">Frais: {order.deliveryFee.toLocaleString('fr-FR')} F</div>
-                            </div>
-                          </div>
-
-                          <div className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-xl space-y-0.5">
-                            <div className="flex items-center gap-1 truncate">
-                              <span className="text-slate-400">De:</span>
-                              <strong className="text-slate-800">{order.pickupLocation.name}</strong>
-                              <span className="text-slate-400">({order.pickupLocation.commune})</span>
-                            </div>
-                            <div className="flex items-center gap-1 truncate">
-                              <span className="text-slate-400">Vers:</span>
-                              <strong className="text-slate-800">{order.dropoffLocation.commune}</strong>
-                              <span className="text-slate-400 truncate">• {order.dropoffLocation.address}</span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center justify-between text-[11px] pt-1">
-                            <span className="text-slate-500">
-                              Coursier: <strong className="text-slate-800">{order.courier ? order.courier.name : 'Non assigné'}</strong>
-                            </span>
-                            <span className="text-[10px] text-slate-400">
-                              {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Actions buttons */}
-                        <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-100 flex-wrap">
-                          <button
-                            type="button"
-                            onClick={() => setAssigningOrder(order)}
-                            className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-2xs active:scale-95"
-                          >
-                            Assigner
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openEditDelivery(order)}
-                            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold active:scale-95"
-                          >
-                            Éditer
-                          </button>
-                          {order.status !== 'livree' && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                updateDeliveryStatus(order.id, 'livree', 'Forçage administrateur POD');
-                                showToast(`Course ${order.id} marquée livrée avec succès !`, 'success');
-                              }}
-                              className="px-2 py-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-xs font-bold active:scale-95"
-                            >
-                              ✓ Livré
-                            </button>
-                          )}
-                          {order.status === 'echec' ? (
-                            <button
-                              type="button"
-                              onClick={() => setSelectedDisputeOrder(order.id)}
-                              className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold shadow-2xs active:scale-95"
-                            >
-                              Arbitrer
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                updateDeliveryStatus(order.id, 'echec', 'Incident signalé par le superviseur');
-                                showToast(`Course ${order.id} placée en litige`, 'info');
-                              }}
-                              className="px-2 py-1 bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 rounded-lg text-xs font-semibold active:scale-95"
-                            >
-                              Litige
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => setInspectingDelivery(order)}
-                            className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg active:scale-95"
-                            title="Voir fiche complète"
-                          >
-                            <span className="material-symbols-outlined text-sm">open_in_new</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeletingDelivery(order)}
-                            className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors active:scale-95"
-                            title="Supprimer la course"
-                          >
-                            <span className="material-symbols-outlined text-sm">delete</span>
-                          </button>
-                        </div>
-                      </article>
-                    ))
-                  )}
-                </div>
-
-                {/* Table for Desktop & Tablets */}
-                <div className="hidden md:block overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs min-w-[780px]">
-                    <thead>
-                      <tr className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-200">
-                        <th className="py-3 px-3">ID &amp; Détails</th>
-                        <th className="py-3 px-3">Expéditeur (Boutique)</th>
-                        <th className="py-3 px-3">Destinataire (Client)</th>
-                        <th className="py-3 px-3">Coursier Assigné</th>
-                        <th className="py-3 px-3">Montant COD / Frais</th>
-                        <th className="py-3 px-3">Statut Course</th>
-                        <th className="py-3 px-3 text-right">Actions Superviseur</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {filteredDeliveries.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="text-center py-10 text-slate-400">
-                            Aucune course trouvée avec les filtres actuels.
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredDeliveries.map(order => (
-                          <tr key={order.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="py-3 px-3">
-                              <button
-                                onClick={() => setInspectingDelivery(order)}
-                                className="font-mono font-bold text-blue-700 hover:underline flex items-center gap-1"
-                              >
-                                <span>{order.id}</span>
-                                <span className="material-symbols-outlined text-xs">visibility</span>
-                              </button>
-                              <span className="text-[10px] text-slate-400">Créée le {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                            </td>
-
-                            <td className="py-3 px-3">
-                              <div className="font-bold text-slate-900">{order.pickupLocation.name}</div>
-                              <span className="text-[10px] text-slate-500">{order.pickupLocation.commune}</span>
-                            </td>
-
-                            <td className="py-3 px-3">
-                              <div className="font-semibold text-slate-800 flex items-center gap-1">
-                                <span>{order.clientName}</span>
-                                <button
-                                  onClick={() => openWhatsAppModal(order.clientPhone, order.clientName, `Bonjour ${order.clientName}, suivi de votre livraison LivraLink ${order.id}.`)}
-                                  className="text-emerald-600 hover:text-emerald-700"
-                                  title="Ouvrir WhatsApp client"
-                                >
-                                  <span className="material-symbols-outlined text-xs">chat</span>
-                                </button>
-                              </div>
-                              <span className="text-[10px] text-slate-500">{order.dropoffLocation.commune} • {order.clientPhone}</span>
-                            </td>
-
-                            <td className="py-3 px-3">
-                              {order.courier ? (
-                                <div className="flex items-center gap-2">
-                                  <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-700 font-bold flex items-center justify-center text-[10px]">
-                                    {order.courier.avatarInitials || '🛵'}
-                                  </div>
-                                  <div>
-                                    <div className="font-bold text-slate-900">{order.courier.name}</div>
-                                    <span className="text-[10px] text-slate-500">{order.courier.vehicle}</span>
-                                  </div>
-                                </div>
-                              ) : (
-                                <button
-                                  onClick={() => setAssigningOrder(order)}
-                                  className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 transition-colors"
-                                >
-                                  ⚠️ Non assigné (Cliquer)
-                                </button>
-                              )}
-                            </td>
-
-                            <td className="py-3 px-3">
-                              <div className="font-bold text-slate-900">COD: {order.itemValueCOD.toLocaleString('fr-FR')} F</div>
-                              <span className="text-[10px] text-blue-600 font-bold">Frais: {order.deliveryFee.toLocaleString('fr-FR')} F</span>
-                            </td>
-
-                            <td className="py-3 px-3">
-                              {order.status === 'en_cours' && (
-                                <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold inline-flex items-center gap-1">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse"></span>
-                                  <span>En transit</span>
-                                </span>
-                              )}
-                              {order.status === 'assignee' && (
-                                <span className="px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-bold">
-                                  🟣 Assignée
-                                </span>
-                              )}
-                              {order.status === 'en_attente' && (
-                                <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
-                                  🟡 En attente
-                                </span>
-                              )}
-                              {order.status === 'echec' && (
-                                <span className="px-2.5 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-bold">
-                                  🔴 Litige
-                                </span>
-                              )}
-                              {order.status === 'livree' && (
-                                <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                                  ✅ Livrée (POD)
-                                </span>
-                              )}
-                            </td>
-
-                            <td className="py-3 px-3 text-right">
-                              <div className="flex items-center justify-end gap-1 flex-wrap">
-                                <button
-                                  onClick={() => setAssigningOrder(order)}
-                                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-2xs"
-                                  title="Assigner un livreur"
-                                >
-                                  Assigner
-                                </button>
-                                
-                                <button
-                                  onClick={() => openEditDelivery(order)}
-                                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
-                                  title="Modifier les détails de la course"
-                                >
-                                  Éditer
-                                </button>
-
-                                {order.status !== 'livree' && (
-                                  <button
-                                    onClick={() => {
-                                      updateDeliveryStatus(order.id, 'livree', 'Forçage administrateur POD');
-                                      showToast(`Course ${order.id} marquée livrée avec succès !`, 'success');
-                                    }}
-                                    className="px-2 py-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-xs font-bold"
-                                    title="Forcer la validation de la livraison"
-                                  >
-                                    ✓ Livré
-                                  </button>
-                                )}
-
-                                {order.status === 'echec' ? (
-                                  <button
-                                    onClick={() => setSelectedDisputeOrder(order.id)}
-                                    className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold shadow-2xs"
-                                    title="Résoudre l'incident"
-                                  >
-                                    Arbitrer
-                                  </button>
-                                ) : (
-                                  <button
-                                    onClick={() => {
-                                      updateDeliveryStatus(order.id, 'echec', 'Incident signalé par le superviseur');
-                                      showToast(`Course ${order.id} placée en litige`, 'info');
-                                    }}
-                                    className="px-2 py-1 bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 rounded-lg text-xs font-semibold"
-                                    title="Signaler incident"
-                                  >
-                                    Litige
-                                  </button>
-                                )}
-
-                                <button
-                                  onClick={() => setInspectingDelivery(order)}
-                                  className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg"
-                                  title="Voir fiche complète"
-                                >
-                                  <span className="material-symbols-outlined text-sm">open_in_new</span>
-                                </button>
-
-                                <button
-                                  onClick={() => setDeletingDelivery(order)}
-                                  className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                  title="Supprimer la course"
-                                >
-                                  <span className="material-symbols-outlined text-sm">delete</span>
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+          {activeViewTab === 'contacts' && (
+            <AdminContactsPanel />
           )}
 
           {/* =========================================================================
-              TAB 5: LITIGES & MODÉRATION
+              TAB: PARAMÈTRES GÉNÉRAUX & CONTRÔLE GLOBAL DES OPÉRATIONS
              ========================================================================= */}
-          {activeViewTab === 'disputes' && (
-            <div className="space-y-4 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
-              <div className="pb-3 border-b border-slate-100">
-                <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <span className="material-symbols-outlined text-red-600">warning</span>
-                  <span>Centre de Résolution des Litiges &amp; Arbitrage ({disputeCount})</span>
-                </h2>
-                <p className="text-xs text-slate-500">Médiation entre marchands, coursiers et clients pour déblocage des fonds</p>
-              </div>
-
-              {disputeCount === 0 ? (
-                <div className="p-12 text-center bg-slate-50 rounded-2xl border border-slate-100">
-                  <span className="material-symbols-outlined text-4xl text-emerald-500 mb-2">verified</span>
-                  <h3 className="font-bold text-slate-800 text-sm">Aucun litige actif</h3>
-                  <p className="text-xs text-slate-400">Toutes les livraisons se déroulent normalement.</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {deliveries.filter(d => d.status === 'echec').map(order => (
-                    <div key={order.id} className="p-4 rounded-2xl border border-red-200 bg-red-50/30 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="font-mono font-bold text-red-700">{order.id}</span>
-                        <span className="px-2 py-0.5 bg-red-100 text-red-800 rounded-full font-bold text-[10px]">
-                          Incident de Livraison
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-700 font-semibold">{order.statusNote || 'Client injoignable ou refus de réception'}</p>
-                      <div className="text-[11px] text-slate-500 space-y-0.5">
-                        <p><strong>Boutique :</strong> {order.pickupLocation.name}</p>
-                        <p><strong>Destinataire :</strong> {order.clientName} ({order.clientPhone})</p>
-                        <p><strong>Montant COD en jeu :</strong> {order.itemValueCOD.toLocaleString('fr-FR')} FCFA</p>
-                      </div>
-                      <button
-                        onClick={() => setSelectedDisputeOrder(order.id)}
-                        className="w-full py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5"
-                      >
-                        <span className="material-symbols-outlined text-sm">handshake</span>
-                        <span>Ouvrir l'Arbitrage Superviseur</span>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+          {activeViewTab === 'general_settings' && (
+            <AdminGeneralSettingsPanel />
           )}
 
           {/* =========================================================================
-              TAB 6: MOTEUR TARIFAIRE & COMMISSIONS
+              TAB: ADMINISTRATEURS & 7 RÔLES RBAC
              ========================================================================= */}
-          {activeViewTab === 'pricing' && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
-              <div className="space-y-4">
-                <div className="pb-3 border-b border-slate-100">
-                  <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <span className="material-symbols-outlined text-blue-600">tune</span>
-                    <span>Configuration du Barème Tarifaire</span>
-                  </h2>
-                  <p className="text-xs text-slate-500">Ajustement en temps réel des règles de tarification algorithmique</p>
-                </div>
-
-                <div className="space-y-3 text-xs">
-                  <div className="p-3.5 bg-slate-50 rounded-2xl flex items-center justify-between border border-slate-100">
-                    <div>
-                      <span className="font-bold text-slate-800 block">Forfait Prise en Charge (0-3 km)</span>
-                      <span className="text-[10px] text-slate-400">Tarif de base minimum</span>
-                    </div>
-                    <span className="font-mono font-bold text-blue-700 bg-white px-3 py-1.5 rounded-xl border border-slate-200">
-                      {pricingRules.baseFeeFCFA} FCFA
-                    </span>
-                  </div>
-
-                  <div className="p-3.5 bg-slate-50 rounded-2xl flex items-center justify-between border border-slate-100">
-                    <div>
-                      <span className="font-bold text-slate-800 block">Barème Kilométrique Additionnel</span>
-                      <span className="text-[10px] text-slate-400">Au-delà de 3 km</span>
-                    </div>
-                    <span className="font-mono font-bold text-blue-700 bg-white px-3 py-1.5 rounded-xl border border-slate-200">
-                      +{pricingRules.extraPerKmFCFA} FCFA/km
-                    </span>
-                  </div>
-
-                  <div className="p-3.5 bg-slate-50 rounded-2xl flex items-center justify-between border border-slate-100">
-                    <div>
-                      <span className="font-bold text-slate-800 block">Majoration Colis Fragile / Spécial</span>
-                      <span className="text-[10px] text-slate-400">Option emballage sécurisé</span>
-                    </div>
-                    <span className="font-mono font-bold text-blue-700 bg-white px-3 py-1.5 rounded-xl border border-slate-200">
-                      +{pricingRules.fragileSurchargeFCFA} FCFA
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <div className="pb-3 border-b border-slate-100">
-                  <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <span className="material-symbols-outlined text-emerald-600">percent</span>
-                    <span>Taux de Commission Plateforme</span>
-                  </h2>
-                  <p className="text-xs text-slate-500">Prélèvement automatique sur les frais de livraison</p>
-                </div>
-
-                <div className="p-5 bg-blue-50/80 rounded-2xl border border-blue-200 space-y-4">
-                  <div className="flex justify-between items-center">
-                    <span className="font-bold text-blue-950 text-sm">Commission Actuelle</span>
-                    <span className="px-3 py-1 rounded-full bg-blue-600 text-white font-extrabold text-xs shadow-xs">
-                      {pricingRules.commissionRatePercent}%
-                    </span>
-                  </div>
-
-                  <input
-                    type="range"
-                    min="0"
-                    max="20"
-                    value={pricingRules.commissionRatePercent}
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      setPricingRules(prev => ({ ...prev, commissionRatePercent: val }));
-                    }}
-                    className="w-full h-2 bg-blue-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                  />
-
-                  <div className="flex justify-between text-[11px] text-slate-600 font-semibold">
-                    <span>0% (Offre Lancement MVP)</span>
-                    <span>10% (Modèle Standard)</span>
-                    <span>20% (Plafond Max)</span>
-                  </div>
-
-                  <div className="p-3 bg-white rounded-xl border border-blue-100 text-[11px] text-slate-600 space-y-1">
-                    <p className="font-bold text-blue-900">💡 Simulation sur une course standard de 2 500 FCFA :</p>
-                    <p>• Gain net reversé au Livreur : <strong>{(2500 * (1 - pricingRules.commissionRatePercent / 100)).toLocaleString('fr-FR')} FCFA</strong></p>
-                    <p>• Revenu Plateforme LivraLink : <strong>{(2500 * (pricingRules.commissionRatePercent / 100)).toLocaleString('fr-FR')} FCFA</strong></p>
-                  </div>
-                </div>
-              </div>
-            </div>
+          {activeViewTab === 'rbac_admins' && (
+            <AdminRbacSecurityPanel />
           )}
 
           {/* =========================================================================
@@ -4157,7 +2966,7 @@ export const AdminConsole: React.FC = () => {
                   <span className="material-symbols-outlined text-4xl text-indigo-500">science</span>
                   <div>
                     <p className="font-bold text-slate-800 text-sm">Prêt pour la validation intégrale du SaaS</p>
-                    <p className="text-slate-500 mt-1">Supervision courses, flotteurs/livreurs, boutiques/vendeurs, annuaire, KYC, moteur tarifaire (100 F/km), sécurité et Google Auth Multi-Comptes.</p>
+                    <p className="text-slate-500 mt-1">Supervision courses, flotteurs/livreurs, boutiques/vendeurs, annuaire, KYC, moteur tarifaire ({platformConfig.pricing.pricePerKmFCFA} F/km), sécurité et Google Auth Multi-Comptes.</p>
                   </div>
                   <button
                     onClick={handleRunValidationSuite}
@@ -4175,55 +2984,7 @@ export const AdminConsole: React.FC = () => {
               TAB 8: JOURNAL D'AUDIT & SÉCURITÉ
              ========================================================================= */}
           {activeViewTab === 'audit' && (
-            <div className="space-y-4 bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm animate-in fade-in duration-200">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <div>
-                  <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <span className="material-symbols-outlined text-slate-700">history</span>
-                    <span>Journal d'Audit Système &amp; Sécurité</span>
-                  </h2>
-                  <p className="text-xs text-slate-500">Traçabilité complète des actions administrateur et des événements réseau</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (auditLogs.length === 0) {
-                      showToast('Aucune entrée d\'audit à exporter.', 'info');
-                      return;
-                    }
-                    downloadCsvFile(
-                      `livralink_audit_${new Date().toISOString().split('T')[0]}.csv`,
-                      ['ID', 'Type', 'Titre', 'Details', 'Horodatage'],
-                      auditLogs.map((l) => [l.id, l.type, l.title, l.details, l.timestamp])
-                    );
-                    showToast('Journal d\'audit exporté au format CSV !', 'success');
-                  }}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-sm">download</span>
-                  <span>Exporter CSV</span>
-                </button>
-              </div>
-
-              <div className="divide-y divide-slate-100 text-xs">
-                {auditLogs.map(log => (
-                  <div key={log.id} className="py-3 flex items-start justify-between gap-4">
-                    <div className="space-y-0.5">
-                      <p className="font-bold text-slate-900 flex items-center gap-1.5">
-                        <span className={`w-1.5 h-1.5 rounded-full ${
-                          log.type === 'kyc' ? 'bg-purple-500' :
-                          log.type === 'dispute' ? 'bg-red-500' :
-                          log.type === 'pricing' ? 'bg-blue-500' : 'bg-emerald-500'
-                        }`}></span>
-                        <span>{log.title}</span>
-                      </p>
-                      <p className="text-slate-600 text-[11px]">{log.details}</p>
-                    </div>
-                    <span className="font-mono text-slate-400 text-[10px] shrink-0">{log.timestamp}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <AdminAuditLogsPanel />
           )}
 
           {/* =========================================================================

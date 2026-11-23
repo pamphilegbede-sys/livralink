@@ -4,7 +4,7 @@ import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
 import { GoogleMapDelivery } from '../maps/GoogleMapDelivery';
-import { getLocationForCommune, calculateDistanceKm, calculateDeliveryPrice } from '../../config/maps';
+import { getLocationForCommune, calculateDistanceKm } from '../../config/maps';
 import { DeliveryOrder } from '../../types';
 
 import { OnboardingGuideModal } from '../modals/OnboardingGuideModal';
@@ -35,6 +35,8 @@ export const LivreurDashboard: React.FC = () => {
     isUserMasterAdmin,
     gpsTrackingStatus,
     syncCourierGpsPosition,
+    platformConfig,
+    computeQuotePreview,
   } = useApp();
 
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
@@ -136,7 +138,7 @@ export const LivreurDashboard: React.FC = () => {
     : getLocationForCommune(activeOrder?.dropoffLocation?.commune || 'Cotonou - Cadjehoun');
 
   const activeDistanceKm = calculateDistanceKm(activeOriginCoords, activeDropoffCoords);
-  const activeFee = calculateDeliveryPrice(activeDistanceKm);
+  const activeFee = activeOrder?.deliveryFee || computeQuotePreview({ distanceKm: activeDistanceKm }).finalDeliveryFeeFCFA;
 
   const handleOpenPOD = () => {
     if (!activeOrder) return;
@@ -376,7 +378,7 @@ export const LivreurDashboard: React.FC = () => {
                   Propositions Exclusives pour Vous ({pendingDeliveries.length})
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Attribution intelligente selon votre proximité GPS • 100 FCFA/km
+                  Attribution intelligente selon votre proximité GPS • {platformConfig.pricing.pricePerKmFCFA} {platformConfig.general.currency}/km
                 </p>
               </div>
 
@@ -405,7 +407,7 @@ export const LivreurDashboard: React.FC = () => {
                     : getLocationForCommune(order.dropoffLocation?.commune || 'Cotonou - Cadjehoun');
 
                   const distKm = calculateDistanceKm(pOrigin, pDropoff);
-                  const price = order.deliveryFee || calculateDeliveryPrice(distKm);
+                  const price = order.deliveryFee || computeQuotePreview({ distanceKm: distKm }).finalDeliveryFeeFCFA;
                   const isMapExpanded = expandedMapOrderId === order.id;
                   const expMs = typeof order.offerExpiresAt === 'number'
                     ? order.offerExpiresAt

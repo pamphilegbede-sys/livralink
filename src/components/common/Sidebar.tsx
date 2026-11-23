@@ -24,6 +24,7 @@ export const Sidebar: React.FC = () => {
     firebaseUser,
     courierMissionsFilter,
     setCourierMissionsFilter,
+    platformConfig,
   } = useApp();
 
   const isUserSuperAdmin = isUserMasterAdmin;
@@ -694,7 +695,12 @@ export const Sidebar: React.FC = () => {
       {/* Footer Navigation Tabs (Help, Logout, Profile preview) - Always Pinned */}
       <div className="p-4 border-t border-slate-200 dark:border-slate-800 space-y-2 shrink-0 bg-white dark:bg-slate-900 transition-colors">
         <button
-          onClick={() => showToast('Support LivraLink disponible via la Messagerie ou à support@livralink.oxy-dev.cc', 'info')}
+          onClick={() =>
+            showToast(
+              `Support ${platformConfig.general.appName} : ${platformConfig.emails.supportEmail} • Tél : ${platformConfig.contacts.mainPhone}`,
+              'info'
+            )
+          }
           className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-slate-600 hover:bg-slate-50 text-xs font-medium transition-colors"
         >
           <span className="material-symbols-outlined text-lg">help</span>

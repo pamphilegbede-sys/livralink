@@ -52,6 +52,37 @@ import {
   evaluatePayoutProviderConfig,
   resolvePayoutProviderAdapter,
 } from './src/server/mobileMoneyProvider';
+import {
+  ADMIN_ROLE_LABELS,
+  ADMIN_ROLE_PERMISSIONS,
+  ALL_ADMIN_PERMISSIONS,
+  hasAdminPermission,
+  isValidAdminRoleId,
+  resolveAdminContext,
+  ResolvedAdminContext,
+  resolvePermissionsForRole,
+  SUPER_ADMIN_EMAIL_LOWER,
+} from './src/server/adminRbac';
+import {
+  listAdminAuditLogs,
+  recordAdminAuditLog,
+} from './src/server/adminAuditService';
+import {
+  ALL_EMAIL_TEMPLATE_IDS,
+  extractPublicPlatformConfig,
+  loadEmailTemplates,
+  loadPlatformConfigBundle,
+  renderEmailTemplate,
+  saveEmailTemplate,
+  savePlatformConfigSection,
+} from './src/server/platformConfigService';
+import { computeAuthoritativeOrderFinancials } from './src/server/pricingEngine';
+import {
+  AccountLifecycleStatus,
+  AdminPermission,
+  AdminRoleId,
+  EmailTemplateId,
+} from './src/types';
 
 const envPath = path.resolve(process.cwd(), '.env');
 if (fs.existsSync(envPath)) {
@@ -408,7 +439,12 @@ interface AuthenticatedRequest extends Request {
     isAdmin?: boolean;
     kycLocked?: boolean;
   };
+  adminContext?: ResolvedAdminContext;
 }
+
+const getActiveDb = (): any => {
+  return process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+};
 
 interface SecurityAnomalyEntry {
   id: string;
@@ -491,29 +527,8 @@ const authenticateFirebaseToken = async (req: AuthenticatedRequest, res: Respons
 };
 
 const checkCallerIsAdmin = async (user?: AuthenticatedRequest['user']): Promise<boolean> => {
-  if (!user?.uid || user.email_verified !== true) {
-    return false;
-  }
-  const emailLower = (user.email || '').toLowerCase().trim();
-  if (emailLower === 'pamphile.gbede@gmail.com' || Boolean(user.isAdmin)) {
-    return true;
-  }
-  const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
-  if (activeDb) {
-    try {
-      const adminDoc = await activeDb.collection('admins').doc(user.uid).get();
-      if (adminDoc.exists) {
-        return true;
-      }
-      const userDoc = await activeDb.collection('users').doc(user.uid).get();
-      if (userDoc.exists && userDoc.data()?.role === 'admin') {
-        return true;
-      }
-    } catch {
-      return false;
-    }
-  }
-  return false;
+  const ctx = await resolveAdminContext(getActiveDb(), user);
+  return ctx.isAdmin && ctx.isActive;
 };
 
 /**
@@ -552,7 +567,7 @@ const requireVerifiedUser = (req: AuthenticatedRequest, res: Response, next: any
 };
 
 /**
- * Middleware: Enforce verified Super-Admin / Admin authorization strictly via Firebase ID token & Firestore role
+ * Middleware: Enforce verified Super-Admin / Admin authorization strictly via Firebase ID token & Firestore role/RBAC
  */
 const requireAdminAuthorization = async (req: AuthenticatedRequest, res: Response, next: any) => {
   if (!req.user?.uid) {
@@ -571,16 +586,76 @@ const requireAdminAuthorization = async (req: AuthenticatedRequest, res: Respons
     });
   }
 
-  const isAdminAuthorized = await checkCallerIsAdmin(req.user);
-
-  if (!isAdminAuthorized) {
+  const adminCtx = await resolveAdminContext(getActiveDb(), req.user);
+  if (!adminCtx.isAdmin || !adminCtx.isActive) {
     recordSecurityAnomaly(getClientIp(req), 'UNAUTHORIZED_ADMIN_ROUTE_ATTEMPT', `Tentative d'accès non autorisée par ${req.user.email || req.user.uid} sur: ${req.path}`);
     return res.status(403).json({
       success: false,
       error: 'Accès refusé. Droits d\'administration vérifiés requis pour exécuter cette action.',
     });
   }
+  req.adminContext = adminCtx;
   next();
+};
+
+const requireAdminPermission = (permission: AdminPermission) => {
+  return async (req: AuthenticatedRequest, res: Response, next: any) => {
+    if (!req.user?.uid) {
+      recordSecurityAnomaly(getClientIp(req), 'UNAUTHENTICATED_ADMIN_ROUTE_ATTEMPT', `Accès sans jeton Firebase à la route admin: ${req.path}`);
+      return res.status(401).json({
+        success: false,
+        error: 'Authentification Firebase requise pour accéder à cette ressource administrateur.',
+      });
+    }
+    if (req.user.email_verified !== true) {
+      return res.status(403).json({
+        success: false,
+        error: 'Accès refusé. Adresse e-mail administrateur vérifiée requise.',
+      });
+    }
+    const adminCtx = await resolveAdminContext(getActiveDb(), req.user);
+    if (!adminCtx.isAdmin || !adminCtx.isActive) {
+      recordSecurityAnomaly(getClientIp(req), 'UNAUTHORIZED_ADMIN_ROUTE_ATTEMPT', `Tentative d'accès non autorisée par ${req.user.email || req.user.uid} sur: ${req.path}`);
+      return res.status(403).json({
+        success: false,
+        error: 'Accès refusé. Droits d\'administration vérifiés requis.',
+      });
+    }
+    if (!hasAdminPermission(adminCtx, permission)) {
+      recordSecurityAnomaly(getClientIp(req), 'RBAC_PERMISSION_DENIED', `${adminCtx.email} (${adminCtx.roleId}) bloqué pour ${permission} sur ${req.path}`);
+      void recordAdminAuditLog(getActiveDb(), {
+        adminUid: adminCtx.uid,
+        adminEmail: adminCtx.email,
+        adminRole: adminCtx.roleId || 'unknown',
+        category: 'rbac',
+        action: `PERMISSION_DENIED:${permission}`,
+        targetType: 'route',
+        targetId: req.path,
+        result: 'denied',
+      });
+      return res.status(403).json({
+        success: false,
+        code: 'RBAC_PERMISSION_DENIED',
+        requiredPermission: permission,
+        error: `Permission insuffisante (${permission}) pour exécuter cette opération.`,
+      });
+    }
+    req.adminContext = adminCtx;
+    next();
+  };
+};
+
+const requireSuperAdminAuthorization = async (req: AuthenticatedRequest, res: Response, next: any) => {
+  await requireAdminPermission('admins.manage')(req, res, () => {
+    if (!req.adminContext?.isSuperAdmin) {
+      return res.status(403).json({
+        success: false,
+        code: 'SUPER_ADMIN_REQUIRED',
+        error: 'Cette action est strictement réservée au Super-Administrateur.',
+      });
+    }
+    next();
+  });
 };
 
 app.use('/api', authenticateFirebaseToken as any);
@@ -2064,7 +2139,7 @@ app.post('/api/email/notification', requireVerifiedUser as any, async (req: Auth
  * GET /api/email/outbox
  * Returns the history of sent emails from Firestore or memory.
  */
-app.get('/api/email/outbox', requireAdminAuthorization as any, async (_req: Request, res: Response) => {
+app.get('/api/email/outbox', requireAdminPermission('emails.read') as any, async (_req: Request, res: Response) => {
   const { emails, source } = await getP1EmailService().listEmailOutbox(100);
   res.json({
     success: true,
@@ -2078,7 +2153,7 @@ app.get('/api/email/outbox', requireAdminAuthorization as any, async (_req: Requ
  * POST /api/admin/email/process-queue
  * Manually triggers retry processor for persisted Firestore email queue jobs
  */
-app.post('/api/admin/email/process-queue', requireAdminAuthorization as any, async (_req: Request, res: Response) => {
+app.post('/api/admin/email/process-queue', requireAdminPermission('emails.manage') as any, async (_req: Request, res: Response) => {
   const result = await getP1EmailService().processEmailQueue({ forceImmediate: true });
   res.json({
     success: true,
@@ -2091,7 +2166,7 @@ app.post('/api/admin/email/process-queue', requireAdminAuthorization as any, asy
  * POST /api/email/clear-outbox
  * Clears email log history from Firestore and local memory. Protected by Super-Admin authorization.
  */
-app.post('/api/email/clear-outbox', requireAdminAuthorization as any, async (_req: Request, res: Response) => {
+app.post('/api/email/clear-outbox', requireAdminPermission('emails.manage') as any, async (_req: Request, res: Response) => {
   const result = await getP1EmailService().clearEmailOutbox(200);
   res.json({
     success: true,
@@ -2104,7 +2179,7 @@ app.post('/api/email/clear-outbox', requireAdminAuthorization as any, async (_re
  * GET /api/admin/email/config
  * Retrieves the shared SMTP parameters (strictly sanitizing password / encrypted secret details)
  */
-app.get('/api/admin/email/config', requireAdminAuthorization as any, async (_req: Request, res: Response) => {
+app.get('/api/admin/email/config', requireAdminPermission('emails.read') as any, async (_req: Request, res: Response) => {
   const p1 = getP1EmailService();
   const effective = await p1.getEffectiveSmtpConfig();
   const secretState = evaluateEmailEncryptionSecret();
@@ -2121,7 +2196,7 @@ app.get('/api/admin/email/config', requireAdminAuthorization as any, async (_req
  * POST /api/admin/email/config
  * Persists shared SMTP parameters across all instances with AES-256-GCM encryption for password
  */
-app.post('/api/admin/email/config', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/admin/email/config', requireAdminPermission('emails.manage') as any, async (req: AuthenticatedRequest, res: Response) => {
   const { host, port, user, pass, from } = req.body || {};
   const saveResult = await getP1EmailService().saveSmtpConfig({
     host,
@@ -2171,7 +2246,7 @@ const broadcastAnnouncementsHistory: AnnouncementRecord[] = [];
  * Dispatches targeted or general communications as ISOLATED individual notifications & emails
  * Strictly restricted to authorized Super-Admins
  */
-app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/admin/broadcast', requireAdminPermission('notifications.manage') as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const {
       title,
@@ -2388,7 +2463,7 @@ app.post('/api/admin/broadcast', requireAdminAuthorization as any, async (req: A
  * GET /api/admin/announcements
  * Retrieves broadcast communications history
  */
-app.get('/api/admin/announcements', requireAdminAuthorization as any, async (_req: Request, res: Response) => {
+app.get('/api/admin/announcements', requireAdminPermission('notifications.manage') as any, async (_req: Request, res: Response) => {
   try {
     if (firestoreAdmin) {
       try {
@@ -2417,7 +2492,7 @@ app.get('/api/admin/announcements', requireAdminAuthorization as any, async (_re
  * Performs a live handshake verification with smtp.gmail.com via Nodemailer verify()
  * and optionally dispatches a test email.
  */
-app.post('/api/admin/email/test-smtp', requireAdminAuthorization as any, async (req: Request, res: Response): Promise<void> => {
+app.post('/api/admin/email/test-smtp', requireAdminPermission('emails.manage') as any, async (req: Request, res: Response): Promise<void> => {
   const startTime = Date.now();
   const { sendTestEmail, targetEmail } = req.body || {};
   const p1 = getP1EmailService();
@@ -2991,6 +3066,16 @@ app.post('/api/notifications/dispatch', requireVerifiedUser as any, async (req: 
     }
     const callerUid = req.user!.uid;
     const isAdmin = await checkCallerIsAdmin(req.user);
+    if (!isAdmin) {
+      const { bundle } = await loadPlatformConfigBundle(getActiveDb()).catch(() => ({ bundle: null as any }));
+      if (bundle?.featureFlags?.allowNotifications === false) {
+        return res.json({
+          success: true,
+          skippedByConfig: true,
+          message: 'Notifications désactivées par la configuration générale.',
+        });
+      }
+    }
     const { type, recipientId, title, message, orderId, actionView, dedupKey } = req.body || {};
 
     const cleanTitle = String(title || '').trim().slice(0, 256);
@@ -3117,6 +3202,20 @@ app.post('/api/wallet/verify-idempotency', requireVerifiedUser as any, async (re
       return res.status(503).json({ allowed: false, error: 'Firestore Admin SDK indisponible pour verrouiller le retrait.' });
     }
 
+    const activeDb = getActiveDb();
+    try {
+      const cfg = await loadPlatformConfigBundle(activeDb);
+      if (!cfg.bundle.featureFlags.allowPayments || !cfg.bundle.featureFlags.allowInstantWithdrawal) {
+        return res.status(403).json({
+          allowed: false,
+          code: 'PAYMENTS_DISABLED',
+          error: 'Les paiements et retraits sont temporairement désactivés par l’administrateur.',
+        });
+      }
+    } catch {
+      // fail open only if config load fails cleanly (P0 wallet checks still apply)
+    }
+
     const result = await p0.verifyWalletPayoutIdempotency({
       callerUid,
       idempotencyKey: idempotencyKey.trim(),
@@ -3164,6 +3263,20 @@ app.post('/api/wallet/commit-payout', requireVerifiedUser as any, async (req: Au
       return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible pour valider le retrait.' });
     }
 
+    const activeDb = getActiveDb();
+    try {
+      const cfg = await loadPlatformConfigBundle(activeDb);
+      if (!cfg.bundle.featureFlags.allowPayments || !cfg.bundle.featureFlags.allowInstantWithdrawal) {
+        return res.status(403).json({
+          success: false,
+          code: 'PAYMENTS_DISABLED',
+          error: 'Les paiements et retraits sont temporairement désactivés par l’administrateur.',
+        });
+      }
+    } catch {
+      // ignore non-critical config error
+    }
+
     const result = await p0.commitWalletPayout({
       callerUid,
       idempotencyKey: idempotencyKey.trim(),
@@ -3201,7 +3314,7 @@ app.post('/api/wallet/commit-payout', requireVerifiedUser as any, async (req: Au
   }
 });
 
-app.get('/api/admin/wallet/pending-payouts', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/admin/wallet/pending-payouts', requireAdminPermission('finance.read') as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const p0 = getP0Security(req);
     if (!p0) {
@@ -3215,7 +3328,7 @@ app.get('/api/admin/wallet/pending-payouts', requireAdminAuthorization as any, a
   }
 });
 
-app.post('/api/admin/wallet/reconcile-payout', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/admin/wallet/reconcile-payout', requireAdminPermission('finance.manage') as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const p0 = getP0Security(req);
     if (!p0) {
@@ -3320,7 +3433,7 @@ app.get('/api/monitoring/status', requireAdminAuthorization as any, (_req: Reque
 // =========================================================================
 // POINT 20: SYSTÈME DE SAUVEGARDE & RESTAURATION PERSISTANTE FIRESTORE (ADMIN)
 // =========================================================================
-app.get('/api/system/backups', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/system/backups', requireAdminPermission('backups.manage') as any, async (req: AuthenticatedRequest, res: Response) => {
   const activeDb = (process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin) as BackupFirestoreLike | null;
   const limitParam = parseInt(String(req.query?.limit || '20'), 10);
   try {
@@ -3340,7 +3453,7 @@ app.get('/api/system/backups', requireAdminAuthorization as any, async (req: Aut
   }
 });
 
-app.post('/api/system/backup', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/system/backup', requireAdminPermission('backups.manage') as any, async (req: AuthenticatedRequest, res: Response) => {
   const activeDb = (process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin) as BackupFirestoreLike | null;
   const { data, includeCollections, note } = req.body || {};
 
@@ -3374,7 +3487,7 @@ app.post('/api/system/backup', requireAdminAuthorization as any, async (req: Aut
   }
 });
 
-app.post('/api/system/restore', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/system/restore', requireAdminPermission('backups.manage') as any, async (req: AuthenticatedRequest, res: Response) => {
   const activeDb = (process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin) as BackupFirestoreLike | null;
   const { backupId, applyToFirestore } = req.body || {};
 
@@ -3444,6 +3557,28 @@ app.post('/api/users/sync-profile', async (req: AuthenticatedRequest, res: Respo
     const existingSnap = await userRef.get();
     const existingData = existingSnap.exists ? existingSnap.data() || {} : {};
 
+    if (!existingSnap.exists && !isSuperAdminEmail) {
+      try {
+        const cfg = await loadPlatformConfigBundle(activeDb);
+        if (safeRole === 'vendeur' && !cfg.bundle.featureFlags.allowVendorRegistration) {
+          return res.status(403).json({
+            success: false,
+            code: 'VENDOR_REGISTRATION_DISABLED',
+            error: 'Les inscriptions vendeurs sont temporairement suspendues par l’administrateur.',
+          });
+        }
+        if (safeRole === 'livreur' && !cfg.bundle.featureFlags.allowCourierRegistration) {
+          return res.status(403).json({
+            success: false,
+            code: 'COURIER_REGISTRATION_DISABLED',
+            error: 'Les inscriptions livreurs sont temporairement suspendues par l’administrateur.',
+          });
+        }
+      } catch {
+        // ignore config read fallback
+      }
+    }
+
     const fullNameRaw = (body.fullName || existingData.fullName || email.split('@')[0] || 'Utilisateur LivraLink').toString().trim().slice(0, 128);
     const fullName = fullNameRaw.length >= 2 ? fullNameRaw : `${fullNameRaw}_ll`.slice(0, 128);
 
@@ -3460,6 +3595,7 @@ app.post('/api/users/sync-profile', async (req: AuthenticatedRequest, res: Respo
       updateDocData.createdAt = new Date().toISOString();
       updateDocData.isKycVerified = false;
       updateDocData.kycStatus = 'non_soumis';
+      updateDocData.accountStatus = 'actif';
     }
 
     if (typeof body.storeName === 'string' && body.storeName.trim()) {
@@ -3695,7 +3831,7 @@ app.get('/api/admin/sync-overview', requireAdminAuthorization as any, async (_re
 // =========================================================================
 // ENDPOINTS DE GESTION MÉTIER PARTAGÉE (KYC, WALLET, ASSIGNATION, CONFIG)
 // =========================================================================
-app.post('/api/admin/kyc/decision', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/admin/kyc/decision', requireAdminPermission('kyc.review') as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
     if (!activeDb) {
@@ -3864,7 +4000,7 @@ app.post('/api/admin/kyc/decision', requireAdminAuthorization as any, async (req
 // ANALYSE DOCUMENTAIRE KYC ASSISTÉE PAR GOOGLE GEMINI (ADMIN UNIQUEMENT)
 // Gemini ne valide ni ne rejette jamais un dossier : aide à la décision uniquement.
 // =========================================================================
-app.post('/api/admin/kyc/:requestId/analyze', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/admin/kyc/:requestId/analyze', requireAdminPermission('kyc.read') as any, async (req: AuthenticatedRequest, res: Response) => {
   const cleanRequestId = String(req.params.requestId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
   if (!cleanRequestId) {
     return res.status(400).json({
@@ -5165,7 +5301,7 @@ app.get('/api/chat/media', requireVerifiedUser as any, async (req: Authenticated
   }
 });
 
-app.post('/api/admin/wallet/adjust', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/admin/wallet/adjust', requireAdminPermission('finance.manage') as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!firestoreAdmin) {
       return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
@@ -5609,7 +5745,7 @@ app.post('/api/deliveries/:orderId/dispatch/advance', requireVerifiedUser as any
   }
 });
 
-app.delete('/api/admin/deliveries/:orderId', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+app.delete('/api/admin/deliveries/:orderId', requireAdminPermission('deliveries.cancel') as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!firestoreAdmin) {
       return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
@@ -5743,31 +5879,60 @@ app.delete('/api/admin/directory/user/:uid', requireAdminAuthorization as any, a
   }
 });
 
-app.get('/api/platform/config', requireAuthenticatedUser as any, async (_req: AuthenticatedRequest, res: Response) => {
-  const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+// =========================================================================
+// PUBLIC SAFE PLATFORM CONFIG (Unauthenticated: Brand, Contacts, Signup & Public Pricing)
+// =========================================================================
+app.get('/api/public/config', async (_req: Request, res: Response) => {
+  const activeDb = getActiveDb();
   try {
-    if (!activeDb) {
-      return res.json({ success: true, source: 'defaults', pricingRules: null, featureFlags: null });
-    }
-    const snap = await activeDb.collection('system_config').doc('platform_settings').get();
-    if (!snap.exists) {
-      return res.json({ success: true, source: 'defaults', pricingRules: null, featureFlags: null });
-    }
-    const data = snap.data() || {};
+    const { bundle, source } = await loadPlatformConfigBundle(activeDb);
     return res.json({
       success: true,
-      source: 'firestore',
-      pricingRules: data.pricingRules || null,
-      featureFlags: data.featureFlags || null,
-      updatedAt: data.updatedAt || null,
+      source,
+      config: extractPublicPlatformConfig(bundle),
+      updatedAt: bundle.updatedAt || null,
+    });
+  } catch (err: any) {
+    if (isFirestoreIamDeniedError(err)) {
+      const { bundle } = await loadPlatformConfigBundle(null);
+      return res.json({
+        success: true,
+        source: 'defaults_iam_fallback',
+        config: extractPublicPlatformConfig(bundle),
+        updatedAt: null,
+      });
+    }
+    return res.status(500).json({ success: false, error: 'Erreur lors du chargement de la configuration publique.' });
+  }
+});
+
+app.get('/api/platform/config', requireAuthenticatedUser as any, async (_req: AuthenticatedRequest, res: Response) => {
+  const activeDb = getActiveDb();
+  try {
+    const { bundle, source } = await loadPlatformConfigBundle(activeDb);
+    return res.json({
+      success: true,
+      source,
+      bundle,
+      pricingRules: {
+        baseDistanceKm: bundle.pricing.baseDistanceKm,
+        baseFeeFCFA: bundle.pricing.baseFeeFCFA,
+        extraPerKmFCFA: bundle.pricing.pricePerKmFCFA,
+        fragileSurchargeFCFA: bundle.pricing.fragileSurchargeFCFA,
+        commissionRatePercent: bundle.commissions.platformCommissionPercent,
+      },
+      featureFlags: bundle.featureFlags,
+      updatedAt: bundle.updatedAt || null,
     });
   } catch (err: any) {
     if (isFirestoreIamDeniedError(err)) {
       console.warn('[PLATFORM CONFIG GET] Bascule sur valeurs par défaut (permissions IAM Firestore indisponibles):', err?.message || err);
+      const { bundle } = await loadPlatformConfigBundle(null);
       return res.json({
         success: true,
         source: 'defaults_iam_fallback',
         iamPermissionDenied: true,
+        bundle,
         pricingRules: null,
         featureFlags: null,
       });
@@ -5778,29 +5943,79 @@ app.get('/api/platform/config', requireAuthenticatedUser as any, async (_req: Au
 });
 
 app.post('/api/platform/config', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
-  const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
+  const activeDb = getActiveDb();
   try {
     if (!activeDb) {
       return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
     }
-    const { pricingRules, featureFlags } = req.body || {};
-    if (!pricingRules && !featureFlags) {
-      return res.status(400).json({ success: false, error: 'pricingRules ou featureFlags requis.' });
-    }
-    const nowIso = new Date().toISOString();
-    const payload: Record<string, any> = {
-      updatedAt: nowIso,
-      updatedBy: req.user?.email || req.user?.uid || 'admin',
-    };
-    if (pricingRules && typeof pricingRules === 'object') {
-      payload.pricingRules = pricingRules;
-    }
-    if (featureFlags && typeof featureFlags === 'object') {
-      payload.featureFlags = featureFlags;
+    const body = req.body || {};
+    const { pricingRules, featureFlags, general, contacts, emails, pricing, courierRemuneration, commissions } = body;
+    if (!pricingRules && !featureFlags && !general && !contacts && !emails && !pricing && !courierRemuneration && !commissions) {
+      return res.status(400).json({ success: false, error: 'Au moins une section de configuration est requise.' });
     }
 
-    await activeDb.collection('system_config').doc('platform_settings').set(payload, { merge: true });
-    return res.json({ success: true, ...payload });
+    const ctx = req.adminContext!;
+    if ((pricing || pricingRules) && !hasAdminPermission(ctx, 'pricing.manage')) {
+      return res.status(403).json({ success: false, error: 'Permission pricing.manage requise.' });
+    }
+    if ((commissions || courierRemuneration) && !hasAdminPermission(ctx, 'finance.manage') && !hasAdminPermission(ctx, 'pricing.manage')) {
+      return res.status(403).json({ success: false, error: 'Permission finance.manage ou pricing.manage requise.' });
+    }
+    if (contacts && !hasAdminPermission(ctx, 'contacts.manage')) {
+      return res.status(403).json({ success: false, error: 'Permission contacts.manage requise.' });
+    }
+    if (emails && !hasAdminPermission(ctx, 'emails.manage')) {
+      return res.status(403).json({ success: false, error: 'Permission emails.manage requise.' });
+    }
+    if ((general || featureFlags) && !hasAdminPermission(ctx, 'settings.manage')) {
+      return res.status(403).json({ success: false, error: 'Permission settings.manage requise.' });
+    }
+
+    const before = (await loadPlatformConfigBundle(activeDb)).bundle;
+    const saved = await savePlatformConfigSection(
+      activeDb,
+      { pricingRules, featureFlags, general, contacts, emails, pricing, courierRemuneration, commissions },
+      req.user?.email || req.user?.uid || 'admin'
+    );
+
+    const sectionsChanged = Object.keys(body).filter((k) =>
+      ['pricingRules', 'featureFlags', 'general', 'contacts', 'emails', 'pricing', 'courierRemuneration', 'commissions'].includes(k)
+    );
+    await recordAdminAuditLog(activeDb, {
+      adminUid: ctx.uid,
+      adminEmail: ctx.email,
+      adminRole: ctx.roleId || 'admin',
+      category: pricing || pricingRules ? 'pricing' : contacts ? 'contacts' : emails ? 'email' : commissions ? 'finance' : 'settings',
+      action: `CONFIG_UPDATED:${sectionsChanged.join(',')}`,
+      targetType: 'platform_config',
+      targetId: 'platform_settings',
+      oldValue: {
+        pricePerKmFCFA: before.pricing.pricePerKmFCFA,
+        platformCommissionPercent: before.commissions.platformCommissionPercent,
+        appName: before.general.appName,
+      },
+      newValue: {
+        pricePerKmFCFA: saved.pricing.pricePerKmFCFA,
+        platformCommissionPercent: saved.commissions.platformCommissionPercent,
+        appName: saved.general.appName,
+        sectionsChanged,
+      },
+    });
+
+    return res.json({
+      success: true,
+      bundle: saved,
+      pricingRules: {
+        baseDistanceKm: saved.pricing.baseDistanceKm,
+        baseFeeFCFA: saved.pricing.baseFeeFCFA,
+        extraPerKmFCFA: saved.pricing.pricePerKmFCFA,
+        fragileSurchargeFCFA: saved.pricing.fragileSurchargeFCFA,
+        commissionRatePercent: saved.commissions.platformCommissionPercent,
+      },
+      featureFlags: saved.featureFlags,
+      updatedAt: saved.updatedAt,
+      updatedBy: saved.updatedBy,
+    });
   } catch (err: any) {
     if (isFirestoreIamDeniedError(err)) {
       console.warn('[PLATFORM CONFIG POST] Permissions IAM Firestore insuffisantes:', err?.message || err);
@@ -5812,6 +6027,1497 @@ app.post('/api/platform/config', requireAdminAuthorization as any, async (req: A
     }
     console.error('[PLATFORM CONFIG POST ERROR]:', err?.message || err);
     return res.status(500).json({ success: false, error: 'Erreur lors de l\'enregistrement de la configuration plateforme.' });
+  }
+});
+
+// =========================================================================
+// AUTHORITATIVE PRICING QUOTE & IMMUTABLE SNAPSHOT LOCKING
+// =========================================================================
+app.post('/api/deliveries/calculate-quote', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    const body = req.body || {};
+    const distanceKm = Number(body.distanceKm);
+    if (!Number.isFinite(distanceKm) || distanceKm <= 0 || distanceKm > 1000) {
+      return res.status(400).json({ success: false, error: 'Distance kilométrique valide requise.' });
+    }
+    const deliveryType =
+      body.deliveryType === 'express' || body.deliveryType === 'urgent' ? body.deliveryType : 'standard';
+    const vehicleCategory =
+      body.vehicleCategory === 'tricycle' || body.vehicleCategory === 'voiture' || body.vehicleCategory === 'camionnette'
+        ? body.vehicleCategory
+        : 'moto';
+
+    const cfg = await loadPlatformConfigBundle(activeDb);
+    if (deliveryType !== 'standard' && !cfg.bundle.featureFlags.allowPriorityDeliveries) {
+      return res.status(403).json({
+        success: false,
+        code: 'PRIORITY_DELIVERIES_DISABLED',
+        error: 'Les livraisons express et prioritaires sont temporairement désactivées.',
+      });
+    }
+
+    const result = await computeAuthoritativeOrderFinancials(activeDb, {
+      distanceKm,
+      isFragile: Boolean(body.isFragile),
+      itemWeightKg: typeof body.itemWeightKg === 'number' ? body.itemWeightKg : 1,
+      deliveryType,
+      vehicleCategory,
+      promoCode: typeof body.promoCode === 'string' ? body.promoCode : undefined,
+      isPeakPeriod: Boolean(body.isPeakPeriod),
+      merchantId: req.user!.uid,
+      courierId: typeof body.courierId === 'string' ? body.courierId.trim() : undefined,
+    });
+
+    if (result.featureBlocked) {
+      return res.status(403).json({ success: false, code: 'NEW_ORDERS_DISABLED', error: result.featureBlocked });
+    }
+
+    return res.json({
+      success: true,
+      deliveryFee: result.pricingSnapshot.finalDeliveryFeeFCFA,
+      pricingSnapshot: result.pricingSnapshot,
+      remunerationSnapshot: result.remunerationSnapshot,
+      commissionSnapshot: result.commissionSnapshot,
+    });
+  } catch (err: any) {
+    console.error('[CALCULATE QUOTE ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors du calcul du devis tarifaire.' });
+  }
+});
+
+app.post('/api/deliveries/:orderId/finalize-pricing', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const cleanDocId = String(req.params.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!cleanDocId) {
+      return res.status(400).json({ success: false, error: 'Identifiant de course invalide.' });
+    }
+
+    const deliveryRef = activeDb.collection('deliveries').doc(cleanDocId);
+    const snap = await deliveryRef.get();
+    if (!snap.exists) {
+      return res.status(404).json({ success: false, error: 'Livraison introuvable.' });
+    }
+    const orderData = snap.data() || {};
+    const isAdmin = await checkCallerIsAdmin(req.user);
+    if (!isAdmin && orderData.merchantId !== req.user!.uid) {
+      return res.status(403).json({ success: false, error: 'Non autorisé à verrouiller le tarif de cette course.' });
+    }
+    // Never recalculate an existing locked snapshot unless explicitly unlocked by admin
+    if (orderData.pricingSnapshot && orderData.pricingSnapshot.source === 'server') {
+      return res.json({
+        success: true,
+        alreadyLocked: true,
+        deliveryFee: orderData.deliveryFee,
+        pricingSnapshot: orderData.pricingSnapshot,
+        remunerationSnapshot: orderData.remunerationSnapshot,
+        commissionSnapshot: orderData.commissionSnapshot,
+      });
+    }
+
+    const body = req.body || {};
+    const distanceKm = Number(body.distanceKm ?? orderData.distanceKm ?? 1);
+    const deliveryType =
+      body.deliveryType === 'express' || body.deliveryType === 'urgent'
+        ? body.deliveryType
+        : orderData.deliveryType === 'express' || orderData.deliveryType === 'urgent'
+        ? orderData.deliveryType
+        : 'standard';
+    const vehicleCategory =
+      body.vehicleCategory || orderData.vehicleCategory || 'moto';
+
+    const financials = await computeAuthoritativeOrderFinancials(activeDb, {
+      distanceKm: Number.isFinite(distanceKm) && distanceKm > 0 ? distanceKm : 1,
+      isFragile: Boolean(orderData.isFragile),
+      itemWeightKg: Number(orderData.itemWeightKg || 1),
+      deliveryType,
+      vehicleCategory,
+      promoCode: typeof body.promoCode === 'string' ? body.promoCode : orderData.promoCode,
+      merchantId: String(orderData.merchantId || req.user!.uid),
+      courierId: orderData.courierId ? String(orderData.courierId) : undefined,
+    });
+
+    if (financials.featureBlocked && !isAdmin) {
+      return res.status(403).json({ success: false, code: 'NEW_ORDERS_DISABLED', error: financials.featureBlocked });
+    }
+
+    const finalFee = financials.pricingSnapshot.finalDeliveryFeeFCFA;
+    const cod = Number(orderData.itemValueCOD || 0);
+    await deliveryRef.set(
+      {
+        distanceKm: financials.pricingSnapshot.distanceKm,
+        deliveryType,
+        vehicleCategory,
+        promoDiscountFCFA: financials.pricingSnapshot.promoDiscountFCFA,
+        deliveryFee: finalFee,
+        totalCustomerPayable: cod + finalFee,
+        pricingSnapshot: financials.pricingSnapshot,
+        remunerationSnapshot: financials.remunerationSnapshot,
+        commissionSnapshot: financials.commissionSnapshot,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+
+    return res.json({
+      success: true,
+      deliveryFee: finalFee,
+      pricingSnapshot: financials.pricingSnapshot,
+      remunerationSnapshot: financials.remunerationSnapshot,
+      commissionSnapshot: financials.commissionSnapshot,
+    });
+  } catch (err: any) {
+    console.error('[FINALIZE PRICING ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors du verrouillage tarifaire de la course.' });
+  }
+});
+
+// =========================================================================
+// RBAC ADMINS, ROLES, PERMISSIONS & AUDIT LOGS
+// =========================================================================
+app.get('/api/admin/rbac/me', requireAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  const ctx = req.adminContext!;
+  return res.json({
+    success: true,
+    uid: ctx.uid,
+    email: ctx.email,
+    roleId: ctx.roleId,
+    roleLabel: ctx.roleId ? ADMIN_ROLE_LABELS[ctx.roleId] : 'Administrateur',
+    permissions: ctx.permissions,
+    isSuperAdmin: ctx.isSuperAdmin,
+    allPermissions: ALL_ADMIN_PERMISSIONS,
+    roleCatalog: Object.entries(ADMIN_ROLE_LABELS).map(([id, label]) => ({
+      id,
+      label,
+      permissions: ADMIN_ROLE_PERMISSIONS[id as AdminRoleId],
+    })),
+  });
+});
+
+app.get('/api/admin/rbac/admins', requireAdminPermission('admins.manage') as any, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    const list: any[] = [];
+    if (activeDb) {
+      const snap = await activeDb.collection('admins').get();
+      snap.forEach((d: any) => {
+        const data = d.data() || {};
+        list.push({
+          uid: d.id,
+          email: data.email || '',
+          fullName: data.fullName || data.name || data.email || 'Admin',
+          phone: data.phone || '',
+          roleId: isValidAdminRoleId(data.roleId) ? data.roleId : 'admin_general',
+          permissions: Array.isArray(data.permissions) && data.permissions.length > 0
+            ? data.permissions
+            : ADMIN_ROLE_PERMISSIONS[isValidAdminRoleId(data.roleId) ? (data.roleId as AdminRoleId) : 'admin_general'],
+          isActive: data.isActive !== false,
+          isSuperAdmin: (data.email || '').toLowerCase() === SUPER_ADMIN_EMAIL_LOWER || data.roleId === 'super_admin',
+          isProtectedMaster: (data.email || '').toLowerCase() === SUPER_ADMIN_EMAIL_LOWER,
+          createdAt: data.createdAt || data.addedAt || new Date().toISOString(),
+          createdBy: data.createdBy || '',
+          updatedAt: data.updatedAt || '',
+        });
+      });
+    }
+    // Always include primary Super-Admin reference at top if not already in collection
+    if (!list.some((a) => (a.email || '').toLowerCase() === SUPER_ADMIN_EMAIL_LOWER)) {
+      list.unshift({
+        uid: 'super_admin_root',
+        email: 'Pamphile.gbede@gmail.com',
+        fullName: 'Pamphile Gbede (Super-Admin)',
+        roleId: 'super_admin',
+        permissions: ALL_ADMIN_PERMISSIONS,
+        isActive: true,
+        isSuperAdmin: true,
+        isProtectedMaster: true,
+        createdAt: new Date(0).toISOString(),
+      });
+    }
+    return res.json({ success: true, admins: list });
+  } catch (err: any) {
+    console.error('[RBAC LIST ADMINS ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors du chargement des administrateurs.' });
+  }
+});
+
+app.post('/api/admin/rbac/admins', requireSuperAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const body = req.body || {};
+    const email = String(body.email || '').trim().toLowerCase().slice(0, 128);
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ success: false, error: 'Adresse e-mail valide requise.' });
+    }
+    const fullName = String(body.fullName || email.split('@')[0]).trim().slice(0, 128);
+    const roleId: AdminRoleId = isValidAdminRoleId(body.roleId) ? body.roleId : 'admin_general';
+    const permissions = resolvePermissionsForRole(roleId, body.permissions);
+
+    let uid = String(body.uid || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!uid && firebaseAdminApp) {
+      try {
+        const authUser = await getAuth(firebaseAdminApp).getUserByEmail(email);
+        uid = authUser.uid;
+      } catch {
+        // user not yet in Auth; use deterministic uid or look up /users
+      }
+    }
+    if (!uid) {
+      const usersSnap = await activeDb.collection('users').get();
+      usersSnap.forEach((docSnap: any) => {
+        const d = docSnap.data() || {};
+        if (String(d.email || '').toLowerCase() === email && !uid) {
+          uid = docSnap.id;
+        }
+      });
+    }
+    if (!uid) {
+      uid = `adm_${crypto.createHash('sha256').update(email).digest('hex').slice(0, 20)}`;
+    }
+
+    const nowIso = new Date().toISOString();
+    const adminDoc = {
+      uid,
+      email,
+      fullName,
+      phone: String(body.phone || '').trim().slice(0, 32),
+      roleId,
+      permissions,
+      isActive: body.isActive !== false,
+      isSuperAdmin: roleId === 'super_admin',
+      createdAt: nowIso,
+      createdBy: req.adminContext!.email,
+      updatedAt: nowIso,
+    };
+
+    await activeDb.collection('admins').doc(uid).set(adminDoc, { merge: true });
+
+    await recordAdminAuditLog(activeDb, {
+      adminUid: req.adminContext!.uid,
+      adminEmail: req.adminContext!.email,
+      adminRole: 'super_admin',
+      category: 'rbac',
+      action: 'CREATE_OR_UPDATE_ADMIN',
+      targetType: 'admin',
+      targetId: uid,
+      newValue: { email, roleId, permissionsCount: permissions.length, isActive: adminDoc.isActive },
+    });
+
+    return res.status(201).json({ success: true, admin: adminDoc });
+  } catch (err: any) {
+    console.error('[RBAC CREATE ADMIN ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la création de l\'administrateur.' });
+  }
+});
+
+app.patch('/api/admin/rbac/admins/:uid', requireSuperAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const uid = String(req.params.uid || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!uid) return res.status(400).json({ success: false, error: 'UID requis.' });
+
+    const docRef = activeDb.collection('admins').doc(uid);
+    const existingSnap = await docRef.get();
+    if (!existingSnap.exists) {
+      return res.status(404).json({ success: false, error: 'Administrateur introuvable.' });
+    }
+    const existing = existingSnap.data() || {};
+    if ((existing.email || '').toLowerCase() === SUPER_ADMIN_EMAIL_LOWER && req.body?.isActive === false) {
+      return res.status(400).json({ success: false, error: 'Impossible de désactiver le Super-Administrateur principal.' });
+    }
+
+    const roleId: AdminRoleId = isValidAdminRoleId(req.body?.roleId)
+      ? req.body.roleId
+      : isValidAdminRoleId(existing.roleId)
+      ? existing.roleId
+      : 'admin_general';
+    const permissions =
+      req.body?.permissions !== undefined
+        ? resolvePermissionsForRole(roleId, req.body.permissions)
+        : req.body?.roleId
+        ? resolvePermissionsForRole(roleId, null)
+        : existing.permissions || resolvePermissionsForRole(roleId, null);
+
+    const patch: Record<string, any> = {
+      roleId,
+      permissions,
+      updatedAt: new Date().toISOString(),
+    };
+    if (typeof req.body?.fullName === 'string' && req.body.fullName.trim()) {
+      patch.fullName = req.body.fullName.trim().slice(0, 128);
+    }
+    if (typeof req.body?.isActive === 'boolean') {
+      patch.isActive = req.body.isActive;
+    }
+
+    await docRef.set(patch, { merge: true });
+    await recordAdminAuditLog(activeDb, {
+      adminUid: req.adminContext!.uid,
+      adminEmail: req.adminContext!.email,
+      adminRole: 'super_admin',
+      category: 'rbac',
+      action: 'UPDATE_ADMIN_RBAC',
+      targetType: 'admin',
+      targetId: uid,
+      oldValue: { roleId: existing.roleId, isActive: existing.isActive },
+      newValue: { roleId: patch.roleId, isActive: patch.isActive ?? existing.isActive, permissionsCount: permissions.length },
+    });
+
+    return res.json({ success: true, uid, updated: { ...existing, ...patch } });
+  } catch (err: any) {
+    console.error('[RBAC UPDATE ADMIN ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la modification des droits administrateur.' });
+  }
+});
+
+app.delete('/api/admin/rbac/admins/:uid', requireSuperAdminAuthorization as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+    const uid = String(req.params.uid || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!uid || uid === 'super_admin_root') {
+      return res.status(400).json({ success: false, error: 'Impossible de révoquer le Super-Administrateur principal.' });
+    }
+    const docRef = activeDb.collection('admins').doc(uid);
+    const snap = await docRef.get();
+    if (snap.exists && (snap.data()?.email || '').toLowerCase() === SUPER_ADMIN_EMAIL_LOWER) {
+      return res.status(400).json({ success: false, error: 'Le Super-Administrateur principal est protégé.' });
+    }
+    await docRef.delete();
+    await recordAdminAuditLog(activeDb, {
+      adminUid: req.adminContext!.uid,
+      adminEmail: req.adminContext!.email,
+      adminRole: 'super_admin',
+      category: 'rbac',
+      action: 'REVOKE_ADMIN_ACCESS',
+      targetType: 'admin',
+      targetId: uid,
+    });
+    return res.json({ success: true, revokedUid: uid });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Erreur lors de la révocation administrateur.' });
+  }
+});
+
+app.get('/api/admin/audit-logs', requireAdminPermission('audit.read') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const logs = await listAdminAuditLogs(getActiveDb(), {
+      category: typeof req.query.category === 'string' ? req.query.category : undefined,
+      adminEmail: typeof req.query.adminEmail === 'string' ? req.query.adminEmail : undefined,
+      search: typeof req.query.search === 'string' ? req.query.search : undefined,
+      limit: Number(req.query.limit || 100),
+    });
+    return res.json({ success: true, count: logs.length, logs });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Erreur lors du chargement du journal d’audit.' });
+  }
+});
+
+// =========================================================================
+// VENDORS, COURIERS (WITH INDIVIDUAL REMUNERATION) & CLIENTS MANAGEMENT
+// =========================================================================
+app.get('/api/admin/merchants/:uid/details', requireAdminPermission('vendors.read') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    const uid = String(req.params.uid || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!uid) return res.status(400).json({ success: false, error: 'Identifiant vendeur requis.' });
+
+    const [userSnap, deliveriesSnap, disputesSnap] = await Promise.all([
+      activeDb.collection('users').doc(uid).get(),
+      activeDb.collection('deliveries').get(),
+      activeDb.collection('disputes').get().catch(() => ({ docs: [] })),
+    ]);
+
+    if (!userSnap.exists) {
+      return res.status(404).json({ success: false, error: 'Vendeur introuvable.' });
+    }
+    const vendor = { id: uid, ...(userSnap.data() || {}) };
+    const vendorOrders: any[] = [];
+    deliveriesSnap.forEach((d: any) => {
+      const data = d.data() || {};
+      if (data.merchantId === uid) vendorOrders.push({ id: data.id || d.id, ...data });
+    });
+
+    const disputes: any[] = [];
+    if (disputesSnap && typeof (disputesSnap as any).forEach === 'function') {
+      (disputesSnap as any).forEach((d: any) => {
+        const data = d.data() || {};
+        if (data.merchantId === uid) disputes.push({ id: d.id, ...data });
+      });
+    }
+
+    const totalOrders = vendorOrders.length;
+    const deliveredOrders = vendorOrders.filter((o) => o.status === 'livree').length;
+    const failedOrCancelledOrders = vendorOrders.filter((o) => o.status === 'echec').length;
+    const totalSalesCOD = vendorOrders.reduce((acc, o) => acc + Number(o.itemValueCOD || 0), 0);
+    const totalDeliveryFees = vendorOrders.reduce((acc, o) => acc + Number(o.deliveryFee || 0), 0);
+    const totalCommissions = vendorOrders.reduce(
+      (acc, o) => acc + Number(o.commissionSnapshot?.vendorCommissionFCFA || 0),
+      0
+    );
+
+    return res.json({
+      success: true,
+      vendor,
+      stats: {
+        totalOrders,
+        deliveredOrders,
+        failedOrCancelledOrders,
+        totalSalesCOD,
+        totalDeliveryFees,
+        totalCommissions,
+        netVendorRevenue: totalSalesCOD - totalCommissions,
+      },
+      orders: vendorOrders.slice(0, 50),
+      disputes,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Erreur lors du chargement de la fiche vendeur.' });
+  }
+});
+
+app.patch('/api/admin/merchants/:uid', requireAdminPermission('vendors.manage') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    const uid = String(req.params.uid || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!uid) return res.status(400).json({ success: false, error: 'UID vendeur requis.' });
+
+    const userRef = activeDb.collection('users').doc(uid);
+    const snap = await userRef.get();
+    if (!snap.exists) return res.status(404).json({ success: false, error: 'Compte vendeur introuvable.' });
+    const oldData = snap.data() || {};
+    const body = req.body || {};
+
+    const nowIso = new Date().toISOString();
+    const patch: Record<string, any> = { updatedAt: nowIso };
+    if (typeof body.storeName === 'string' && body.storeName.trim()) patch.storeName = body.storeName.trim().slice(0, 128);
+    if (typeof body.managerName === 'string' && body.managerName.trim()) patch.fullName = body.managerName.trim().slice(0, 128);
+    if (typeof body.fullName === 'string' && body.fullName.trim()) patch.fullName = body.fullName.trim().slice(0, 128);
+    if (typeof body.phone === 'string') patch.phone = body.phone.trim().slice(0, 32);
+    if (typeof body.email === 'string' && body.email.includes('@')) patch.email = body.email.trim().toLowerCase().slice(0, 128);
+    if (typeof body.commune === 'string') patch.storeCommune = body.commune.trim().slice(0, 128);
+    if (typeof body.storeCommune === 'string') patch.storeCommune = body.storeCommune.trim().slice(0, 128);
+    if (typeof body.address === 'string') patch.storeAddress = body.address.trim().slice(0, 256);
+    if (typeof body.storeAddress === 'string') patch.storeAddress = body.storeAddress.trim().slice(0, 256);
+    if (typeof body.channel === 'string') patch.channel = body.channel;
+    if (typeof body.isVerified === 'boolean') {
+      patch.isKycVerified = body.isVerified;
+      patch.kycStatus = body.isVerified ? 'valide' : 'non_soumis';
+    }
+    if (typeof body.preferredRateDiscountPercent === 'number') {
+      patch.preferredRateDiscountPercent = Math.max(0, Math.min(50, body.preferredRateDiscountPercent));
+    }
+    if (body.commercialConfig && typeof body.commercialConfig === 'object') {
+      patch.commercialConfig = {
+        ...(oldData.commercialConfig || {}),
+        ...body.commercialConfig,
+        updatedAt: nowIso,
+        updatedBy: req.adminContext!.email,
+      };
+    }
+
+    const validLifecycleStatuses: AccountLifecycleStatus[] = ['actif', 'inactif', 'suspendu', 'bloque'];
+    let requestedAccountStatus: AccountLifecycleStatus | undefined;
+    if (validLifecycleStatuses.includes(body.accountStatus)) {
+      requestedAccountStatus = body.accountStatus;
+    } else if (body.status === 'actif' || body.status === 'suspendu') {
+      requestedAccountStatus = body.status;
+    }
+
+    if (requestedAccountStatus) {
+      patch.accountStatus = requestedAccountStatus;
+      patch.status = requestedAccountStatus === 'actif' ? 'actif' : 'suspendu';
+      if (requestedAccountStatus === 'suspendu' || requestedAccountStatus === 'bloque') {
+        patch.blockedReason = String(body.reason || 'Décision administrative').trim().slice(0, 300);
+      } else {
+        patch.blockedReason = '';
+      }
+
+      if (firebaseAdminApp) {
+        try {
+          await getAuth(firebaseAdminApp).updateUser(uid, {
+            disabled: requestedAccountStatus === 'suspendu' || requestedAccountStatus === 'bloque',
+          });
+        } catch {
+          // ignore if Auth record does not exist in test/directory mode
+        }
+      }
+    }
+
+    await userRef.set(patch, { merge: true });
+    await recordAdminAuditLog(activeDb, {
+      adminUid: req.adminContext!.uid,
+      adminEmail: req.adminContext!.email,
+      adminRole: req.adminContext!.roleId || 'admin',
+      category: 'vendor',
+      action: requestedAccountStatus ? `VENDOR_STATUS_${requestedAccountStatus.toUpperCase()}` : 'VENDOR_PROFILE_UPDATED',
+      targetType: 'vendor',
+      targetId: uid,
+      oldValue: { status: oldData.status, accountStatus: oldData.accountStatus, storeName: oldData.storeName },
+      newValue: { status: patch.status || oldData.status, accountStatus: patch.accountStatus, storeName: patch.storeName },
+      reason: typeof body.reason === 'string' ? body.reason : undefined,
+    });
+
+    if (requestedAccountStatus && oldData.email) {
+      try {
+        const templates = await loadEmailTemplates(activeDb);
+        const cfg = (await loadPlatformConfigBundle(activeDb)).bundle;
+        const tplId: EmailTemplateId =
+          requestedAccountStatus === 'actif' ? 'account_reactivated' : 'account_suspended';
+        const tpl = templates[tplId];
+        if (tpl && tpl.enabled) {
+          const rendered = renderEmailTemplate(
+            tpl,
+            {
+              fullName: String(patch.fullName || oldData.fullName || 'Vendeur'),
+              accountStatus: requestedAccountStatus.toUpperCase(),
+              reason: patch.blockedReason || String(body.reason || 'Mise à jour administrative'),
+            },
+            cfg
+          );
+          await getP1EmailService().dispatchOrQueueEmail({
+            type: 'custom',
+            to: String(oldData.email),
+            recipientName: String(patch.fullName || oldData.fullName || 'Vendeur'),
+            subject: rendered.subject,
+            previewText: rendered.title,
+            textContent: rendered.textContent,
+            htmlContent: rendered.htmlContent,
+            allowQueue: true,
+          });
+        }
+      } catch {
+        // non-blocking email dispatch
+      }
+    }
+
+    return res.json({ success: true, uid, updated: { ...oldData, ...patch } });
+  } catch (err: any) {
+    console.error('[PATCH MERCHANT ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la mise à jour du vendeur.' });
+  }
+});
+
+app.get('/api/admin/couriers/:uid/details', requireAdminPermission('couriers.read') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    const uid = String(req.params.uid || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!uid) return res.status(400).json({ success: false, error: 'UID livreur requis.' });
+
+    const [userSnap, deliveriesSnap, txSnap] = await Promise.all([
+      activeDb.collection('users').doc(uid).get(),
+      activeDb.collection('deliveries').get(),
+      activeDb.collection('wallet_transactions').get().catch(() => ({ docs: [] })),
+    ]);
+
+    if (!userSnap.exists) return res.status(404).json({ success: false, error: 'Livreur introuvable.' });
+    const courier = { id: uid, ...(userSnap.data() || {}) };
+    const orders: any[] = [];
+    deliveriesSnap.forEach((d: any) => {
+      const data = d.data() || {};
+      if (getAssignedCourierIdFromOrder(data) === uid) {
+        orders.push({ id: data.id || d.id, ...data });
+      }
+    });
+
+    const ledger: any[] = [];
+    if (txSnap && typeof (txSnap as any).forEach === 'function') {
+      (txSnap as any).forEach((t: any) => {
+        const data = t.data() || {};
+        if (data.uid === uid) ledger.push({ id: t.id, ...data });
+      });
+    }
+
+    const completedDeliveries = orders.filter((o) => o.status === 'livree').length;
+    const cancelledOrFailedDeliveries = orders.filter((o) => o.status === 'echec').length;
+    const totalEarningsFCFA = orders
+      .filter((o) => o.status === 'livree')
+      .reduce((acc, o) => acc + Number(o.remunerationSnapshot?.netCourierEarningFCFA ?? o.deliveryFee ?? 0), 0);
+    const totalCommissionPaid = orders
+      .filter((o) => o.status === 'livree')
+      .reduce((acc, o) => acc + Number(o.remunerationSnapshot?.platformCommissionFCFA ?? 0), 0);
+
+    return res.json({
+      success: true,
+      courier,
+      stats: {
+        totalMissions: orders.length,
+        completedDeliveries,
+        cancelledOrFailedDeliveries,
+        totalEarningsFCFA,
+        totalCommissionPaid,
+        walletBalanceFCFA: Number(courier.walletBalanceFCFA || 0),
+      },
+      orders: orders.slice(0, 50),
+      walletTransactions: ledger.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 40),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Erreur lors du chargement de la fiche livreur.' });
+  }
+});
+
+app.patch('/api/admin/couriers/:uid', requireAdminPermission('couriers.manage') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    const uid = String(req.params.uid || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!uid) return res.status(400).json({ success: false, error: 'UID livreur requis.' });
+
+    const userRef = activeDb.collection('users').doc(uid);
+    const snap = await userRef.get();
+    if (!snap.exists) return res.status(404).json({ success: false, error: 'Compte livreur introuvable.' });
+    const oldData = snap.data() || {};
+    const body = req.body || {};
+
+    const nowIso = new Date().toISOString();
+    const patch: Record<string, any> = { updatedAt: nowIso };
+    if (typeof body.fullName === 'string' && body.fullName.trim()) patch.fullName = body.fullName.trim().slice(0, 128);
+    if (typeof body.name === 'string' && body.name.trim()) patch.fullName = body.name.trim().slice(0, 128);
+    if (typeof body.phone === 'string') patch.phone = body.phone.trim().slice(0, 32);
+    if (typeof body.email === 'string' && body.email.includes('@')) patch.email = body.email.trim().toLowerCase().slice(0, 128);
+    if (typeof body.vehicleType === 'string') patch.vehicleType = body.vehicleType.trim().slice(0, 64);
+    if (typeof body.vehicle === 'string') patch.vehicleType = body.vehicle.trim().slice(0, 64);
+    if (typeof body.vehiclePlate === 'string') patch.vehiclePlate = body.vehiclePlate.trim().slice(0, 32);
+    if (typeof body.zone === 'string') patch.locationCommune = body.zone.trim().slice(0, 128);
+    if (typeof body.isAvailable === 'boolean') patch.isAvailable = body.isAvailable;
+
+    const validLifecycleStatuses: AccountLifecycleStatus[] = ['actif', 'inactif', 'suspendu', 'bloque'];
+    let requestedAccountStatus: AccountLifecycleStatus | undefined;
+    if (validLifecycleStatuses.includes(body.accountStatus)) {
+      requestedAccountStatus = body.accountStatus;
+    } else if (body.status === 'suspendu' || body.status === 'hors_ligne' || body.status === 'en_ligne') {
+      requestedAccountStatus = body.status === 'suspendu' ? 'suspendu' : body.status === 'hors_ligne' ? 'inactif' : 'actif';
+    }
+
+    if (requestedAccountStatus) {
+      patch.accountStatus = requestedAccountStatus;
+      patch.status =
+        requestedAccountStatus === 'suspendu' || requestedAccountStatus === 'bloque'
+          ? 'suspendu'
+          : requestedAccountStatus === 'inactif'
+          ? 'hors_ligne'
+          : 'en_ligne';
+      if (requestedAccountStatus === 'suspendu' || requestedAccountStatus === 'bloque') {
+        patch.isAvailable = false;
+        patch.blockedReason = String(body.reason || 'Décision administrative').trim().slice(0, 300);
+      } else {
+        patch.blockedReason = '';
+      }
+      if (firebaseAdminApp) {
+        try {
+          await getAuth(firebaseAdminApp).updateUser(uid, {
+            disabled: requestedAccountStatus === 'suspendu' || requestedAccountStatus === 'bloque',
+          });
+        } catch {
+          // ignore if Auth user not present
+        }
+      }
+    }
+
+    await userRef.set(patch, { merge: true });
+    await recordAdminAuditLog(activeDb, {
+      adminUid: req.adminContext!.uid,
+      adminEmail: req.adminContext!.email,
+      adminRole: req.adminContext!.roleId || 'admin',
+      category: 'courier',
+      action: requestedAccountStatus ? `COURIER_STATUS_${requestedAccountStatus.toUpperCase()}` : 'COURIER_PROFILE_UPDATED',
+      targetType: 'courier',
+      targetId: uid,
+      oldValue: { status: oldData.status, accountStatus: oldData.accountStatus },
+      newValue: { status: patch.status || oldData.status, accountStatus: patch.accountStatus },
+      reason: typeof body.reason === 'string' ? body.reason : undefined,
+    });
+
+    if (requestedAccountStatus && oldData.email) {
+      try {
+        const templates = await loadEmailTemplates(activeDb);
+        const cfg = (await loadPlatformConfigBundle(activeDb)).bundle;
+        const tplId: EmailTemplateId =
+          requestedAccountStatus === 'actif' ? 'account_reactivated' : 'account_suspended';
+        const tpl = templates[tplId];
+        if (tpl && tpl.enabled) {
+          const rendered = renderEmailTemplate(
+            tpl,
+            {
+              fullName: String(patch.fullName || oldData.fullName || 'Livreur'),
+              accountStatus: requestedAccountStatus.toUpperCase(),
+              reason: patch.blockedReason || String(body.reason || 'Mise à jour administrative'),
+            },
+            cfg
+          );
+          await getP1EmailService().dispatchOrQueueEmail({
+            type: 'custom',
+            to: String(oldData.email),
+            recipientName: String(patch.fullName || oldData.fullName || 'Livreur'),
+            subject: rendered.subject,
+            previewText: rendered.title,
+            textContent: rendered.textContent,
+            htmlContent: rendered.htmlContent,
+            allowQueue: true,
+          });
+        }
+      } catch {
+        // non-blocking
+      }
+    }
+
+    return res.json({ success: true, uid, updated: { ...oldData, ...patch } });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Erreur lors de la mise à jour du livreur.' });
+  }
+});
+
+app.put('/api/admin/couriers/:uid/remuneration', requireAdminPermission('couriers.remuneration') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    const uid = String(req.params.uid || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!uid) return res.status(400).json({ success: false, error: 'UID livreur requis.' });
+
+    const userRef = activeDb.collection('users').doc(uid);
+    const snap = await userRef.get();
+    if (!snap.exists) return res.status(404).json({ success: false, error: 'Livreur introuvable.' });
+    const oldData = snap.data() || {};
+    const body = req.body || {};
+    const useGeneralTariff = body.useGeneralTariff !== false;
+
+    const malusFCFA = Math.max(0, Math.round(Number(body.malusFCFA || 0)));
+    const malusReason = String(body.malusReason || '').trim().slice(0, 300);
+    if (!useGeneralTariff && malusFCFA > 0 && malusReason.length < 3) {
+      return res.status(400).json({
+        success: false,
+        error: 'Un motif explicite (min 3 caractères) est obligatoire lorsqu’un malus est appliqué.',
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    const remunerationConfig = {
+      useGeneralTariff,
+      customPricePerKmFCFA:
+        typeof body.customPricePerKmFCFA === 'number' && body.customPricePerKmFCFA >= 0
+          ? Math.round(body.customPricePerKmFCFA)
+          : undefined,
+      customMinEarningFCFA:
+        typeof body.customMinEarningFCFA === 'number' && body.customMinEarningFCFA >= 0
+          ? Math.round(body.customMinEarningFCFA)
+          : undefined,
+      customFixedBonusFCFA:
+        typeof body.customFixedBonusFCFA === 'number' && body.customFixedBonusFCFA >= 0
+          ? Math.round(body.customFixedBonusFCFA)
+          : undefined,
+      bonusFCFA:
+        typeof body.bonusFCFA === 'number' && body.bonusFCFA >= 0
+          ? Math.round(body.bonusFCFA)
+          : 0,
+      malusFCFA,
+      malusReason: malusReason || undefined,
+      customCommissionRatePercent:
+        typeof body.customCommissionRatePercent === 'number' && body.customCommissionRatePercent >= 0
+          ? Math.min(50, body.customCommissionRatePercent)
+          : undefined,
+      specialConditions: String(body.specialConditions || '').trim().slice(0, 500) || undefined,
+      updatedAt: nowIso,
+      updatedBy: req.adminContext!.email,
+    };
+
+    const cleanConfig = Object.fromEntries(
+      Object.entries(remunerationConfig).filter(([, v]) => v !== undefined)
+    );
+
+    await userRef.set({ remunerationConfig: cleanConfig, updatedAt: nowIso }, { merge: true });
+    await recordAdminAuditLog(activeDb, {
+      adminUid: req.adminContext!.uid,
+      adminEmail: req.adminContext!.email,
+      adminRole: req.adminContext!.roleId || 'admin',
+      category: 'remuneration',
+      action: useGeneralTariff ? 'COURIER_REMUNERATION_GENERAL' : 'COURIER_REMUNERATION_CUSTOM',
+      targetType: 'courier',
+      targetId: uid,
+      oldValue: oldData.remunerationConfig || { useGeneralTariff: true },
+      newValue: cleanConfig,
+      reason: malusReason || (typeof body.specialConditions === 'string' ? body.specialConditions : undefined),
+    });
+
+    return res.json({ success: true, uid, remunerationConfig: cleanConfig });
+  } catch (err: any) {
+    console.error('[COURIER REMUNERATION ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de l\'enregistrement de la rémunération livreur.' });
+  }
+});
+
+app.get('/api/admin/clients', requireAdminPermission('clients.read') as any, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+
+    const [usersSnap, deliveriesSnap] = await Promise.all([
+      activeDb.collection('users').get(),
+      activeDb.collection('deliveries').get(),
+    ]);
+
+    const map = new Map<string, any>();
+    usersSnap.forEach((d: any) => {
+      const u = d.data() || {};
+      if (u.role === 'client') {
+        const key = String(u.phone || u.email || d.id).trim();
+        map.set(key, {
+          key,
+          clientId: d.id,
+          name: u.fullName || 'Client LivraLink',
+          phone: u.phone || '',
+          email: u.email || '',
+          communes: u.locationCommune ? [u.locationCommune] : [],
+          totalOrders: 0,
+          deliveredOrders: 0,
+          disputedOrders: 0,
+          totalSpentFCFA: 0,
+          lastOrderAt: u.createdAt || '',
+          status: 'actif',
+        });
+      }
+    });
+
+    deliveriesSnap.forEach((d: any) => {
+      const o = d.data() || {};
+      const phoneKey = String(o.clientPhone || '').trim();
+      const fallbackKey = String(o.clientId || o.clientName || d.id).trim();
+      const key = phoneKey || fallbackKey;
+      const existing = map.get(key) || {
+        key,
+        clientId: o.clientId || undefined,
+        name: o.clientName || 'Client',
+        phone: o.clientPhone || '',
+        email: '',
+        communes: [],
+        totalOrders: 0,
+        deliveredOrders: 0,
+        disputedOrders: 0,
+        totalSpentFCFA: 0,
+        lastOrderAt: '',
+        status: 'actif',
+      };
+      existing.totalOrders += 1;
+      if (o.status === 'livree') existing.deliveredOrders += 1;
+      if (o.status === 'echec') existing.disputedOrders += 1;
+      existing.totalSpentFCFA += Number(o.totalCustomerPayable ?? (Number(o.itemValueCOD || 0) + Number(o.deliveryFee || 0)));
+      const commune = o.dropoffLocation?.commune;
+      if (commune && !existing.communes.includes(commune)) existing.communes.push(commune);
+      const createdAtStr = typeof o.createdAt === 'number' ? new Date(o.createdAt).toISOString() : String(o.createdAt || '');
+      if (createdAtStr && (!existing.lastOrderAt || createdAtStr > existing.lastOrderAt)) {
+        existing.lastOrderAt = createdAtStr;
+      }
+      if (existing.disputedOrders >= 2) existing.status = 'a_surveiller';
+      map.set(key, existing);
+    });
+
+    const clients = Array.from(map.values()).sort((a, b) => b.totalOrders - a.totalOrders);
+    return res.json({ success: true, count: clients.length, clients });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Erreur lors du chargement des clients.' });
+  }
+});
+
+// =========================================================================
+// ORDERS CANCELLATION, REASSIGNMENT & DISPUTES
+// =========================================================================
+app.post('/api/admin/deliveries/:orderId/cancel', requireAdminPermission('deliveries.cancel') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    const cleanDocId = String(req.params.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    const reason = String(req.body?.reason || '').trim().slice(0, 300);
+    if (!cleanDocId || reason.length < 3) {
+      return res.status(400).json({ success: false, error: 'Identifiant course et motif d’annulation (min 3 caractères) requis.' });
+    }
+
+    const deliveryRef = activeDb.collection('deliveries').doc(cleanDocId);
+    const snap = await deliveryRef.get();
+    if (!snap.exists) return res.status(404).json({ success: false, error: 'Livraison introuvable.' });
+    const orderData = snap.data() || {};
+    if (orderData.status === 'livree') {
+      return res.status(409).json({
+        success: false,
+        error: 'Impossible d’annuler une livraison déjà livrée et certifiée POD. Utilisez un remboursement financier.',
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    await deliveryRef.set(
+      {
+        status: 'echec',
+        dispatchState: 'exhausted',
+        cancelledAt: nowIso,
+        cancelledBy: req.adminContext!.email,
+        cancellationReason: reason,
+        statusNote: `Annulée par admin : ${reason}`,
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
+
+    const missionRef = activeDb.collection('priority_missions').doc(cleanDocId);
+    await missionRef.set({ status: 'echec', dispatchState: 'exhausted', updatedAt: nowIso }, { merge: true }).catch(() => {});
+
+    await recordAdminAuditLog(activeDb, {
+      adminUid: req.adminContext!.uid,
+      adminEmail: req.adminContext!.email,
+      adminRole: req.adminContext!.roleId || 'admin',
+      category: 'delivery',
+      action: 'DELIVERY_CANCELLED',
+      targetType: 'delivery',
+      targetId: cleanDocId,
+      oldValue: { status: orderData.status },
+      newValue: { status: 'echec', cancelledAt: nowIso },
+      reason,
+    });
+
+    return res.json({ success: true, orderId: orderData.id || cleanDocId, status: 'echec', cancellationReason: reason });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Erreur lors de l’annulation administrative.' });
+  }
+});
+
+app.post('/api/admin/deliveries/:orderId/reassign', requireAdminPermission('deliveries.reassign') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    const cleanDocId = String(req.params.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    const cleanCourierId = String(req.body?.courierId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    const reason = String(req.body?.reason || '').trim().slice(0, 300);
+    if (!cleanDocId || !cleanCourierId || reason.length < 3) {
+      return res.status(400).json({ success: false, error: 'Course, livreur et motif de réattribution (min 3 caractères) requis.' });
+    }
+
+    const deliveryRef = activeDb.collection('deliveries').doc(cleanDocId);
+    const courierRef = activeDb.collection('users').doc(cleanCourierId);
+    const [deliverySnap, courierSnap] = await Promise.all([deliveryRef.get(), courierRef.get()]);
+    if (!deliverySnap.exists) return res.status(404).json({ success: false, error: 'Livraison introuvable.' });
+    if (!courierSnap.exists) return res.status(404).json({ success: false, error: 'Livreur cible introuvable.' });
+
+    const deliveryData = deliverySnap.data() || {};
+    const courierData = courierSnap.data() || {};
+    if (deliveryData.status === 'livree') {
+      return res.status(409).json({ success: false, error: 'Impossible de réattribuer une course déjà livrée.' });
+    }
+    if (courierData.role !== 'livreur' || (!courierData.isKycVerified && courierData.kycStatus !== 'valide')) {
+      return res.status(403).json({ success: false, error: 'Le livreur sélectionné doit être vérifié KYC.' });
+    }
+    if (courierData.accountStatus === 'suspendu' || courierData.accountStatus === 'bloque' || courierData.status === 'suspendu') {
+      return res.status(403).json({ success: false, error: 'Le livreur sélectionné est actuellement suspendu ou bloqué.' });
+    }
+
+    const courierName = String(courierData.fullName || courierData.name || 'Coursier LivraLink').trim();
+    const nowIso = new Date().toISOString();
+    const courierObj = {
+      id: cleanCourierId,
+      name: courierName,
+      phone: String(courierData.phone || ''),
+      email: courierData.email || '',
+      avatarInitials: courierName.slice(0, 2).toUpperCase(),
+      rating: 5,
+      totalDeliveries: Number(courierData.totalDeliveries || 0),
+      vehicle: courierData.vehicleType || 'Moto',
+      zone: courierData.locationCommune || 'Cotonou',
+      distanceKm: 1,
+      etaMinutes: 10,
+      status: 'en_course',
+      priceFCFA: Number(deliveryData.deliveryFee || 0),
+      commissionFCFA: 0,
+      netEarningFCFA: Number(deliveryData.deliveryFee || 0),
+      isKycVerified: true,
+    };
+
+    await deliveryRef.set(
+      {
+        courierId: cleanCourierId,
+        courierName,
+        courier: courierObj,
+        status: 'assignee',
+        dispatchState: 'assigned',
+        targetCourierId: null,
+        reassignedAt: nowIso,
+        reassignedReason: reason,
+        statusNote: `Réattribuée à ${courierName} : ${reason}`,
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
+
+    await activeDb.collection('priority_missions').doc(cleanDocId).set(
+      {
+        courierId: cleanCourierId,
+        courierName,
+        status: 'assignee',
+        dispatchState: 'assigned',
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    ).catch(() => {});
+
+    await recordAdminAuditLog(activeDb, {
+      adminUid: req.adminContext!.uid,
+      adminEmail: req.adminContext!.email,
+      adminRole: req.adminContext!.roleId || 'admin',
+      category: 'delivery',
+      action: 'DELIVERY_REASSIGNED',
+      targetType: 'delivery',
+      targetId: cleanDocId,
+      oldValue: { courierId: deliveryData.courierId || null, courierName: deliveryData.courierName || null },
+      newValue: { courierId: cleanCourierId, courierName },
+      reason,
+    });
+
+    return res.json({ success: true, orderId: deliveryData.id || cleanDocId, courier: courierObj });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Erreur lors de la réattribution de la course.' });
+  }
+});
+
+app.get('/api/admin/disputes', requireAdminPermission('disputes.read') as any, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) return res.json({ success: true, disputes: [] });
+    const snap = await activeDb.collection('disputes').get();
+    const disputes: any[] = [];
+    snap.forEach((d: any) => disputes.push({ id: d.id, ...(d.data() || {}) }));
+    disputes.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    return res.json({ success: true, disputes });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Erreur lors du chargement des réclamations.' });
+  }
+});
+
+app.post('/api/admin/disputes', requireAdminPermission('disputes.resolve') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    const body = req.body || {};
+    const orderId = String(body.orderId || '').trim().slice(0, 64);
+    const subject = String(body.subject || 'Réclamation livraison').trim().slice(0, 180);
+    const description = String(body.description || '').trim().slice(0, 1000);
+    if (!orderId || description.length < 3) {
+      return res.status(400).json({ success: false, error: 'Référence commande et description requises.' });
+    }
+    const disputeId = `disp_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+    const nowIso = new Date().toISOString();
+    const record = {
+      id: disputeId,
+      orderId,
+      merchantId: body.merchantId ? String(body.merchantId).trim() : undefined,
+      courierId: body.courierId ? String(body.courierId).trim() : undefined,
+      clientName: body.clientName ? String(body.clientName).trim() : undefined,
+      clientPhone: body.clientPhone ? String(body.clientPhone).trim() : undefined,
+      category: ['retard', 'colis_endommage', 'paiement', 'comportement', 'autre'].includes(body.category)
+        ? body.category
+        : 'autre',
+      priority: ['basse', 'moyenne', 'haute', 'critique'].includes(body.priority)
+        ? body.priority
+        : 'moyenne',
+      subject,
+      description,
+      status: 'ouvert',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    await activeDb.collection('disputes').doc(disputeId).set(record);
+    await recordAdminAuditLog(activeDb, {
+      adminUid: req.adminContext!.uid,
+      adminEmail: req.adminContext!.email,
+      adminRole: req.adminContext!.roleId || 'admin',
+      category: 'delivery',
+      action: 'DISPUTE_OPENED',
+      targetType: 'dispute',
+      targetId: disputeId,
+      newValue: { orderId, category: record.category, priority: record.priority },
+    });
+    return res.status(201).json({ success: true, dispute: record });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Erreur lors de l’ouverture du litige.' });
+  }
+});
+
+app.post('/api/admin/disputes/:disputeId/resolve', requireAdminPermission('disputes.resolve') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    const disputeId = String(req.params.disputeId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    const resolutionNote = String(req.body?.resolutionNote || '').trim().slice(0, 500);
+    const status = req.body?.status === 'en_analyse' || req.body?.status === 'clos' ? req.body.status : 'resolu';
+    if (!disputeId || resolutionNote.length < 3) {
+      return res.status(400).json({ success: false, error: 'Identifiant litige et note de résolution requis.' });
+    }
+    const nowIso = new Date().toISOString();
+    await activeDb.collection('disputes').doc(disputeId).set(
+      {
+        status,
+        resolutionNote,
+        resolvedBy: req.adminContext!.email,
+        resolvedAt: nowIso,
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
+    await recordAdminAuditLog(activeDb, {
+      adminUid: req.adminContext!.uid,
+      adminEmail: req.adminContext!.email,
+      adminRole: req.adminContext!.roleId || 'admin',
+      category: 'delivery',
+      action: `DISPUTE_${status.toUpperCase()}`,
+      targetType: 'dispute',
+      targetId: disputeId,
+      reason: resolutionNote,
+    });
+    return res.json({ success: true, disputeId, status, resolutionNote });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Erreur lors de la résolution du litige.' });
+  }
+});
+
+// =========================================================================
+// FINANCE SUMMARY & TRANSACTIONAL IDEMPOTENT REFUNDS
+// =========================================================================
+app.get('/api/admin/finance/summary', requireAdminPermission('finance.read') as any, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+
+    const [deliveriesSnap, txSnap, refundsSnap, cfgRes] = await Promise.all([
+      activeDb.collection('deliveries').get(),
+      activeDb.collection('wallet_transactions').get().catch(() => ({ forEach: () => {} })),
+      activeDb.collection('refunds').get().catch(() => ({ forEach: () => {} })),
+      loadPlatformConfigBundle(activeDb),
+    ]);
+
+    let totalTurnoverCOD = 0;
+    let totalDeliveryFees = 0;
+    let totalPlatformCommissions = 0;
+    let totalVendorCommissions = 0;
+    let totalCourierEarnings = 0;
+    let deliveredCount = 0;
+
+    deliveriesSnap.forEach((d: any) => {
+      const o = d.data() || {};
+      const fee = Number(o.deliveryFee || 0);
+      const cod = Number(o.itemValueCOD || 0);
+      totalDeliveryFees += fee;
+      totalTurnoverCOD += cod;
+      if (o.status === 'livree') {
+        deliveredCount += 1;
+        const pComm =
+          o.commissionSnapshot?.totalPlatformRevenueFCFA ??
+          Math.round((fee * Number(cfgRes.bundle.commissions.platformCommissionPercent || 0)) / 100);
+        const vComm = Number(o.commissionSnapshot?.vendorCommissionFCFA || 0);
+        const cNet = Number(o.remunerationSnapshot?.netCourierEarningFCFA ?? Math.max(0, fee - pComm));
+        totalPlatformCommissions += Number(pComm);
+        totalVendorCommissions += vComm;
+        totalCourierEarnings += cNet;
+      }
+    });
+
+    const transactions: any[] = [];
+    let payoutsSucceeded = 0;
+    let payoutsPending = 0;
+    let payoutsFailed = 0;
+
+    if (typeof (txSnap as any).forEach === 'function') {
+      (txSnap as any).forEach((t: any) => {
+        const tx = { id: t.id, ...(t.data() || {}) };
+        transactions.push(tx);
+        const amt = Number(tx.amountFCFA || 0);
+        if (tx.type === 'payout' || tx.type === 'withdrawal') {
+          if (tx.status === 'succeeded' || tx.status === 'completed') payoutsSucceeded += amt;
+          else if (tx.status === 'failed' || tx.status === 'compensated') payoutsFailed += amt;
+          else payoutsPending += amt;
+        }
+      });
+    }
+
+    const refunds: any[] = [];
+    let totalRefundsFCFA = 0;
+    if (typeof (refundsSnap as any).forEach === 'function') {
+      (refundsSnap as any).forEach((r: any) => {
+        const ref = { id: r.id, ...(r.data() || {}) };
+        refunds.push(ref);
+        if (ref.status === 'valide') totalRefundsFCFA += Number(ref.amountFCFA || 0);
+      });
+    }
+
+    transactions.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    refunds.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+
+    return res.json({
+      success: true,
+      kpis: {
+        totalTurnoverCOD,
+        totalDeliveryFees,
+        totalPlatformCommissions,
+        totalVendorCommissions,
+        totalVendorRevenue: Math.max(0, totalTurnoverCOD - totalVendorCommissions),
+        totalCourierEarnings,
+        payoutsSucceeded,
+        payoutsPending,
+        payoutsFailed,
+        totalRefundsFCFA,
+        deliveredCount,
+      },
+      commissions: cfgRes.bundle.commissions,
+      courierRemuneration: cfgRes.bundle.courierRemuneration,
+      transactions: transactions.slice(0, 60),
+      refunds: refunds.slice(0, 40),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Erreur lors du calcul du bilan financier.' });
+  }
+});
+
+app.post('/api/admin/refunds', requireAdminPermission('finance.refund') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+
+    const cfg = await loadPlatformConfigBundle(activeDb);
+    if (!cfg.bundle.featureFlags.allowPayments) {
+      return res.status(403).json({
+        success: false,
+        code: 'PAYMENTS_DISABLED',
+        error: 'Les opérations financières et remboursements sont temporairement désactivés.',
+      });
+    }
+
+    const body = req.body || {};
+    const targetUid = String(body.targetUid || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    const orderId = typeof body.orderId === 'string' ? body.orderId.trim().slice(0, 64) : undefined;
+    const reason = String(body.reason || '').trim().slice(0, 300);
+    const amountFCFA = Math.round(Number(body.amountFCFA));
+    const idempotencyKey = String(body.idempotencyKey || `refund_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`)
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, '')
+      .slice(0, 96);
+
+    if (!targetUid || !Number.isFinite(amountFCFA) || amountFCFA <= 0 || amountFCFA > 50_000_000 || reason.length < 3) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bénéficiaire, montant > 0 et motif explicite (min 3 caractères) requis pour le remboursement.',
+      });
+    }
+
+    const refundDocId = idempotencyKey;
+    const refundRef = activeDb.collection('refunds').doc(refundDocId);
+    const userRef = activeDb.collection('users').doc(targetUid);
+
+    const txRes = await activeDb.runTransaction(async (tx: any) => {
+      const existingRefundSnap = await tx.get(refundRef);
+      if (existingRefundSnap.exists) {
+        return { ok: true as const, duplicate: true, refund: existingRefundSnap.data() };
+      }
+
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) {
+        return { ok: false as const, status: 404, error: 'Compte bénéficiaire introuvable.' };
+      }
+      const uData = userSnap.data() || {};
+      const currentBalance = typeof uData.walletBalanceFCFA === 'number' ? uData.walletBalanceFCFA : 0;
+      const newBalance = currentBalance + amountFCFA;
+      const nowIso = new Date().toISOString();
+      const walletTxId = `wtx_ref_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+
+      tx.update(userRef, {
+        walletBalanceFCFA: newBalance,
+        updatedAt: nowIso,
+      });
+
+      const targetRole = uData.role === 'livreur' ? 'livreur' : uData.role === 'client' ? 'client' : 'vendeur';
+      const refundRecord = {
+        id: refundDocId,
+        ...(orderId ? { orderId } : {}),
+        targetUid,
+        targetName: String(uData.storeName || uData.fullName || 'Utilisateur'),
+        targetRole,
+        amountFCFA,
+        reason,
+        status: 'valide',
+        idempotencyKey: refundDocId,
+        walletTxId,
+        createdByUid: req.adminContext!.uid,
+        createdByEmail: req.adminContext!.email,
+        createdAt: nowIso,
+      };
+
+      tx.set(refundRef, refundRecord);
+      tx.set(activeDb.collection('wallet_transactions').doc(walletTxId), {
+        id: walletTxId,
+        uid: targetUid,
+        type: 'refund_credit',
+        direction: 'credit',
+        amountFCFA,
+        balanceBefore: currentBalance,
+        balanceAfter: newBalance,
+        note: `Remboursement admin (${orderId || 'sans course'}) : ${reason}`,
+        adminUid: req.adminContext!.uid,
+        adminEmail: req.adminContext!.email,
+        createdAt: Date.now(),
+        createdAtIso: nowIso,
+      });
+
+      return {
+        ok: true as const,
+        duplicate: false,
+        refund: refundRecord,
+        balanceAfter: newBalance,
+        email: String(uData.email || ''),
+      };
+    });
+
+    if (!txRes.ok) {
+      return res.status(txRes.status).json({ success: false, error: txRes.error });
+    }
+
+    if (!txRes.duplicate) {
+      await recordAdminAuditLog(activeDb, {
+        adminUid: req.adminContext!.uid,
+        adminEmail: req.adminContext!.email,
+        adminRole: req.adminContext!.roleId || 'admin',
+        category: 'refund',
+        action: 'REFUND_EXECUTED',
+        targetType: 'user',
+        targetId: targetUid,
+        newValue: { amountFCFA, orderId, refundId: refundDocId },
+        reason,
+      });
+    }
+
+    return res.status(txRes.duplicate ? 200 : 201).json({
+      success: true,
+      duplicate: txRes.duplicate,
+      refund: txRes.refund,
+      balanceAfter: txRes.balanceAfter,
+    });
+  } catch (err: any) {
+    console.error('[ADMIN REFUND ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors du traitement du remboursement.' });
+  }
+});
+
+// =========================================================================
+// 14 EDITABLE EMAIL TEMPLATES & TEST SENDER
+// =========================================================================
+app.get('/api/admin/email-templates', requireAdminPermission('emails.read') as any, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const templates = await loadEmailTemplates(getActiveDb());
+    return res.json({ success: true, templates: Object.values(templates) });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Erreur lors du chargement des templates e-mail.' });
+  }
+});
+
+app.put('/api/admin/email-templates/:templateId', requireAdminPermission('emails.manage') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    const templateId = String(req.params.templateId || '').trim() as EmailTemplateId;
+    if (!ALL_EMAIL_TEMPLATE_IDS.includes(templateId)) {
+      return res.status(400).json({ success: false, error: 'Identifiant de template e-mail inconnu.' });
+    }
+    const updated = await saveEmailTemplate(
+      activeDb,
+      templateId,
+      req.body || {},
+      req.adminContext!.email
+    );
+    await recordAdminAuditLog(activeDb, {
+      adminUid: req.adminContext!.uid,
+      adminEmail: req.adminContext!.email,
+      adminRole: req.adminContext!.roleId || 'admin',
+      category: 'email',
+      action: `EMAIL_TEMPLATE_UPDATED:${templateId}`,
+      targetType: 'email_template',
+      targetId: templateId,
+      newValue: { subject: updated.subject, enabled: updated.enabled },
+    });
+    return res.json({ success: true, template: updated });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Erreur lors de la sauvegarde du template e-mail.' });
+  }
+});
+
+app.post('/api/admin/email-templates/:templateId/test', requireAdminPermission('emails.manage') as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    const templateId = String(req.params.templateId || '').trim() as EmailTemplateId;
+    if (!ALL_EMAIL_TEMPLATE_IDS.includes(templateId)) {
+      return res.status(400).json({ success: false, error: 'Template e-mail invalide.' });
+    }
+    const targetEmail = String(req.body?.targetEmail || req.adminContext!.email || '').trim().toLowerCase();
+    if (!targetEmail || !targetEmail.includes('@')) {
+      return res.status(400).json({ success: false, error: 'Adresse e-mail destinataire valide requise.' });
+    }
+
+    const [templates, cfg] = await Promise.all([
+      loadEmailTemplates(activeDb),
+      loadPlatformConfigBundle(activeDb),
+    ]);
+    const tpl = templates[templateId];
+    const sampleVars: Record<string, string> = {
+      fullName: 'Test Administrateur',
+      recipientName: 'Test Administrateur',
+      roleLabel: 'Partenaire LivraLink',
+      email: targetEmail,
+      otpCode: '4829',
+      expiryMinutes: '10',
+      accountStatus: 'ACTIF',
+      reason: 'Simulation de test depuis la console administrateur',
+      submittedAt: new Date().toLocaleDateString('fr-FR'),
+      orderId: '#LL-TEST99',
+      pickupCommune: 'Cotonou - Haie Vive',
+      dropoffCommune: 'Abomey-Calavi',
+      deliveryFee: '1500',
+      courierName: 'Coursier Demo',
+      courierPhone: cfg.bundle.contacts.mainPhone,
+      deliveredAt: new Date().toLocaleString('fr-FR'),
+      amountFCFA: '2500',
+      operationLabel: 'Test Crédit',
+      reference: 'REF-TEST-01',
+      alertTitle: 'Test Notification Admin',
+      alertMessage: 'Vérification du rendu du template e-mail.',
+      actorEmail: req.adminContext!.email,
+      timestamp: new Date().toISOString(),
+    };
+    const rendered = renderEmailTemplate(tpl, sampleVars, cfg.bundle);
+    const dispatch = await getP1EmailService().dispatchOrQueueEmail({
+      type: 'custom',
+      to: targetEmail,
+      recipientName: 'Test Administrateur',
+      subject: `[TEST] ${rendered.subject}`,
+      previewText: rendered.title,
+      textContent: rendered.textContent,
+      htmlContent: rendered.htmlContent,
+      allowQueue: true,
+    });
+    return res.json({
+      success: true,
+      emailDelivered: dispatch.emailDelivered,
+      queued: dispatch.queued,
+      subject: rendered.subject,
+      previewHtml: rendered.htmlContent,
+      message: `E-mail de test (${templateId}) traité pour ${targetEmail}.`,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Erreur lors de l’envoi du test e-mail.' });
   }
 });
 

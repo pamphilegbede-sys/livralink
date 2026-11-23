@@ -311,6 +311,52 @@
         "createdByEmail": { "type": "string", "maxLength": 128 }
       },
       "required": ["backupId", "timestamp", "checksum", "mode", "payloadJson"]
+    },
+    "AdminAuditLog": {
+      "title": "AdminAuditLog",
+      "description": "Journal d'audit immuable des actions d'administration (accès serveur Admin SDK exclusif).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "adminUid": { "type": "string", "maxLength": 128 },
+        "adminEmail": { "type": "string", "maxLength": 128 },
+        "adminRole": { "type": "string", "maxLength": 64 },
+        "category": { "type": "string", "maxLength": 64 },
+        "action": { "type": "string", "maxLength": 128 },
+        "targetType": { "type": "string", "maxLength": 64 },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "timestamp": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "adminUid", "adminEmail", "category", "action", "timestamp"]
+    },
+    "DeliveryDispute": {
+      "title": "DeliveryDispute",
+      "description": "Réclamation ou litige formel lié à une course (accès serveur Admin SDK exclusif).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "orderId": { "type": "string", "maxLength": 64 },
+        "category": { "type": "string" },
+        "priority": { "type": "string" },
+        "status": { "type": "string", "enum": ["ouvert", "en_analyse", "resolu", "clos"] },
+        "subject": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["id", "orderId", "status", "subject"]
+    },
+    "RefundRecord": {
+      "title": "RefundRecord",
+      "description": "Remboursement transactionnel idempotent (accès serveur Admin SDK exclusif).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "idempotencyKey": { "type": "string", "maxLength": 128 },
+        "targetUid": { "type": "string", "maxLength": 128 },
+        "amountFCFA": { "type": "number" },
+        "reason": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "targetUid", "amountFCFA", "reason", "status"]
     }
   },
   "firestore": {
@@ -377,6 +423,18 @@
     "/system_backups/{backupId}": {
       "schema": "SystemBackup",
       "description": "Instantanés de sauvegarde persistants multi-instances avec intégrité SHA-256 (accès serveur Admin SDK exclusif)."
+    },
+    "/admin_audit_logs/{logId}": {
+      "schema": "AdminAuditLog",
+      "description": "Journal immuable des opérations administratives RBAC (accès serveur Admin SDK exclusif)."
+    },
+    "/disputes/{disputeId}": {
+      "schema": "DeliveryDispute",
+      "description": "Litiges et réclamations administrés via le Centre de Contrôle (accès serveur Admin SDK exclusif)."
+    },
+    "/refunds/{refundId}": {
+      "schema": "RefundRecord",
+      "description": "Remboursements financiers transactionnels (accès serveur Admin SDK exclusif)."
     }
   }
 }

@@ -195,6 +195,11 @@ service cloud.firestore {
              (!('offerTimeoutSeconds' in data) || (data.offerTimeoutSeconds is number && data.offerTimeoutSeconds >= 15 && data.offerTimeoutSeconds <= 180)) &&
              (!('offerStartedAt' in data) || data.offerStartedAt is number) &&
              (!('offerExpiresAt' in data) || data.offerExpiresAt is number) &&
+             (!('distanceKm' in data) || (data.distanceKm is number && data.distanceKm >= 0)) &&
+             (!('deliveryType' in data) || data.deliveryType in ['standard', 'express', 'urgent']) &&
+             (!('vehicleCategory' in data) || (data.vehicleCategory is string && data.vehicleCategory.size() <= 64)) &&
+             (!('promoCode' in data) || data.promoCode == null || (data.promoCode is string && data.promoCode.size() <= 64)) &&
+             (!('promoDiscountFCFA' in data) || (data.promoDiscountFCFA is number && data.promoDiscountFCFA >= 0)) &&
              (!('otpRequired' in data) || data.otpRequired is bool);
     }
 
@@ -495,7 +500,8 @@ service cloud.firestore {
                       'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
                       'candidateQueue', 'rejectedCourierIds', 'expiredCourierIds',
                       'offerAttempt', 'offerTimeoutSeconds', 'offerStartedAt', 'offerExpiresAt',
-                      'dispatchFailureReason'
+                      'dispatchFailureReason', 'distanceKm', 'deliveryType', 'vehicleCategory',
+                      'promoCode', 'promoDiscountFCFA', 'pricingSnapshot', 'remunerationSnapshot', 'commissionSnapshot'
                     ]);
 
       allow update: if isValidId(deliveryId) &&
@@ -842,6 +848,18 @@ service cloud.firestore {
     }
 
     match /system_backups/{backupId} {
+      allow read, write: if false;
+    }
+
+    match /admin_audit_logs/{logId} {
+      allow read, write: if false;
+    }
+
+    match /refunds/{refundId} {
+      allow read, write: if false;
+    }
+
+    match /disputes/{disputeId} {
       allow read, write: if false;
     }
 

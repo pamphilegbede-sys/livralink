@@ -35,6 +35,7 @@ export const LivreurSettings: React.FC = () => {
     isUserMasterAdmin,
     gpsTrackingStatus,
     syncCourierGpsPosition,
+    platformConfig,
   } = useApp();
 
   const activeUid = userProfile?.uid || firebaseUser?.uid || '';
@@ -697,7 +698,7 @@ export const LivreurSettings: React.FC = () => {
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-blue-600 dark:text-blue-400">shield</span>
               <span className="text-slate-700 dark:text-slate-300 font-bold">
-                Session Livreur Sécurisée • Support Dispatch (support@livralink.oxy-dev.cc)
+                Session Livreur Sécurisée • Support Dispatch ({platformConfig.emails.supportEmail} · {platformConfig.contacts.emergencyPhone})
               </span>
             </div>
 

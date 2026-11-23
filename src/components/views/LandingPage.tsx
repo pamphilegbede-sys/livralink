@@ -5,7 +5,7 @@ import { LivraLinkLogo } from '../common/LivraLinkLogo';
 import { PrivacyPolicyModal } from '../modals/PrivacyPolicyModal';
 
 export const LandingPage: React.FC = () => {
-  const { setCurrentView, setCurrentRole, viewHistory } = useApp();
+  const { setCurrentView, setCurrentRole, viewHistory, platformConfig } = useApp();
   const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState(false);
 
   return (
@@ -632,11 +632,13 @@ export const LandingPage: React.FC = () => {
             </div>
             <div id="support">
               <strong className="text-slate-700 block mb-0.5">Support technique</strong>
-              <span>Assistance vendeurs et coursiers disponible via support@livralink.oxy-dev.cc.</span>
+              <span>
+                Assistance vendeurs et coursiers disponible via {platformConfig.emails.supportEmail} · {platformConfig.contacts.mainPhone}
+              </span>
             </div>
             <div id="mentions">
               <strong className="text-slate-700 block mb-0.5">Mentions légales</strong>
-              <span>LivraLink – Plateforme logistique urbaine connectée (Bénin).</span>
+              <span>{platformConfig.general.appName} – {platformConfig.general.tagline} ({platformConfig.general.country}).</span>
             </div>
           </div>
         </div>

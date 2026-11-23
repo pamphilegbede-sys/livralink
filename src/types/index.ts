@@ -9,6 +9,34 @@ export type DeliveryStatus =
   | 'livree'            // 6. Livrée (POD photo/signature/OTP certifiée)
   | 'echec';            // 7. Échec documenté (Injoignable, refus, adresse)
 
+export type AccountLifecycleStatus = 'actif' | 'inactif' | 'suspendu' | 'bloque';
+
+export interface CourierIndividualRemunerationConfig {
+  useGeneralTariff: boolean;
+  customPricePerKmFCFA?: number;
+  customMinEarningFCFA?: number;
+  customFixedBonusFCFA?: number;
+  bonusFCFA?: number;
+  malusFCFA?: number;
+  malusReason?: string;
+  customCommissionRatePercent?: number;
+  specialConditions?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface VendorCommercialConfig {
+  customCommissionRatePercent?: number | null;
+  fixedOrderFeeFCFA?: number | null;
+  serviceFeePercent?: number | null;
+  preferredRateDiscountPercent?: number;
+  paymentDelayDays?: number;
+  specialConditions?: string;
+  commercialNotes?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
 export interface Courier {
   id: string;
   name: string;
@@ -17,12 +45,17 @@ export interface Courier {
   avatarInitials: string;
   rating: number;
   totalDeliveries: number;
+  completedDeliveries?: number;
+  cancelledDeliveries?: number;
+  totalEarningsFCFA?: number;
   vehicle: string;
   vehiclePlate?: string;
   zone: string;
   distanceKm: number;
   etaMinutes: number;
   status: 'en_ligne' | 'en_course' | 'hors_ligne' | 'suspendu';
+  accountStatus?: AccountLifecycleStatus;
+  blockedReason?: string;
   isAvailable?: boolean;
   walletBalanceFCFA?: number;
   priceFCFA: number;
@@ -38,6 +71,7 @@ export interface Courier {
   locationUpdatedAt?: string;
   locationSource?: 'browser_gps' | 'benin_default' | 'live_watch' | 'manual' | string;
   locationAccuracyMeters?: number;
+  remunerationConfig?: CourierIndividualRemunerationConfig;
   createdAt?: string;
 }
 
@@ -54,8 +88,11 @@ export interface Merchant {
   totalVolumeFCFA: number;
   rating: number;
   status: 'actif' | 'suspendu' | 'en_attente_kyc';
+  accountStatus?: AccountLifecycleStatus;
+  blockedReason?: string;
   isVerified: boolean;
   preferredRateDiscountPercent?: number;
+  commercialConfig?: VendorCommercialConfig;
   createdAt: string;
 }
 
@@ -76,8 +113,57 @@ export interface CourierRating {
   ratedBy?: string; // Merchant storeName or managerName
 }
 
+export interface DeliveryPricingSnapshot {
+  calculatedAt: string;
+  distanceKm: number;
+  deliveryType: 'standard' | 'express' | 'urgent';
+  vehicleCategory: 'moto' | 'tricycle' | 'voiture' | 'camionnette';
+  pricePerKmFCFA: number;
+  pickupFixedFeeFCFA: number;
+  distanceChargeFCFA: number;
+  fragileSurchargeFCFA: number;
+  weightSurchargeFCFA: number;
+  peakSurchargeFCFA: number;
+  deliveryTypeSurchargeFCFA: number;
+  vehicleMultiplier: number;
+  promoCode?: string;
+  promoDiscountFCFA: number;
+  minApplied: boolean;
+  maxApplied: boolean;
+  finalDeliveryFeeFCFA: number;
+  source: 'server' | 'client_preview';
+  configVersionUpdatedAt?: string;
+}
+
+export interface DeliveryRemunerationSnapshot {
+  calculatedAt: string;
+  usedGeneralTariff: boolean;
+  courierId?: string;
+  grossDeliveryFeeFCFA: number;
+  courierGrossEarningFCFA: number;
+  platformCommissionFCFA: number;
+  platformCommissionRatePercent: number;
+  fixedBonusFCFA: number;
+  bonusFCFA: number;
+  malusFCFA: number;
+  malusReason?: string;
+  netCourierEarningFCFA: number;
+}
+
+export interface DeliveryCommissionSnapshot {
+  calculatedAt: string;
+  deliveryFeeFCFA: number;
+  platformCommissionFCFA: number;
+  vendorCommissionFCFA: number;
+  courierCommissionFCFA: number;
+  serviceFeeFCFA: number;
+  totalPlatformRevenueFCFA: number;
+  vendorDiscountFCFA: number;
+}
+
 export interface DeliveryOrder {
   id: string; // e.g. '#LL-4192'
+  clientId?: string;
   clientName: string;
   clientPhone: string;
   clientNote?: string;
@@ -103,6 +189,14 @@ export interface DeliveryOrder {
   itemValueCOD: number; // Montant marchandise à encaisser (COD) in FCFA
   deliveryFee: number;  // Frais de livraison LivraLink in FCFA
   totalCustomerPayable: number; // COD + Fee in FCFA
+  distanceKm?: number;
+  deliveryType?: 'standard' | 'express' | 'urgent';
+  vehicleCategory?: 'moto' | 'tricycle' | 'voiture' | 'camionnette';
+  promoCode?: string;
+  promoDiscountFCFA?: number;
+  pricingSnapshot?: DeliveryPricingSnapshot;
+  remunerationSnapshot?: DeliveryRemunerationSnapshot;
+  commissionSnapshot?: DeliveryCommissionSnapshot;
   courier?: Courier;
   courierId?: string;
   courierName?: string;
@@ -112,6 +206,11 @@ export interface DeliveryOrder {
   statusNote?: string;
   createdAt: string;
   estimatedArrival?: string;
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancellationReason?: string;
+  reassignedAt?: string;
+  reassignedReason?: string;
   otpCode?: string; // Code secret à 4 chiffres généré par le vendeur et transmis au client
   otpGeneratedAt?: string;
   podData?: {
@@ -323,6 +422,263 @@ export interface PricingRule {
   commissionRatePercent: number; // 0 for MVP
 }
 
+export interface DistanceTierRule {
+  id: string;
+  label: string;
+  minKm: number;
+  maxKm: number | null;
+  ratePerKmFCFA: number;
+  fixedFeeFCFA: number;
+}
+
+export interface DeliveryTypePricingRule {
+  standardMultiplier: number;
+  expressMultiplier: number;
+  urgentMultiplier: number;
+  expressFixedExtraFCFA: number;
+  urgentFixedExtraFCFA: number;
+}
+
+export interface VehicleCategoryMultiplier {
+  moto: number;
+  tricycle: number;
+  voiture: number;
+  camionnette: number;
+}
+
+export interface ExtendedPricingConfig extends PricingRule {
+  pricePerKmFCFA: number;
+  minDeliveryFeeFCFA: number;
+  maxDeliveryFeeFCFA: number;
+  fixedPickupFeeFCFA: number;
+  roundingStepFCFA: number;
+  weightSurchargePerKgFCFA: number;
+  nightOrPeakSurchargePercent: number;
+  distanceTiers: DistanceTierRule[];
+  deliveryTypes: DeliveryTypePricingRule;
+  vehicleMultipliers: VehicleCategoryMultiplier;
+  activePromoCode: string;
+  promoDiscountPercent: number;
+  promoMaxDiscountFCFA: number;
+}
+
+export interface CourierRemunerationGeneralConfig {
+  mode: 'percentage_of_fee' | 'per_km_plus_base';
+  courierSharePercent: number;
+  perKmFCFA: number;
+  baseFixedFCFA: number;
+  minEarningFCFA: number;
+  peakBonusFCFA: number;
+}
+
+export interface CommissionsConfig {
+  platformCommissionPercent: number;
+  vendorCommissionPercent: number;
+  courierCommissionPercent: number;
+  serviceFeePercent: number;
+  withdrawalFeePercent: number;
+  withdrawalFixedFeeFCFA: number;
+  transactionFeePercent: number;
+  feeMode: 'percentage' | 'fixed' | 'hybrid';
+}
+
+export interface PlatformGeneralConfig {
+  appName: string;
+  tagline: string;
+  logoUrl: string;
+  faviconUrl: string;
+  description: string;
+  officialAddress: string;
+  country: string;
+  currency: string;
+  timezone: string;
+  defaultLanguage: string;
+  operatingHours: string;
+  legalNotice: string;
+  cguText: string;
+  privacyPolicyText: string;
+  vendorTermsText: string;
+  courierTermsText: string;
+}
+
+export interface PlatformContactsConfig {
+  mainPhone: string;
+  whatsappPhone: string;
+  customerServicePhone: string;
+  techSupportPhone: string;
+  complaintsPhone: string;
+  emergencyPhone: string;
+  billingPhone: string;
+  notificationContactPhone: string;
+}
+
+export interface PlatformEmailsConfig {
+  senderName: string;
+  contactEmail: string;
+  supportEmail: string;
+  adminEmail: string;
+  notificationsEmail: string;
+  billingEmail: string;
+  replyToEmail: string;
+}
+
+export type EmailTemplateId =
+  | 'signup_welcome'
+  | 'email_verification'
+  | 'password_reset'
+  | 'account_suspended'
+  | 'account_reactivated'
+  | 'kyc_submitted'
+  | 'kyc_approved'
+  | 'kyc_rejected'
+  | 'order_created'
+  | 'order_assigned'
+  | 'order_delivered'
+  | 'order_cancelled'
+  | 'payment_confirmed'
+  | 'admin_alert';
+
+export interface EmailTemplateRecord {
+  id: EmailTemplateId;
+  name: string;
+  category: 'auth' | 'kyc' | 'orders' | 'finance' | 'admin';
+  enabled: boolean;
+  subject: string;
+  title: string;
+  bodyHtml: string;
+  bodyText: string;
+  variables: string[];
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export type AdminRoleId =
+  | 'super_admin'
+  | 'admin_general'
+  | 'admin_financier'
+  | 'responsable_vendeurs'
+  | 'responsable_livreurs'
+  | 'responsable_support'
+  | 'responsable_kyc';
+
+export type AdminPermission =
+  | 'overview.view'
+  | 'users.read'
+  | 'users.manage'
+  | 'vendors.read'
+  | 'vendors.manage'
+  | 'couriers.read'
+  | 'couriers.manage'
+  | 'couriers.remuneration'
+  | 'clients.read'
+  | 'deliveries.read'
+  | 'deliveries.manage'
+  | 'deliveries.reassign'
+  | 'deliveries.cancel'
+  | 'kyc.read'
+  | 'kyc.review'
+  | 'pricing.read'
+  | 'pricing.manage'
+  | 'finance.read'
+  | 'finance.manage'
+  | 'finance.refund'
+  | 'emails.read'
+  | 'emails.manage'
+  | 'contacts.manage'
+  | 'settings.manage'
+  | 'disputes.read'
+  | 'disputes.resolve'
+  | 'audit.read'
+  | 'admins.manage'
+  | 'backups.manage'
+  | 'notifications.manage';
+
+export interface AdminAccountRecord {
+  uid: string;
+  email: string;
+  fullName: string;
+  phone?: string;
+  roleId: AdminRoleId;
+  permissions: AdminPermission[];
+  isActive: boolean;
+  isSuperAdmin?: boolean;
+  isProtectedMaster?: boolean;
+  createdAt: string;
+  createdBy?: string;
+  updatedAt?: string;
+  lastLoginAt?: string;
+}
+
+export interface PlatformAuditLog {
+  id: string;
+  adminUid: string;
+  adminEmail: string;
+  adminRole: AdminRoleId | string;
+  category: 'rbac' | 'vendor' | 'courier' | 'remuneration' | 'pricing' | 'finance' | 'refund' | 'delivery' | 'kyc' | 'email' | 'contacts' | 'settings' | 'security';
+  action: string;
+  targetType: string;
+  targetId: string;
+  oldValue?: any;
+  newValue?: any;
+  reason?: string;
+  result: 'success' | 'denied' | 'failed';
+  timestamp: string;
+  createdAtMs: number;
+}
+
+export interface DeliveryDisputeRecord {
+  id: string;
+  orderId: string;
+  orderDocId?: string;
+  merchantId?: string;
+  merchantName?: string;
+  courierId?: string;
+  courierName?: string;
+  clientName?: string;
+  clientPhone?: string;
+  category: 'retard' | 'colis_endommage' | 'client_injoignable' | 'ecart_cod' | 'paiement' | 'comportement' | 'autre';
+  subject?: string;
+  description: string;
+  status: 'ouvert' | 'en_analyse' | 'resolu' | 'clos';
+  priority: 'basse' | 'moyenne' | 'normale' | 'haute' | 'critique';
+  resolutionNote?: string;
+  resolvedBy?: string;
+  resolvedAt?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface RefundRecord {
+  id: string;
+  orderId?: string;
+  targetUid: string;
+  targetName: string;
+  targetRole: 'vendeur' | 'livreur' | 'client';
+  amountFCFA: number;
+  reason: string;
+  status: 'valide' | 'rejete' | 'en_attente';
+  idempotencyKey?: string;
+  walletTxId?: string;
+  createdByUid: string;
+  createdByEmail: string;
+  createdAt: string;
+}
+
+export interface ClientDirectoryEntry {
+  key: string;
+  clientId?: string;
+  name: string;
+  phone: string;
+  email?: string;
+  communes: string[];
+  totalOrders: number;
+  deliveredOrders: number;
+  disputedOrders: number;
+  totalSpentFCFA: number;
+  lastOrderAt?: string;
+  status: 'actif' | 'a_surveiller';
+}
+
 export interface MerchantSettings {
   storeName: string;
   managerName: string;
@@ -403,6 +759,15 @@ export interface PlatformFeatureFlags {
   emergencyBroadcastActive: boolean;
   emergencyBroadcastMessage: string;
 
+  // Contrôle global inscriptions, commandes, paiements & notifications
+  allowVendorRegistration: boolean;
+  allowCourierRegistration: boolean;
+  allowNewOrders: boolean;
+  allowPriorityDeliveries: boolean;
+  allowPayments: boolean;
+  allowNotifications: boolean;
+  allowPromotions: boolean;
+
   // Contrôle des fonctionnalités Vendeurs
   allowExpressCreation: boolean;
   allowWhatsAppOrdering: boolean;
@@ -430,6 +795,14 @@ export const DEFAULT_PLATFORM_FEATURE_FLAGS: PlatformFeatureFlags = {
   emergencyBroadcastActive: false,
   emergencyBroadcastMessage: "Alerte Météo Cotonou : Fortes pluies prévues, retards de livraison possibles. Conduite prudente conseillée !",
 
+  allowVendorRegistration: true,
+  allowCourierRegistration: true,
+  allowNewOrders: true,
+  allowPriorityDeliveries: true,
+  allowPayments: true,
+  allowNotifications: true,
+  allowPromotions: true,
+
   allowExpressCreation: true,
   allowWhatsAppOrdering: true,
   allowCODCollection: true,
@@ -446,6 +819,18 @@ export const DEFAULT_PLATFORM_FEATURE_FLAGS: PlatformFeatureFlags = {
   allowDirectCallClient: true,
   showVendorStoreDetails: true,
 };
+
+export interface PlatformConfigBundle {
+  general: PlatformGeneralConfig;
+  contacts: PlatformContactsConfig;
+  emails: PlatformEmailsConfig;
+  pricing: ExtendedPricingConfig;
+  courierRemuneration: CourierRemunerationGeneralConfig;
+  commissions: CommissionsConfig;
+  featureFlags: PlatformFeatureFlags;
+  updatedAt?: string;
+  updatedBy?: string;
+}
 
 export interface ChatMessage {
   id: string;
@@ -474,3 +859,4 @@ export interface ChatConversation {
   lastTimestamp: string;
   unreadCount: number;
 }
+

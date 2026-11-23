@@ -21,8 +21,26 @@ import {
   KycDocumentSlotKey,
   KycStorageDocType,
   KycUploadedDocumentMeta,
-  KycAiAnalysisData
+  KycAiAnalysisData,
+  PlatformConfigBundle,
+  ExtendedPricingConfig,
+  CourierRemunerationGeneralConfig,
+  CommissionsConfig,
+  PlatformGeneralConfig,
+  PlatformContactsConfig,
+  PlatformEmailsConfig,
+  AdminRoleId,
+  AdminPermission,
+  CourierIndividualRemunerationConfig,
+  VendorCommercialConfig,
+  AccountLifecycleStatus,
+  DeliveryPricingSnapshot,
 } from '../types';
+import {
+  DEFAULT_PLATFORM_CONFIG_BUNDLE,
+  normalizePricingConfig,
+  calculateDynamicDeliveryQuote,
+} from '../utils/pricingCalculator';
 import { sendPlatformNotification, sendKycSubmissionEmail, notifyClientDeliveryOtp } from '../services/emailService';
 
 const secureRandomInt = (min: number, maxExclusive: number): number => {
@@ -138,11 +156,17 @@ export type AdminTab =
   | 'communications'
   | 'couriers'
   | 'merchants'
+  | 'clients'
   | 'deliveries'
   | 'disputes'
   | 'pricing'
+  | 'finance'
   | 'features'
   | 'email_settings'
+  | 'email_templates'
+  | 'contacts'
+  | 'general_settings'
+  | 'rbac_admins'
   | 'tests'
   | 'audit'
   | 'security';
@@ -346,6 +370,37 @@ interface AppContextType {
   setFeatureFlags: React.Dispatch<React.SetStateAction<PlatformFeatureFlags>>;
   updateFeatureFlag: <K extends keyof PlatformFeatureFlags>(key: K, value: PlatformFeatureFlags[K]) => void;
   resetFeatureFlagsToDefault: () => void;
+
+  // Center Control Platform Config & RBAC
+  platformConfig: PlatformConfigBundle;
+  setPlatformConfig: React.Dispatch<React.SetStateAction<PlatformConfigBundle>>;
+  savePlatformConfigSection: (
+    patch: Partial<{
+      general: Partial<PlatformGeneralConfig>;
+      contacts: Partial<PlatformContactsConfig>;
+      emails: Partial<PlatformEmailsConfig>;
+      pricing: Partial<ExtendedPricingConfig>;
+      pricingRules: Partial<PricingRule>;
+      courierRemuneration: Partial<CourierRemunerationGeneralConfig>;
+      commissions: Partial<CommissionsConfig>;
+      featureFlags: Partial<PlatformFeatureFlags>;
+    }>,
+    reason?: string
+  ) => Promise<{ success: boolean; error?: string }>;
+  computeQuotePreview: (input: {
+    distanceKm: number;
+    isFragile?: boolean;
+    itemWeightKg?: number;
+    deliveryType?: 'standard' | 'express' | 'urgent';
+    vehicleCategory?: 'moto' | 'tricycle' | 'voiture' | 'camionnette';
+    promoCode?: string;
+    isPeakPeriod?: boolean;
+  }) => DeliveryPricingSnapshot;
+  adminRoleId: AdminRoleId | null;
+  adminPermissions: AdminPermission[];
+  isSuperAdminMaster: boolean;
+  hasAdminPermission: (perm: AdminPermission) => boolean;
+  authorizedGetIdToken: () => Promise<string | null>;
 
   // Director Mode (Prise de Contrôle Absolue des Pages Vendeurs et Livreurs)
   isDirectorModeActive: boolean;
@@ -604,26 +659,80 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return PRICING_RULES;
   });
 
-  const persistPlatformConfigToServer = React.useCallback(async (patch: {
-    pricingRules?: PricingRule;
-    featureFlags?: PlatformFeatureFlags;
-  }) => {
+  const [platformConfig, setPlatformConfig] = useState<PlatformConfigBundle>(DEFAULT_PLATFORM_CONFIG_BUNDLE);
+  const [adminRoleId, setAdminRoleId] = useState<AdminRoleId | null>(null);
+  const [adminPermissions, setAdminPermissions] = useState<AdminPermission[]>([]);
+  const [isSuperAdminMaster, setIsSuperAdminMaster] = useState<boolean>(false);
+
+  const authorizedGetIdToken = React.useCallback(async (): Promise<string | null> => {
     const activeUser = auth.currentUser;
-    if (!activeUser || !activeUser.emailVerified) return;
+    if (!activeUser) return null;
     try {
-      const token = await activeUser.getIdToken();
-      await fetch('/api/platform/config', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(patch),
-      });
-    } catch (err) {
-      console.warn('Notice persistance config plateforme:', err);
+      return await activeUser.getIdToken();
+    } catch {
+      return null;
     }
   }, []);
+
+  const hasAdminPermission = React.useCallback(
+    (perm: AdminPermission): boolean => {
+      if (isSuperAdminMaster) return true;
+      if (isVerifiedMasterAdminEmail(firebaseUser?.email || userProfile?.email)) return true;
+      if (adminPermissions.includes(perm)) return true;
+      return false;
+    },
+    [isSuperAdminMaster, firebaseUser?.email, userProfile?.email, adminPermissions]
+  );
+
+  const persistPlatformConfigToServer = React.useCallback(
+    async (
+      patch: {
+        general?: Partial<PlatformGeneralConfig>;
+        contacts?: Partial<PlatformContactsConfig>;
+        emails?: Partial<PlatformEmailsConfig>;
+        pricing?: Partial<ExtendedPricingConfig>;
+        pricingRules?: Partial<PricingRule>;
+        courierRemuneration?: Partial<CourierRemunerationGeneralConfig>;
+        commissions?: Partial<CommissionsConfig>;
+        featureFlags?: Partial<PlatformFeatureFlags>;
+      },
+      reason?: string
+    ): Promise<{ success: boolean; error?: string }> => {
+      const activeUser = auth.currentUser;
+      if (!activeUser || !activeUser.emailVerified) {
+        return { success: false, error: 'Session vérifiée requise.' };
+      }
+      try {
+        const token = await activeUser.getIdToken();
+        const res = await fetch('/api/platform/config', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ ...patch, ...(reason ? { reason } : {}) }),
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.success) {
+          return { success: false, error: data?.error || `Erreur HTTP ${res.status}` };
+        }
+        if (data.bundle) {
+          setPlatformConfig((prev) => ({ ...prev, ...data.bundle }));
+        }
+        if (data.pricingRules) {
+          setPricingRulesState((prev) => ({ ...prev, ...data.pricingRules }));
+        }
+        if (data.featureFlags) {
+          setFeatureFlags((prev) => ({ ...prev, ...data.featureFlags }));
+        }
+        return { success: true };
+      } catch (err: any) {
+        console.warn('Notice persistance config plateforme:', err);
+        return { success: false, error: err?.message || 'Erreur réseau' };
+      }
+    },
+    []
+  );
 
   const setPricingRules: React.Dispatch<React.SetStateAction<PricingRule>> = React.useCallback(
     (updater) => {
@@ -1311,6 +1420,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {}
   }, [featureFlags]);
 
+  // Public safe config on initial mount (contacts, general, featureFlags, pricing)
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/public/config')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.success || !data.config) return;
+        const c = data.config;
+        setPlatformConfig((prev) => ({
+          ...prev,
+          general: { ...prev.general, ...(c.general || {}) },
+          contacts: { ...prev.contacts, ...(c.contacts || {}) },
+          emails: { ...prev.emails, ...(c.emails || {}) },
+          pricing: normalizePricingConfig({ ...prev.pricing, ...(c.pricing || {}) }),
+          featureFlags: { ...prev.featureFlags, ...(c.featureFlags || {}) },
+        }));
+        if (c.pricing) {
+          setPricingRulesState((prev) => ({
+            ...prev,
+            baseDistanceKm: c.pricing.baseDistanceKm ?? prev.baseDistanceKm,
+            baseFeeFCFA: c.pricing.baseFeeFCFA ?? prev.baseFeeFCFA,
+            extraPerKmFCFA: c.pricing.pricePerKmFCFA ?? c.pricing.extraPerKmFCFA ?? prev.extraPerKmFCFA,
+            fragileSurchargeFCFA: c.pricing.fragileSurchargeFCFA ?? prev.fragileSurchargeFCFA,
+            commissionRatePercent: c.pricing.commissionRatePercent ?? prev.commissionRatePercent,
+          }));
+        }
+        if (c.featureFlags) {
+          setFeatureFlags((prev) => ({ ...prev, ...c.featureFlags }));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     const activeUser = auth.currentUser;
     if (!activeUser) return;
@@ -1324,6 +1469,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (cancelled || !data?.success) return;
+        if (data.bundle) {
+          setPlatformConfig((prev) => ({
+            ...prev,
+            ...data.bundle,
+            pricing: normalizePricingConfig({ ...prev.pricing, ...(data.bundle.pricing || {}) }),
+          }));
+        }
         if (data.pricingRules) {
           setPricingRulesState((prev) => ({ ...prev, ...data.pricingRules }));
         }
@@ -1336,6 +1488,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       cancelled = true;
     };
   }, [firebaseUser?.uid]);
+
+  const computeQuotePreview = React.useCallback(
+    (input: {
+      distanceKm: number;
+      isFragile?: boolean;
+      itemWeightKg?: number;
+      deliveryType?: 'standard' | 'express' | 'urgent';
+      vehicleCategory?: 'moto' | 'tricycle' | 'voiture' | 'camionnette';
+      promoCode?: string;
+      isPeakPeriod?: boolean;
+    }): DeliveryPricingSnapshot => {
+      return calculateDynamicDeliveryQuote(
+        {
+          ...input,
+          allowPromotions: featureFlags.allowPromotions !== false,
+          source: 'client_preview',
+          configVersionUpdatedAt: platformConfig.updatedAt,
+        },
+        platformConfig.pricing
+      );
+    },
+    [platformConfig.pricing, platformConfig.updatedAt, featureFlags.allowPromotions]
+  );
 
   const updateFeatureFlag = <K extends keyof PlatformFeatureFlags>(key: K, value: PlatformFeatureFlags[K]) => {
     setFeatureFlags((prev) => {
@@ -1472,6 +1647,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     firebaseUser.emailVerified &&
     (isUserMasterAdmin || (isAdminSessionUnlocked && userProfile?.role === 'admin' && isEmailAuthorizedAdmin(firebaseUser.email || userProfile?.email || '')))
   );
+
+  // Fetch RBAC role & permissions for authenticated admins
+  useEffect(() => {
+    const activeUser = auth.currentUser;
+    if (!activeUser || !firebaseUser?.emailVerified) {
+      setAdminRoleId(null);
+      setAdminPermissions([]);
+      setIsSuperAdminMaster(false);
+      return;
+    }
+    let cancelled = false;
+    activeUser.getIdToken()
+      .then((token) =>
+        fetch('/api/admin/rbac/me', {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+      )
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.success) return;
+        setAdminRoleId(data.roleId || null);
+        setAdminPermissions(Array.isArray(data.permissions) ? data.permissions : []);
+        setIsSuperAdminMaster(Boolean(data.isSuperAdmin));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [firebaseUser?.uid, firebaseUser?.emailVerified, isAdminAuthenticated]);
 
   const addAuthorizedAdminEmail = (newEmail: string): { success: boolean; message: string } => {
     if (!isAdminAuthenticated) {
@@ -3249,14 +3453,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const randPart = secureRandomInt(1000, 10000);
     const timePart = Date.now().toString(36).toUpperCase().slice(-4);
     const newId = `#LL-${timePart}${randPart}`;
-    const calculatedFee = typeof newOrderData.deliveryFee === 'number'
-      ? newOrderData.deliveryFee
-      : (newOrderData.pickupLocation?.coordinates && newOrderData.dropoffLocation?.coordinates
-          ? calculateDeliveryPrice(calculateDistanceKm(
+    const computedDistanceKm =
+      typeof newOrderData.distanceKm === 'number' && newOrderData.distanceKm > 0
+        ? newOrderData.distanceKm
+        : newOrderData.pickupLocation?.coordinates && newOrderData.dropoffLocation?.coordinates
+          ? calculateDistanceKm(
               { lat: newOrderData.pickupLocation.coordinates[0], lng: newOrderData.pickupLocation.coordinates[1] },
               { lat: newOrderData.dropoffLocation.coordinates[0], lng: newOrderData.dropoffLocation.coordinates[1] }
-            ))
-          : 100);
+            )
+          : 1;
+    const requestedDeliveryType: 'standard' | 'express' | 'urgent' =
+      featureFlags.allowPriorityDeliveries === false
+        ? 'standard'
+        : newOrderData.deliveryType || 'standard';
+    const requestedVehicleCategory = newOrderData.vehicleCategory || 'moto';
+    const clientPricingSnapshot = calculateDynamicDeliveryQuote(
+      {
+        distanceKm: computedDistanceKm,
+        isFragile: Boolean(newOrderData.isFragile),
+        itemWeightKg: typeof newOrderData.itemWeightKg === 'number' ? newOrderData.itemWeightKg : 1,
+        deliveryType: requestedDeliveryType,
+        vehicleCategory: requestedVehicleCategory,
+        promoCode: newOrderData.promoCode,
+        allowPromotions: featureFlags.allowPromotions !== false,
+        source: 'client_preview',
+        configVersionUpdatedAt: platformConfig.updatedAt,
+      },
+      platformConfig.pricing
+    );
+    const calculatedFee =
+      typeof newOrderData.deliveryFee === 'number' && newOrderData.deliveryFee > 0
+        ? newOrderData.deliveryFee
+        : clientPricingSnapshot.finalDeliveryFeeFCFA;
     const codVal = typeof newOrderData.itemValueCOD === 'number' ? newOrderData.itemValueCOD : 0;
 
     const clientName = newOrderData.clientName?.trim() || 'Client';
@@ -3313,6 +3541,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       itemValueCOD: codVal,
       deliveryFee: calculatedFee,
       totalCustomerPayable: codVal + calculatedFee,
+      distanceKm: computedDistanceKm,
+      deliveryType: requestedDeliveryType,
+      vehicleCategory: requestedVehicleCategory,
+      promoCode: newOrderData.promoCode,
+      promoDiscountFCFA: clientPricingSnapshot.promoDiscountFCFA,
+      pricingSnapshot: clientPricingSnapshot,
       courier: courierObj,
       status: initialStatus,
       dispatchMode: resolvedDispatchMode,
@@ -3357,6 +3591,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (!authenticatedMerchantUid) {
       showToast('Authentification vendeur requise pour créer une livraison.', 'error');
+      return newOrder;
+    }
+
+    if (featureFlags.allowNewOrders === false && !isAdminAuthenticated) {
+      showToast('La création de nouvelles livraisons est temporairement suspendue par l\'administration.', 'error');
       return newOrder;
     }
 
@@ -3415,6 +3654,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         expiredCourierIds: [],
         offerAttempt: 0,
         statusNote: newOrder.statusNote,
+        distanceKm: computedDistanceKm,
+        deliveryType: requestedDeliveryType,
+        vehicleCategory: requestedVehicleCategory,
+        ...(newOrderData.promoCode ? { promoCode: newOrderData.promoCode } : {}),
+        promoDiscountFCFA: clientPricingSnapshot.promoDiscountFCFA,
+        pricingSnapshot: clientPricingSnapshot,
         createdAt: Date.now(),
         otpRequired: true,
       };
@@ -3449,6 +3694,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setDoc(doc(db, 'deliveries', cleanDocId), firestoreDeliveryPayload)
           .then(async () => {
             await missionInitPromise;
+            // Finalize authoritative server snapshots (pricingSnapshot, remunerationSnapshot, commissionSnapshot)
+            if (auth.currentUser?.emailVerified) {
+              try {
+                const token = await auth.currentUser.getIdToken();
+                await fetch(`/api/deliveries/${encodeURIComponent(cleanDocId)}/finalize-pricing`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                  },
+                  body: JSON.stringify({
+                    distanceKm: computedDistanceKm,
+                    isFragile: Boolean(newOrderData.isFragile),
+                    itemWeightKg: newOrder.itemWeightKg,
+                    deliveryType: requestedDeliveryType,
+                    vehicleCategory: requestedVehicleCategory,
+                    promoCode: newOrderData.promoCode || '',
+                  }),
+                });
+              } catch {}
+            }
             if (newOrder.otpCode) {
               await setDoc(doc(db, 'deliveries', cleanDocId, 'private', 'otp'), {
                 otpCode: newOrder.otpCode,
@@ -6476,6 +6742,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setFeatureFlags,
         updateFeatureFlag,
         resetFeatureFlagsToDefault,
+        platformConfig,
+        setPlatformConfig,
+        savePlatformConfigSection: persistPlatformConfigToServer,
+        computeQuotePreview,
+        adminRoleId,
+        adminPermissions,
+        isSuperAdminMaster,
+        hasAdminPermission,
+        authorizedGetIdToken,
         isDirectorModeActive,
         directorTargetId,
         directorTargetName,

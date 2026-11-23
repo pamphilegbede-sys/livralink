@@ -26,9 +26,15 @@ export const RegisterPage: React.FC = () => {
     setCouriers,
     setSelectedCourier,
     setMerchants,
-    showToast, 
+    showToast,
+    featureFlags,
+    platformConfig,
   } = useApp();
+
   const [selectedRole, setSelectedRole] = useState<'vendeur' | 'livreur'>(currentRole === 'livreur' ? 'livreur' : 'vendeur');
+  const isRegistrationBlockedForRole =
+    (selectedRole === 'vendeur' && !featureFlags.allowVendorRegistration) ||
+    (selectedRole === 'livreur' && !featureFlags.allowCourierRegistration);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -45,6 +51,18 @@ export const RegisterPage: React.FC = () => {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+
+    if (
+      (selectedRole === 'vendeur' && !featureFlags.allowVendorRegistration) ||
+      (selectedRole === 'livreur' && !featureFlags.allowCourierRegistration)
+    ) {
+      const msg = selectedRole === 'vendeur'
+        ? "Les nouvelles inscriptions vendeurs sont temporairement fermées par l'administrateur."
+        : "Les nouvelles inscriptions livreurs sont temporairement fermées par l'administrateur.";
+      setErrorMessage(msg);
+      showToast(msg, 'error');
+      return;
+    }
 
     if (!acceptTerms) {
       setErrorMessage("Vous devez obligatoirement lire et cocher l'acceptation de la Politique de Confidentialité et des CGU pour continuer.");
@@ -149,6 +167,17 @@ export const RegisterPage: React.FC = () => {
   };
 
   const handleGoogleRegister = async () => {
+    if (
+      (selectedRole === 'vendeur' && !featureFlags.allowVendorRegistration) ||
+      (selectedRole === 'livreur' && !featureFlags.allowCourierRegistration)
+    ) {
+      const msg = selectedRole === 'vendeur'
+        ? "Les nouvelles inscriptions vendeurs sont temporairement fermées par l'administrateur."
+        : "Les nouvelles inscriptions livreurs sont temporairement fermées par l'administrateur.";
+      setErrorMessage(msg);
+      showToast(msg, 'error');
+      return;
+    }
     if (!acceptTerms) {
       setErrorMessage("Veuillez d'abord cocher l'acceptation de la Politique de Confidentialité et des CGU.");
       showToast("Veuillez accepter la politique de confidentialité.", 'error');
@@ -282,7 +311,7 @@ export const RegisterPage: React.FC = () => {
 
               <div>
                 <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">
-                  Créer votre compte LivraLink
+                  Créer votre compte {platformConfig.general.appName}
                 </h1>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Rejoignez la plateforme logistique et démarrez en 2 minutes.
@@ -317,7 +346,7 @@ export const RegisterPage: React.FC = () => {
                     <div>
                       <span className="font-bold text-xs text-slate-900 block truncate">Je suis vendeur</span>
                       <span className="text-[10px] text-slate-500 block truncate mt-0.5">
-                        Boutiques &amp; Réseaux
+                        {featureFlags.allowVendorRegistration ? 'Boutiques & Réseaux' : 'Inscriptions fermées'}
                       </span>
                     </div>
                   </button>
@@ -344,19 +373,28 @@ export const RegisterPage: React.FC = () => {
                     <div>
                       <span className="font-bold text-xs text-slate-900 block truncate">Je suis livreur</span>
                       <span className="text-[10px] text-slate-500 block truncate mt-0.5">
-                        Courses &amp; Flotte
+                        {featureFlags.allowCourierRegistration ? 'Courses & Flotte' : 'Inscriptions fermées'}
                       </span>
                     </div>
                   </button>
                 </div>
               </div>
 
+              {isRegistrationBlockedForRole && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-semibold flex items-start gap-2">
+                  <span className="material-symbols-outlined text-base text-amber-600 shrink-0">lock</span>
+                  <span>
+                    Les nouvelles inscriptions pour le rôle <strong>{selectedRole}</strong> sont temporairement suspendues par l&apos;administrateur ({platformConfig.emails.supportEmail}).
+                  </span>
+                </div>
+              )}
+
               {/* Google SSO Button */}
               <button
                 type="button"
-                disabled={isLoading}
+                disabled={isLoading || isRegistrationBlockedForRole}
                 onClick={handleGoogleRegister}
-                className="w-full min-h-[44px] py-2.5 px-3 bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 rounded-xl text-xs font-bold text-slate-800 shadow-2xs transition-all active:scale-[0.99] flex items-center justify-center gap-2"
+                className="w-full min-h-[44px] py-2.5 px-3 bg-white hover:bg-slate-50 disabled:opacity-50 border border-slate-300 hover:border-slate-400 rounded-xl text-xs font-bold text-slate-800 shadow-2xs transition-all active:scale-[0.99] flex items-center justify-center gap-2"
               >
                 <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
                   <path

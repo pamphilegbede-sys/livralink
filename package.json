@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test test-vendor-delivery-isolation.test.ts src/tests/deliveryIsolation.test.ts src/tests/kycAndNotifications.test.ts src/tests/serverApi.test.ts src/tests/pdfAndFlows.test.ts src/tests/p0Security.test.ts src/tests/p1EmailAndConfig.test.ts src/tests/missionAndAdminFlows.test.ts src/tests/dispatchEngine.test.ts src/tests/kycGeminiAnalysis.test.ts src/tests/htmlSanitizer.test.ts src/tests/systemBackupService.test.ts src/tests/firestoreRulesOptimizer.test.ts",
+    "test": "tsx --test test-vendor-delivery-isolation.test.ts src/tests/deliveryIsolation.test.ts src/tests/kycAndNotifications.test.ts src/tests/serverApi.test.ts src/tests/pdfAndFlows.test.ts src/tests/p0Security.test.ts src/tests/p1EmailAndConfig.test.ts src/tests/missionAndAdminFlows.test.ts src/tests/dispatchEngine.test.ts src/tests/kycGeminiAnalysis.test.ts src/tests/htmlSanitizer.test.ts src/tests/systemBackupService.test.ts src/tests/firestoreRulesOptimizer.test.ts src/tests/adminControlCenter.test.ts",
     "test:rules:firestore": "firebase emulators:exec --only firestore --project ai-studio-livralink-security-test \"npx tsx --test firestore.rules.test.ts\"",
     "test:rules:storage": "firebase emulators:exec --only firestore,storage --project ai-studio-livralink-storage-test \"npx tsx --test storage.rules.test.ts\"",
     "test:p0:emulator": "firebase --config firebase.emulator.json emulators:exec --only auth,firestore --project gen-lang-client-0654978401 \"npx tsx --test src/tests/p0FirestoreEmulator.test.ts\"",

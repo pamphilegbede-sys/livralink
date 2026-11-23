@@ -143,7 +143,7 @@ export const VENDEUR_FAQ_DATA: FAQItem[] = [
 export const VendeurFAQSection: React.FC<{
   onOpenGuide?: () => void;
 }> = ({ onOpenGuide }) => {
-  const { setCurrentView, showToast, openWhatsAppModal } = useApp();
+  const { setCurrentView, showToast, openWhatsAppModal, platformConfig } = useApp();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [expandedId, setExpandedId] = useState<string | null>('faq-1');
@@ -168,9 +168,9 @@ export const VendeurFAQSection: React.FC<{
 
   const handleSupportClick = () => {
     openWhatsAppModal(
-      '+22901020304',
-      'Support Vendeur LivraLink',
-      'Bonjour, j\'ai une question concernant l\'utilisation de mon espace vendeur sur LivraLink.'
+      platformConfig.contacts.whatsappPhone,
+      `Support Vendeur ${platformConfig.general.appName}`,
+      `Bonjour, j'ai une question concernant l'utilisation de mon espace vendeur sur ${platformConfig.general.appName}.`
     );
   };
 
@@ -442,7 +442,10 @@ export const VendeurFAQSection: React.FC<{
         <button
           type="button"
           onClick={() => {
-            showToast('Support LivraLink : support@livralink.oxy-dev.cc', 'info');
+            showToast(
+              `Support ${platformConfig.general.appName} : ${platformConfig.emails.supportEmail} • ${platformConfig.contacts.customerServicePhone}`,
+              'info'
+            );
             handleSupportClick();
           }}
           className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs shrink-0 transition-all cursor-pointer shadow-2xs flex items-center justify-center gap-1.5"

@@ -34,6 +34,7 @@ export const VendeurTracking: React.FC = () => {
     openLivreurSearchModal,
     openRateLivreurModal,
     relaunchDeliveryDispatch,
+    platformConfig,
   } = useApp();
 
   // Isolation stricte des livraisons pour le suivi vendeur (par UID uniquement)
@@ -524,7 +525,9 @@ export const VendeurTracking: React.FC = () => {
                 <div className="flex items-center justify-between text-xs font-bold text-slate-700">
                   <span className="flex items-center gap-1.5 text-blue-700">
                     <span className="material-symbols-outlined text-base">map</span>
-                    <span>Trajet Google Maps &amp; Tarification (100 FCFA/km)</span>
+                    <span>
+                      Trajet Google Maps &amp; Tarification ({currentOrder.pricingSnapshot?.pricePerKmFCFA ?? platformConfig.pricing.pricePerKmFCFA} {platformConfig.general.currency}/km)
+                    </span>
                   </span>
                   <span className="text-slate-500">
                     {currentOrder.pickupLocation.commune} ➔ {currentOrder.dropoffLocation.commune}

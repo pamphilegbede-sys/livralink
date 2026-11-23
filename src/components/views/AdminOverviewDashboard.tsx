@@ -15,6 +15,7 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
     kycRequests,
     auditLogs,
     pricingRules,
+    platformConfig,
     setAdminActiveTab,
     refreshAdminData,
     isSyncingAdminData,
@@ -64,9 +65,14 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
   }, [filteredDeliveries]);
 
   const totalPlatformCommissions = useMemo(() => {
-    const rate = (pricingRules?.commissionRatePercent ?? 0) / 100;
-    return Math.round(totalDeliveryFees * rate);
-  }, [totalDeliveryFees, pricingRules]);
+    const defaultRate = (platformConfig?.commissions?.platformCommissionPercent ?? pricingRules?.commissionRatePercent ?? 0) / 100;
+    return filteredDeliveries.reduce((acc, curr) => {
+      if (typeof curr.commissionSnapshot?.platformCommissionFCFA === 'number') {
+        return acc + curr.commissionSnapshot.platformCommissionFCFA;
+      }
+      return acc + Math.round((curr.deliveryFee || 0) * defaultRate);
+    }, 0);
+  }, [filteredDeliveries, platformConfig?.commissions?.platformCommissionPercent, pricingRules]);
 
   const totalUsersCount = useMemo(() => {
     return merchants.length + couriers.length;
@@ -169,13 +175,13 @@ export const AdminOverviewDashboard: React.FC<AdminOverviewDashboardProps> = ({ 
         <div>
           <div className="flex items-center gap-2 text-xs text-emerald-400 font-medium mb-1">
             <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-            <span>Supervision en direct · Grand Cotonou &amp; Calavi</span>
+            <span>Supervision en direct · {platformConfig.general.appName} ({platformConfig.general.country})</span>
           </div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
             Tour de Contrôle Admin
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">
-            {activeCouriers.length} coursiers actifs · Tarification 100 FCFA/km · Validation POD Tri-Factor
+            {activeCouriers.length} coursiers actifs · Tarification {platformConfig.pricing.pricePerKmFCFA} {platformConfig.general.currency}/km · Commission {platformConfig.commissions.platformCommissionPercent}% · Validation POD Tri-Factor
           </p>
         </div>
 

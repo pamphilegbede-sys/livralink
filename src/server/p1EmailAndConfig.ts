@@ -32,6 +32,15 @@ export const MIN_EMAIL_ENCRYPTION_SECRET_LENGTH = 32;
 const SMTP_HKDF_SALT = Buffer.from('livralink-smtp-config-salt-v1', 'utf8');
 const SMTP_HKDF_INFO = Buffer.from('aes-256-gcm-smtp-credentials-v1', 'utf8');
 
+export function escapeHtml(unsafe: unknown): string {
+  return String(unsafe ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export type EmailRecordType =
   | 'welcome'
   | 'password_reset_request'

@@ -11,13 +11,12 @@ import {
 import {
   GOOGLE_MAPS_API_KEY,
   calculateDistanceKm,
-  calculateDeliveryPrice,
-  RATE_PER_KM_FCFA,
   DeliveryTravelMode,
   RouteEstimationResult,
   estimateFallbackDurationMinutes,
   formatTravelDuration,
 } from '../../config/maps';
+import { useApp } from '../../context/AppContext';
 
 export interface LatLng {
   lat: number;
@@ -314,6 +313,7 @@ export const GoogleMapDelivery: React.FC<GoogleMapDeliveryProps> = ({
   showTravelModeSelector = true,
   onRouteCalculated,
 }) => {
+  const { platformConfig, computeQuotePreview } = useApp();
   const [, setMapLoaded] = useState(false);
   const [internalActiveTarget, setInternalActiveTarget] = useState<'origin' | 'destination'>(activeTarget);
   const [selectedTravelMode, setSelectedTravelMode] = useState<DeliveryTravelMode>(travelMode);
@@ -365,10 +365,10 @@ export const GoogleMapDelivery: React.FC<GoogleMapDeliveryProps> = ({
 
   const deliveryFee = useMemo(() => {
     if (hasBothPoints) {
-      return calculateDeliveryPrice(effectiveDistanceKm);
+      return computeQuotePreview({ distanceKm: effectiveDistanceKm }).finalDeliveryFeeFCFA;
     }
     return 0;
-  }, [hasBothPoints, effectiveDistanceKm]);
+  }, [hasBothPoints, effectiveDistanceKm, computeQuotePreview]);
 
   const handleRouteStateChange = (nextState: InternalRouteState | null) => {
     setRouteState(nextState);
@@ -529,8 +529,10 @@ export const GoogleMapDelivery: React.FC<GoogleMapDeliveryProps> = ({
                 </div>
                 <div className="h-3.5 w-px bg-slate-300"></div>
                 <div className="flex items-center gap-1 font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200">
-                  <span>{deliveryFee.toLocaleString('fr-FR')} FCFA</span>
-                  <span className="text-[10px] font-normal text-emerald-600 hidden sm:inline">({RATE_PER_KM_FCFA} F/km)</span>
+                  <span>{deliveryFee.toLocaleString('fr-FR')} {platformConfig.general.currency}</span>
+                  <span className="text-[10px] font-normal text-emerald-600 hidden sm:inline">
+                    ({platformConfig.pricing.pricePerKmFCFA} F/km)
+                  </span>
                 </div>
 
                 {showTravelModeSelector && (

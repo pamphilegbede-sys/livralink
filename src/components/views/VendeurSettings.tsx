@@ -29,6 +29,7 @@ export const VendeurSettings: React.FC = () => {
     couriers,
     loadEligibleCouriers,
     firebaseUser,
+    platformConfig,
   } = useApp();
 
   // Active Tab: 0 = Profil, 1 = Expéditions, 2 = Paiements, 3 = Notifications & Thème
@@ -677,7 +678,7 @@ export const VendeurSettings: React.FC = () => {
               <div className="p-3.5 rounded-2xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-xs text-blue-900 dark:text-blue-200 flex items-center gap-2.5">
                 <span className="material-symbols-outlined text-blue-600 text-lg shrink-0">info</span>
                 <span>
-                  <strong>Tarification officielle LivraLink :</strong> Calibrée automatiquement à 100 FCFA/km par le moteur GPS en direct.
+                  <strong>Tarification officielle {platformConfig.general.appName} :</strong> Calibrée automatiquement à {platformConfig.pricing.pricePerKmFCFA} {platformConfig.general.currency}/km par le moteur GPS en direct.
                 </span>
               </div>
             </div>
@@ -706,8 +707,10 @@ export const VendeurSettings: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-emerald-600 text-xl">stars</span>
                   <div>
-                    <strong className="text-slate-900 dark:text-white">Commission LivraLink Vendeur : 0%</strong>
-                    <p className="text-slate-600 dark:text-slate-300 text-[11px]">100% de transparence durant la phase de lancement.</p>
+                    <strong className="text-slate-900 dark:text-white">
+                      Commission {platformConfig.general.appName} Vendeur : {platformConfig.commissions.platformCommissionPercent}%
+                    </strong>
+                    <p className="text-slate-600 dark:text-slate-300 text-[11px]">Tarif configuré par l&apos;administration de la plateforme.</p>
                   </div>
                 </div>
                 <span className="px-2.5 py-1 rounded-full bg-emerald-200 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-100 font-extrabold text-[10px]">
@@ -835,7 +838,7 @@ export const VendeurSettings: React.FC = () => {
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-blue-600 dark:text-blue-400">shield</span>
               <span className="text-slate-700 dark:text-slate-300 font-bold">
-                Session Vendeur Sécurisée • Support LivraLink (support@livralink.oxy-dev.cc)
+                Session Vendeur Sécurisée • Support {platformConfig.general.appName} ({platformConfig.emails.supportEmail} · {platformConfig.contacts.customerServicePhone})
               </span>
             </div>
 

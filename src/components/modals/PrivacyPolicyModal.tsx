@@ -1,4 +1,5 @@
 import React from 'react';
+import { useApp } from '../../context/AppContext';
 
 interface PrivacyPolicyModalProps {
   isOpen: boolean;
@@ -11,6 +12,7 @@ export const PrivacyPolicyModal: React.FC<PrivacyPolicyModalProps> = ({
   onClose,
   onAccept,
 }) => {
+  const { platformConfig } = useApp();
   if (!isOpen) return null;
 
   return (
@@ -113,7 +115,7 @@ export const PrivacyPolicyModal: React.FC<PrivacyPolicyModalProps> = ({
               5. Droits des Utilisateurs &amp; Modification de Profil
             </h4>
             <p>
-              À tout moment, vous disposez d&apos;un droit d&apos;accès, de rectification et de suppression de votre compte en accédant aux paramètres de votre profil ou en contactant notre équipe d&apos;assistance dédiée (support@livralink.oxy-dev.cc).
+              À tout moment, vous disposez d&apos;un droit d&apos;accès, de rectification et de suppression de votre compte en accédant aux paramètres de votre profil ou en contactant notre équipe d&apos;assistance dédiée ({platformConfig.emails.supportEmail} • {platformConfig.contacts.mainPhone}).
             </p>
           </section>
         </div>

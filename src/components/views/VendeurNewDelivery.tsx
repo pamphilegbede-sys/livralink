@@ -7,8 +7,6 @@ import { GoogleMapDelivery, LatLng } from '../maps/GoogleMapDelivery';
 import {
   getLocationForCommune,
   calculateDistanceKm,
-  calculateDeliveryPrice,
-  RATE_PER_KM_FCFA,
   BENIN_DEPARTMENTS,
   ALL_BENIN_COMMUNES,
   RouteEstimationResult,
@@ -40,6 +38,9 @@ export const VendeurNewDelivery: React.FC = () => {
     deliveryDraft,
     setDeliveryDraft,
     firebaseUser,
+    platformConfig,
+    featureFlags,
+    computeQuotePreview,
   } = useApp();
 
   // Active Wizard Step: 1 = Client, 2 = Colis & Trajet, 3 = Attribution Coursier
@@ -92,6 +93,9 @@ export const VendeurNewDelivery: React.FC = () => {
   const [itemWeight, setItemWeight] = useState<number | ''>('');
   const [itemFormat, setItemFormat] = useState<'S' | 'M' | 'L' | 'XL'>('M');
   const [isFragile, setIsFragile] = useState<boolean>(false);
+  const [deliveryType, setDeliveryType] = useState<'standard' | 'express' | 'urgent'>('standard');
+  const [vehicleCategory, setVehicleCategory] = useState<'moto' | 'tricycle' | 'voiture' | 'camionnette'>('moto');
+  const [promoCode, setPromoCode] = useState('');
   const [codAmount, setCodAmount] = useState<number | ''>('');
 
   // Pré-remplissage sécurisé lors d'une duplication de course existante du vendeur
@@ -217,10 +221,30 @@ export const VendeurNewDelivery: React.FC = () => {
 
   const deliveryFee = useMemo(() => {
     if (originPos && destinationPos) {
-      return calculateDeliveryPrice(distanceKm);
+      return computeQuotePreview({
+        distanceKm,
+        deliveryType: featureFlags.allowPriorityDeliveries ? deliveryType : 'standard',
+        vehicleCategory,
+        itemWeightKg: typeof itemWeight === 'number' ? itemWeight : 1,
+        isFragile,
+        promoCode: featureFlags.allowPromotions ? promoCode : undefined,
+      }).finalDeliveryFeeFCFA;
     }
-    return 100; // Tarif de base minimum en attente (100 FCFA)
-  }, [originPos, destinationPos, distanceKm]);
+    return platformConfig.pricing.minDeliveryFeeFCFA || 100;
+  }, [
+    originPos,
+    destinationPos,
+    distanceKm,
+    deliveryType,
+    vehicleCategory,
+    itemWeight,
+    isFragile,
+    promoCode,
+    featureFlags.allowPriorityDeliveries,
+    featureFlags.allowPromotions,
+    platformConfig.pricing.minDeliveryFeeFCFA,
+    computeQuotePreview,
+  ]);
 
   const numericCod = typeof codAmount === 'number' ? codAmount : 0;
   const totalClient = numericCod + deliveryFee;
@@ -405,6 +429,10 @@ export const VendeurNewDelivery: React.FC = () => {
   };
 
   const handleConfirmAssignment = (forceAuto = true) => {
+    if (!featureFlags.allowNewOrders) {
+      showToast("La création de nouvelles livraisons est temporairement suspendue par l'administrateur.", 'error');
+      return;
+    }
     if (!validateStep1()) {
       setCurrentStep(1);
       return;
@@ -425,6 +453,7 @@ export const VendeurNewDelivery: React.FC = () => {
     const effectiveDestination = destinationPos || (dropoffCommune ? getLocationForCommune(dropoffCommune) : (dropoffAddress.trim() ? getLocationForCommune(dropoffAddress) : getLocationForCommune('Cotonou - Cadjehoun')));
 
     const trimmedClientEmail = clientEmail.trim();
+    const effectiveDeliveryType = featureFlags.allowPriorityDeliveries ? deliveryType : 'standard';
     const newOrder = createDelivery({
       clientName: clientName.trim(),
       clientPhone: clientPhone.trim(),
@@ -446,6 +475,10 @@ export const VendeurNewDelivery: React.FC = () => {
       itemWeightKg: typeof itemWeight === 'number' ? itemWeight : undefined,
       itemFormat,
       isFragile,
+      deliveryType: effectiveDeliveryType,
+      vehicleCategory,
+      promoCode: featureFlags.allowPromotions && promoCode.trim() ? promoCode.trim() : undefined,
+      distanceKm,
       itemValueCOD: numericCod,
       deliveryFee,
       courier: assignedDriver,
@@ -1068,7 +1101,7 @@ export const VendeurNewDelivery: React.FC = () => {
                             Effacer les pins
                           </button>
                           <span className="text-[11px] font-bold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-lg border border-blue-200">
-                            Tarification : {RATE_PER_KM_FCFA} FCFA / km
+                            Tarification : {platformConfig.pricing.pricePerKmFCFA} {platformConfig.general.currency} / km
                           </span>
                         </div>
                       </div>
@@ -1101,9 +1134,11 @@ export const VendeurNewDelivery: React.FC = () => {
                           </span>
                         </div>
                         <div>
-                          <span className="text-[10px] text-slate-500 font-semibold block">Frais livraison (100 F/km)</span>
+                          <span className="text-[10px] text-slate-500 font-semibold block">
+                            Frais livraison ({platformConfig.pricing.pricePerKmFCFA} F/km)
+                          </span>
                           <span className="text-sm font-black text-emerald-700">
-                            {originPos && destinationPos ? `${deliveryFee.toLocaleString('fr-FR')} FCFA` : 'Calcul automatique'}
+                            {originPos && destinationPos ? `${deliveryFee.toLocaleString('fr-FR')} ${platformConfig.general.currency}` : 'Calcul automatique'}
                           </span>
                         </div>
                         <div className="col-span-2 sm:col-span-1">
@@ -1193,6 +1228,53 @@ export const VendeurNewDelivery: React.FC = () => {
                         </span>
                       </label>
                     </div>
+                  </div>
+
+                  {/* Type de livraison, Véhicule & Code Promo */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Priorité de livraison</label>
+                      <select
+                        value={featureFlags.allowPriorityDeliveries ? deliveryType : 'standard'}
+                        onChange={(e) => setDeliveryType(e.target.value as any)}
+                        className="w-full text-xs p-2.5 rounded-xl border border-slate-300 bg-white focus:border-blue-600 outline-none"
+                      >
+                        <option value="standard">Standard (x{platformConfig.pricing.deliveryTypes.standardMultiplier})</option>
+                        {featureFlags.allowPriorityDeliveries && (
+                          <>
+                            <option value="express">Express (x{platformConfig.pricing.deliveryTypes.expressMultiplier})</option>
+                            <option value="urgent">Urgent (x{platformConfig.pricing.deliveryTypes.urgentMultiplier})</option>
+                          </>
+                        )}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Véhicule souhaité</label>
+                      <select
+                        value={vehicleCategory}
+                        onChange={(e) => setVehicleCategory(e.target.value as any)}
+                        className="w-full text-xs p-2.5 rounded-xl border border-slate-300 bg-white focus:border-blue-600 outline-none"
+                      >
+                        <option value="moto">Moto (x{platformConfig.pricing.vehicleMultipliers.moto})</option>
+                        <option value="tricycle">Tricycle (x{platformConfig.pricing.vehicleMultipliers.tricycle})</option>
+                        <option value="voiture">Voiture (x{platformConfig.pricing.vehicleMultipliers.voiture})</option>
+                        <option value="camionnette">Camionnette (x{platformConfig.pricing.vehicleMultipliers.camionnette})</option>
+                      </select>
+                    </div>
+
+                    {featureFlags.allowPromotions && (
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">Code promo (optionnel)</label>
+                        <input
+                          type="text"
+                          value={promoCode}
+                          onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                          placeholder="Ex: PROMO10"
+                          className="w-full text-xs p-2.5 rounded-xl border border-slate-300 font-mono uppercase focus:border-blue-600 outline-none"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   {/* Montant COD (Paiement à la livraison) */}
