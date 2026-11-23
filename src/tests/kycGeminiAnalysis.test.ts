@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
+  classifyGeminiProviderError,
+  normalizeGeminiApiKey,
   redactSensitiveForLogs,
   resetInMemoryGeminiGuardsForTests,
 } from '../server/kycGeminiAnalysis';
@@ -568,14 +570,89 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
     assert.equal(res1.status, 200);
   });
 
-  await t.test('8. Redaction des données sensibles et Base64 dans les journaux serveur', () => {
-    const raw = 'Erreur sur CIP-2026-998877 NPI 1234567890 payload data:image/jpeg;base64,/9j/4AAQSkZJRg==';
+  await t.test('8. Redaction des données sensibles, clés AIza et Base64 dans les journaux serveur', () => {
+    const raw =
+      'Erreur sur CIP-2026-998877 NPI 1234567890 key=AIzaSyFakeSecretValue1234567890 payload data:image/jpeg;base64,/9j/4AAQSkZJRg==';
     const sanitized = redactSensitiveForLogs(raw);
     assert.equal(sanitized.includes('998877'), false);
     assert.equal(sanitized.includes('1234567890'), false);
+    assert.equal(sanitized.includes('AIzaSyFakeSecretValue1234567890'), false);
     assert.equal(sanitized.includes('/9j/4AAQSkZJRg=='), false);
+    assert.match(sanitized, /\[CLE_API_MASQUEE\]/);
     assert.match(sanitized, /\[ID_MASQUE\]/);
     assert.match(sanitized, /\[NUM_MASQUE\]/);
     assert.match(sanitized, /\[BASE64_MASQUE\]/);
   });
+
+  await t.test('9. Normalisation GEMINI_API_KEY & classification précise des erreurs Gemini (400/403/404)', () => {
+    assert.equal(normalizeGeminiApiKey('  "AIzaSyValidKey_123" \n'), 'AIzaSyValidKey_123');
+    assert.equal(normalizeGeminiApiKey("GEMINI_API_KEY='AIzaSyValidKey_123'"), 'AIzaSyValidKey_123');
+    assert.equal(normalizeGeminiApiKey('replace-with-server-gemini-api-key-if-used'), '');
+    assert.equal(normalizeGeminiApiKey('""'), '');
+
+    const refErr = classifyGeminiProviderError(
+      {
+        status: 403,
+        message: JSON.stringify({
+          error: {
+            code: 403,
+            status: 'PERMISSION_DENIED',
+            message: 'Requests from referer <empty> are blocked.',
+            details: [{ reason: 'API_KEY_HTTP_REFERRER_BLOCKED' }],
+          },
+        }),
+      },
+      'gemini-4-hydrogen'
+    );
+    assert.equal(refErr.code, 'GEMINI_AUTH_ERROR');
+    assert.match(refErr.message, /référent HTTP/i);
+
+    const svcErr = classifyGeminiProviderError(
+      {
+        status: 403,
+        message: JSON.stringify({
+          error: {
+            code: 403,
+            status: 'PERMISSION_DENIED',
+            message: 'Generative Language API has not been used in project 123 before or it is disabled.',
+            details: [{ reason: 'SERVICE_DISABLED' }],
+          },
+        }),
+      },
+      'gemini-4-hydrogen'
+    );
+    assert.equal(svcErr.code, 'GEMINI_AUTH_ERROR');
+    assert.match(svcErr.message, /generativelanguage\.googleapis\.com/i);
+
+    const invErr = classifyGeminiProviderError(
+      {
+        status: 400,
+        message: JSON.stringify({
+          error: {
+            code: 400,
+            status: 'INVALID_ARGUMENT',
+            message: 'API key not valid. Please pass a valid API key.',
+            details: [{ reason: 'API_KEY_INVALID' }],
+          },
+        }),
+      },
+      'gemini-4-hydrogen'
+    );
+    assert.equal(invErr.code, 'GEMINI_AUTH_ERROR');
+    assert.match(invErr.message, /API_KEY_INVALID/);
+
+    const modelErr = classifyGeminiProviderError(
+      { status: 404, message: '{"error":{"code":404,"status":"NOT_FOUND","message":"models/unknown is not found"}}' },
+      'gemini-4-hydrogen'
+    );
+    assert.equal(modelErr.code, 'GEMINI_MODEL_NOT_FOUND');
+
+    // Un identifiant de requête contenant "403" ne doit pas être classifié à tort comme erreur d'authentification
+    const unrelatedErr = classifyGeminiProviderError(
+      { status: 502, message: 'Upstream gateway error traceId=9940388' },
+      'gemini-4-hydrogen'
+    );
+    assert.equal(unrelatedErr.code, 'GEMINI_PROVIDER_ERROR');
+  });
 });
+

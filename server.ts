@@ -36,11 +36,17 @@ import {
 import {
   GeminiGeneratorFn,
   KycGeminiAnalysisError,
+  normalizeGeminiApiKey,
   redactSensitiveForLogs,
   resetInMemoryGeminiGuardsForTests,
   runKycGeminiAnalysis,
   setGeminiGeneratorForTests,
 } from './src/server/kycGeminiAnalysis';
+import {
+  MapsGroundingGeneratorFn,
+  queryMapsGroundingWithGemini,
+  setMapsGroundingGeneratorForTests,
+} from './src/server/mapsGroundingService';
 import {
   BackupFirestoreLike,
   createSystemBackup,
@@ -330,6 +336,12 @@ export function setGeminiKycAnalyzerForTests(fn: GeminiGeneratorFn | null): void
     if (fn === null) {
       resetInMemoryGeminiGuardsForTests();
     }
+  }
+}
+
+export function setMapsGroundingForTests(fn: MapsGroundingGeneratorFn | null): void {
+  if (process.env.NODE_ENV === 'test') {
+    setMapsGroundingGeneratorForTests(fn);
   }
 }
 
@@ -2659,7 +2671,7 @@ app.get('/api/security/audit', requireAdminAuthorization as any, async (_req: Re
       hmacSecretConfigured: evaluateHmacSecretConfig().valid,
       emailEncryptionReady: evaluateEmailEncryptionSecret().valid,
       smtpConfigured,
-      geminiApiKeyConfigured: Boolean(process.env.GEMINI_API_KEY?.trim()),
+      geminiApiKeyConfigured: Boolean(normalizeGeminiApiKey(process.env.GEMINI_API_KEY)),
       appUrlConfigured: Boolean(
         process.env.APP_URL?.trim() ||
         process.env.PUBLIC_SITE_URL?.trim() ||
@@ -4149,6 +4161,88 @@ app.post('/api/admin/kyc/:requestId/analyze', requireAdminPermission('kyc.read')
       error: isIamDenied
         ? 'Permissions IAM Firestore Admin indisponibles pour enregistrer l’analyse IA.'
         : 'Impossible d’exécuter l’analyse documentaire Gemini pour le moment.',
+    });
+  }
+});
+
+// =========================================================================
+// RECHERCHE & VÉRIFICATION DE LIEUX GOOGLE MAPS GROUNDING (GEMINI 4 HYDROGEN)
+// =========================================================================
+app.post('/api/maps/grounding', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  const callerUid = req.user!.uid;
+  const rateCheck = checkIpRateLimit(`maps_grounding_${callerUid}`, 25, 60_000);
+  if (!rateCheck.allowed) {
+    return res.status(429).json({
+      success: false,
+      code: 'MAPS_GROUNDING_RATE_LIMIT',
+      error: 'Trop de recherches Google Maps IA en moins d’une minute. Veuillez patienter un instant.',
+    });
+  }
+
+  const quotaCheck = canConsumeApi('geminiApiCalls');
+  if (!quotaCheck.allowed) {
+    return res.status(429).json({
+      success: false,
+      code: 'GEMINI_DAILY_QUOTA_EXCEEDED',
+      error: quotaCheck.reason || 'Quota journalier Gemini atteint.',
+    });
+  }
+
+  const cb = circuitBreakers.get('gemini_api');
+  if (cb?.state === 'OPEN') {
+    return res.status(503).json({
+      success: false,
+      code: 'GEMINI_CIRCUIT_OPEN',
+      error: 'Le service Gemini est temporairement en pause suite à plusieurs erreurs consécutives.',
+    });
+  }
+
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const result = await queryMapsGroundingWithGemini({
+      query: body.query,
+      commune: body.commune,
+      context: body.context,
+      latitude: body.latitude,
+      longitude: body.longitude,
+      timeoutMs:
+        process.env.NODE_ENV === 'test' && typeof body.__testTimeoutMs === 'number'
+          ? body.__testTimeoutMs
+          : undefined,
+      maxRetries:
+        process.env.NODE_ENV === 'test' && typeof body.__testMaxRetries === 'number'
+          ? body.__testMaxRetries
+          : undefined,
+    });
+
+    trackApiConsumption('geminiApiCalls', 1);
+    circuitBreakers.set('gemini_api', { state: 'CLOSED', failures: 0 });
+
+    return res.json({
+      success: true,
+      result,
+    });
+  } catch (err: any) {
+    if (err instanceof KycGeminiAnalysisError) {
+      if (err.retryable) {
+        const curr = circuitBreakers.get('gemini_api') || { state: 'CLOSED', failures: 0 };
+        const failures = curr.failures + 1;
+        circuitBreakers.set('gemini_api', {
+          state: failures >= 5 ? 'OPEN' : 'CLOSED',
+          failures,
+        });
+      }
+      return res.status(err.httpStatus).json({
+        success: false,
+        code: err.code,
+        error: err.message,
+      });
+    }
+    console.error('[MAPS-GROUNDING] Erreur inattendue:', redactSensitiveForLogs(err?.message || err));
+    return res.status(500).json({
+      success: false,
+      code: 'MAPS_GROUNDING_FAILED',
+      error: 'Impossible d’interroger l’assistant Google Maps IA pour le moment.',
     });
   }
 });

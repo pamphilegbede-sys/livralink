@@ -861,3 +861,33 @@ export interface ChatConversation {
   unreadCount: number;
 }
 
+export type MapsGroundingContext = 'pickup' | 'dropoff' | 'mission_brief' | 'general';
+
+export interface MapsGroundingPlaceSource {
+  title: string;
+  uri: string;
+  placeId?: string;
+  text?: string;
+}
+
+export interface MapsGroundingReviewSnippet {
+  title?: string;
+  uri: string;
+  text?: string;
+  author?: string;
+}
+
+export interface MapsGroundingResult {
+  answerText: string;
+  model: string;
+  retrievedAt: string;
+  query: string;
+  commune?: string;
+  context: MapsGroundingContext;
+  latLngUsed?: {
+    latitude: number;
+    longitude: number;
+  };
+  places: MapsGroundingPlaceSource[];
+  reviewSnippets: MapsGroundingReviewSnippet[];
+}

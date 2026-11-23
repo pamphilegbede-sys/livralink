@@ -4,6 +4,7 @@ import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
 import { GoogleMapDelivery, LatLng } from '../maps/GoogleMapDelivery';
+import { GoogleMapsGroundingAssistant } from '../maps/GoogleMapsGroundingAssistant';
 import {
   getLocationForCommune,
   calculateDistanceKm,
@@ -1151,6 +1152,62 @@ export const VendeurNewDelivery: React.FC = () => {
                           </span>
                         </div>
                       </div>
+
+                      <GoogleMapsGroundingAssistant
+                        title="Vérifier un lieu ou repère avec Google Maps IA"
+                        subtitle="Confirmez un carrefour, une pharmacie ou un repère informel transmis par le client."
+                        initialQuery={
+                          dropoffAddress.trim()
+                            ? `${dropoffAddress.trim()}${dropoffCommune ? `, ${dropoffCommune}` : ''}`
+                            : dropoffCommune || ''
+                        }
+                        commune={dropoffCommune || pickupCommune}
+                        coordinates={destinationPos || originPos}
+                        context="dropoff"
+                        defaultCollapsed={true}
+                        quickSuggestions={[
+                          ...(dropoffAddress.trim() || dropoffCommune
+                            ? [
+                                {
+                                  label: 'Vérifier livraison',
+                                  query: `${dropoffAddress.trim() || 'Centre'} ${dropoffCommune || ''}`.trim(),
+                                  context: 'dropoff' as const,
+                                  commune: dropoffCommune || undefined,
+                                  coordinates: destinationPos,
+                                },
+                              ]
+                            : []),
+                          ...(pickupAddress.trim() || pickupCommune
+                            ? [
+                                {
+                                  label: 'Vérifier collecte',
+                                  query: `${pickupStoreName ? `${pickupStoreName}, ` : ''}${pickupAddress.trim() || pickupCommune}`.trim(),
+                                  context: 'pickup' as const,
+                                  commune: pickupCommune || undefined,
+                                  coordinates: originPos,
+                                },
+                              ]
+                            : []),
+                          {
+                            label: 'Repères proches',
+                            query: `Repères principaux et points d'accès pour livraison à ${dropoffCommune || pickupCommune || 'Cotonou'}`,
+                            context: 'dropoff' as const,
+                            commune: dropoffCommune || pickupCommune || undefined,
+                            coordinates: destinationPos || originPos,
+                          },
+                        ]}
+                        selectPlaceLabel="Utiliser pour livraison"
+                        onSelectPlace={(place) => {
+                          setDropoffAddress((prev) => {
+                            const existing = prev.trim();
+                            if (!existing) return place.title;
+                            if (existing.toLowerCase().includes(place.title.toLowerCase())) return existing;
+                            return `${existing} (Repère : ${place.title})`;
+                          });
+                          setStep2Errors((prev) => ({ ...prev, address: undefined }));
+                          showToast(`Repère Google Maps ajouté à l'adresse : ${place.title}`, 'success');
+                        }}
+                      />
                     </div>
                   </div>
 

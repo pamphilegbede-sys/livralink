@@ -7,6 +7,7 @@ import { DeliveryOrder } from '../../types';
 import { EmptyState } from '../common/EmptyState';
 import { PaginationControls } from '../common/PaginationControls';
 import { GoogleMapDelivery } from '../maps/GoogleMapDelivery';
+import { GoogleMapsGroundingAssistant } from '../maps/GoogleMapsGroundingAssistant';
 import {
   calculateDistanceKm,
   estimateFallbackDurationMinutes,
@@ -574,6 +575,31 @@ export const LivreurMissions: React.FC = () => {
                               [order.id]: result,
                             }))
                           }
+                        />
+                        <GoogleMapsGroundingAssistant
+                          title="Assistant repères & accès Google Maps IA"
+                          initialQuery={`${order.dropoffLocation.address || order.clientName}, ${order.dropoffLocation.commune}`}
+                          commune={order.dropoffLocation.commune}
+                          coordinates={dropoffCoords}
+                          context="mission_brief"
+                          defaultCollapsed={true}
+                          compact={true}
+                          quickSuggestions={[
+                            {
+                              label: 'Repères point de livraison',
+                              query: `Repères, accès et stationnement près de ${order.dropoffLocation.address || order.dropoffLocation.commune} (${order.dropoffLocation.commune})`,
+                              context: 'mission_brief',
+                              commune: order.dropoffLocation.commune,
+                              coordinates: dropoffCoords,
+                            },
+                            {
+                              label: 'Repères point de retrait',
+                              query: `${order.pickupLocation.name}, ${order.pickupLocation.address || order.pickupLocation.commune}`,
+                              context: 'pickup',
+                              commune: order.pickupLocation.commune,
+                              coordinates: pickupCoords,
+                            },
+                          ]}
                         />
                       </div>
                     )}

@@ -97,10 +97,217 @@ export function resetInMemoryGeminiGuardsForTests(): void {
 export function redactSensitiveForLogs(input: unknown): string {
   const raw = String(input ?? '');
   return raw
+    .replace(/AIza[0-9A-Za-z_-]{10,}/g, '[CLE_API_MASQUEE]')
+    .replace(/([?&]key=)[^&\s"']+/gi, '$1[CLE_API_MASQUEE]')
     .replace(/data:[^;\s]+;base64,[A-Za-z0-9+/=]+/gi, '[BASE64_MASQUE]')
     .replace(/\b(?=[A-Za-z0-9/-]*[A-Za-z])[A-Za-z0-9]{2,}(?:[-/][A-Za-z0-9]+)*[0-9]{4,}[A-Za-z0-9]*\b/g, '[ID_MASQUE]')
     .replace(/\b\d{6,}\b/g, '[NUM_MASQUE]')
     .slice(0, 320);
+}
+
+/**
+ * Normalise la clé GEMINI_API_KEY lue depuis Secret Manager / process.env :
+ * supprime espaces, retours à la ligne, préfixe accidentel "GEMINI_API_KEY=" et guillemets englobants.
+ * Retourne '' si vide ou placeholder d'exemple.
+ */
+export function normalizeGeminiApiKey(raw?: string): string {
+  let cleaned = String(raw || '').trim();
+  if (/^GEMINI_API_KEY\s*=/i.test(cleaned)) {
+    cleaned = cleaned.replace(/^GEMINI_API_KEY\s*=\s*/i, '').trim();
+  }
+  while (
+    (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+    (cleaned.startsWith("'") && cleaned.endsWith("'"))
+  ) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+  if (!cleaned || /^replace-with-/i.test(cleaned)) {
+    return '';
+  }
+  return cleaned;
+}
+
+function extractGeminiErrorMetadata(err: any): {
+  statusNum: number;
+  rpcStatus: string;
+  reason: string;
+  rawMessage: string;
+} {
+  const rawMessage = String(err?.message || err || '');
+  let statusNum = Number(err?.status || err?.httpStatus || 0);
+  let rpcStatus = '';
+  let reason = '';
+
+  const jsonStart = rawMessage.indexOf('{');
+  if (jsonStart >= 0) {
+    try {
+      const parsed = JSON.parse(rawMessage.slice(jsonStart));
+      const gErr = parsed?.error && typeof parsed.error === 'object' ? parsed.error : parsed;
+      if (!statusNum && typeof gErr?.code === 'number') {
+        statusNum = gErr.code;
+      }
+      if (typeof gErr?.status === 'string') {
+        rpcStatus = gErr.status;
+      }
+      if (Array.isArray(gErr?.details)) {
+        for (const d of gErr.details) {
+          if (typeof d?.reason === 'string' && d.reason) {
+            reason = d.reason;
+            break;
+          }
+        }
+      }
+    } catch {
+      // Message non JSON
+    }
+  }
+
+  return { statusNum, rpcStatus, reason, rawMessage };
+}
+
+export function classifyGeminiProviderError(
+  err: any,
+  model: string,
+  isTransient = false
+): KycGeminiAnalysisError {
+  if (err instanceof KycGeminiAnalysisError) {
+    return err;
+  }
+
+  const { statusNum, rpcStatus, reason, rawMessage } = extractGeminiErrorMetadata(err);
+  const combined = `${rpcStatus} ${reason} ${rawMessage}`;
+
+  if (
+    /API_KEY_HTTP_REFERRER_BLOCKED/i.test(reason) ||
+    /referer .* blocked|HTTP_REFERRER_BLOCKED/i.test(combined)
+  ) {
+    return new KycGeminiAnalysisError(
+      'GEMINI_AUTH_ERROR',
+      502,
+      "Échec d'authentification Gemini : la clé GEMINI_API_KEY est restreinte par référent HTTP (site web), ce qui bloque les appels backend serveur."
+    );
+  }
+
+  if (
+    /API_KEY_SERVICE_BLOCKED|SERVICE_DISABLED/i.test(reason) ||
+    /Generative Language API has not been used|generativelanguage\.googleapis\.com.*disabled|API_KEY_SERVICE_BLOCKED/i.test(combined)
+  ) {
+    return new KycGeminiAnalysisError(
+      'GEMINI_AUTH_ERROR',
+      502,
+      "Échec d'authentification Gemini : l'API Generative Language (generativelanguage.googleapis.com) n'est pas activée ou est bloquée sur la clé GEMINI_API_KEY."
+    );
+  }
+
+  if (/API_KEY_INVALID/i.test(reason) || /API key not valid|API_KEY_INVALID/i.test(combined)) {
+    return new KycGeminiAnalysisError(
+      'GEMINI_AUTH_ERROR',
+      502,
+      "Échec d'authentification Gemini : la valeur de GEMINI_API_KEY est invalide, malformée ou révoquée (API_KEY_INVALID)."
+    );
+  }
+
+  if (
+    statusNum === 401 ||
+    statusNum === 403 ||
+    /PERMISSION_DENIED|UNAUTHENTICATED|ACCESS_DENIED|FREE_TIER_VERIFICATION_REQUIRED/i.test(combined)
+  ) {
+    const detailTag = redactSensitiveForLogs(reason || rpcStatus || 'PERMISSION_DENIED');
+    return new KycGeminiAnalysisError(
+      'GEMINI_AUTH_ERROR',
+      502,
+      `Échec d'authentification auprès de l'API Gemini (${detailTag}). Vérifiez les autorisations du projet/compte et la clé serveur GEMINI_API_KEY.`
+    );
+  }
+
+  if (statusNum === 404 || /NOT_FOUND|models\/.*not found/i.test(combined)) {
+    return new KycGeminiAnalysisError(
+      'GEMINI_MODEL_NOT_FOUND',
+      502,
+      `Modèle Gemini introuvable ou indisponible pour cette clé API (${redactSensitiveForLogs(model)}).`
+    );
+  }
+
+  if (statusNum === 429 || /RESOURCE_EXHAUSTED|quota/i.test(combined)) {
+    return new KycGeminiAnalysisError(
+      'GEMINI_PROVIDER_QUOTA',
+      429,
+      'Quota fournisseur Gemini temporairement saturé. Veuillez réessayer dans quelques instants.',
+      true
+    );
+  }
+
+  return new KycGeminiAnalysisError(
+    'GEMINI_PROVIDER_ERROR',
+    502,
+    `Erreur lors de l'analyse Gemini : ${redactSensitiveForLogs(rawMessage) || 'réponse fournisseur invalide'}`,
+    isTransient
+  );
+}
+
+/**
+ * Effectue un appel minimal réel vers l'API Gemini depuis le backend pour valider GEMINI_API_KEY et le modèle.
+ * Ne journalise et ne retourne jamais la clé API.
+ */
+export async function verifyGeminiBackendAuth(options?: {
+  timeoutMs?: number;
+  model?: string;
+}): Promise<{
+  ok: boolean;
+  keyConfigured: boolean;
+  model: string;
+  httpStatus?: number;
+  code?: string;
+  message: string;
+}> {
+  const model = process.env.GEMINI_KYC_MODEL?.trim() || options?.model || DEFAULT_GEMINI_KYC_MODEL;
+  const apiKey = normalizeGeminiApiKey(process.env.GEMINI_API_KEY);
+  if (!apiKey) {
+    return {
+      ok: false,
+      keyConfigured: false,
+      model,
+      code: 'GEMINI_API_KEY_MISSING',
+      message: "Variable serveur process.env.GEMINI_API_KEY absente ou non configurée sur cet environnement d'exécution.",
+    };
+  }
+
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), options?.timeoutMs ?? 15_000);
+  try {
+    const ai = new GoogleGenAI({
+      apiKey,
+      vertexai: false,
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+    });
+    const response = await ai.models.generateContent({
+      model,
+      contents: 'Réponds uniquement OK.',
+      config: {
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        abortSignal: controller.signal,
+      },
+    });
+    return {
+      ok: Boolean(response.text !== undefined),
+      keyConfigured: true,
+      model,
+      httpStatus: 200,
+      message: 'Authentification et appel Gemini réussis depuis le backend.',
+    };
+  } catch (err: any) {
+    const classified = classifyGeminiProviderError(err, model);
+    return {
+      ok: false,
+      keyConfigured: true,
+      model,
+      httpStatus: classified.httpStatus,
+      code: classified.code,
+      message: classified.message,
+    };
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 }
 
 const cleanText = (val: unknown, maxLen = 240): string | undefined => {
@@ -615,7 +822,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
   } = options;
 
   const model = process.env.GEMINI_KYC_MODEL?.trim() || DEFAULT_GEMINI_KYC_MODEL;
-  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
+  const apiKey = normalizeGeminiApiKey(process.env.GEMINI_API_KEY);
   const hasGenerator = Boolean(testGeneratorOverride || apiKey);
 
   if (!hasGenerator) {
@@ -1038,6 +1245,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
       (async ({ model: m, contents: c, systemInstruction, responseSchema, signal }) => {
         const ai = new GoogleGenAI({
           apiKey,
+          vertexai: false,
           httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
         });
         const response = await ai.models.generateContent({
@@ -1139,27 +1347,12 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
         if (effectiveErr instanceof KycGeminiAnalysisError) {
           throw effectiveErr;
         }
-        if (/API key not valid|API_KEY_INVALID|403|PERMISSION_DENIED/i.test(msg)) {
-          throw new KycGeminiAnalysisError(
-            'GEMINI_AUTH_ERROR',
-            502,
-            "Échec d'authentification auprès de l'API Gemini. Vérifiez la clé serveur GEMINI_API_KEY."
-          );
-        }
-        if (statusNum === 429 || /RESOURCE_EXHAUSTED|quota/i.test(msg)) {
-          throw new KycGeminiAnalysisError(
-            'GEMINI_PROVIDER_QUOTA',
-            429,
-            'Quota fournisseur Gemini temporairement saturé. Veuillez réessayer dans quelques instants.',
-            true
-          );
-        }
-        throw new KycGeminiAnalysisError(
-          'GEMINI_PROVIDER_ERROR',
-          502,
-          `Erreur lors de l'analyse Gemini : ${redactSensitiveForLogs(msg) || 'réponse fournisseur invalide'}`,
-          isTransient
+        const classified = classifyGeminiProviderError(effectiveErr, model, isTransient);
+        const { statusNum: upstreamStatus, rpcStatus, reason } = extractGeminiErrorMetadata(effectiveErr);
+        console.warn(
+          `[KYC-GEMINI] Erreur fournisseur Gemini (code=${classified.code}, upstreamHttp=${upstreamStatus || 'n/a'}, rpcStatus=${rpcStatus || 'n/a'}, reason=${reason || 'n/a'}, model=${model}): ${redactSensitiveForLogs(msg)}`
         );
+        throw classified;
       } finally {
         if (timeoutHandle) clearTimeout(timeoutHandle);
       }

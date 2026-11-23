@@ -6,6 +6,7 @@ import { Sidebar } from '../common/Sidebar';
 import { MobileBottomNav } from '../common/MobileBottomNav';
 import { DeliveryOrder } from '../../types';
 import { GoogleMapDelivery } from '../maps/GoogleMapDelivery';
+import { GoogleMapsGroundingAssistant } from '../maps/GoogleMapsGroundingAssistant';
 import { getLocationForCommune } from '../../config/maps';
 import { filterVendorDeliveries } from '../../utils/deliveryIsolation';
 import { notifyClientDeliveryOtp } from '../../services/emailService';
@@ -555,6 +556,36 @@ export const VendeurTracking: React.FC = () => {
                   }
                   courierName={currentOrder.courier?.name || 'Livreur Partenaire'}
                   heightClass="h-[280px]"
+                />
+                <GoogleMapsGroundingAssistant
+                  title="Vérifier les repères de destination (Google Maps IA)"
+                  initialQuery={`${currentOrder.dropoffLocation.address || currentOrder.dropoffLocation.name}, ${currentOrder.dropoffLocation.commune}`}
+                  commune={currentOrder.dropoffLocation.commune}
+                  coordinates={
+                    currentOrder.dropoffLocation?.coordinates
+                      ? {
+                          lat: currentOrder.dropoffLocation.coordinates[0],
+                          lng: currentOrder.dropoffLocation.coordinates[1],
+                        }
+                      : getLocationForCommune(currentOrder.dropoffLocation?.commune || 'Cotonou - Cadjehoun')
+                  }
+                  context="dropoff"
+                  defaultCollapsed={true}
+                  compact={true}
+                  quickSuggestions={[
+                    {
+                      label: 'Repères destination',
+                      query: `${currentOrder.dropoffLocation.address || currentOrder.dropoffLocation.name}, ${currentOrder.dropoffLocation.commune}`,
+                      context: 'dropoff',
+                      commune: currentOrder.dropoffLocation.commune,
+                    },
+                    {
+                      label: 'Repères collecte',
+                      query: `${currentOrder.pickupLocation.name}, ${currentOrder.pickupLocation.address || currentOrder.pickupLocation.commune}`,
+                      context: 'pickup',
+                      commune: currentOrder.pickupLocation.commune,
+                    },
+                  ]}
                 />
               </div>
 
