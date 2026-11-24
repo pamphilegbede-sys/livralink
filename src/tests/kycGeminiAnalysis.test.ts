@@ -4,6 +4,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
   classifyGeminiProviderError,
+  inspectGeminiKeyFormat,
   normalizeGeminiApiKey,
   redactSensitiveForLogs,
   resetInMemoryGeminiGuardsForTests,
@@ -179,12 +180,14 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
     serverMod.setStorageBucketForTests(null);
     serverMod.setTokenVerifierForTests(null);
     serverMod.setGeminiKycAnalyzerForTests(null);
+    serverMod.setGeminiBackendAuthVerifierForTests(null);
     await close();
   });
 
   t.beforeEach(() => {
     resetInMemoryGeminiGuardsForTests();
     serverMod.setGeminiKycAnalyzerForTests(null);
+    serverMod.setGeminiBackendAuthVerifierForTests(null);
     serverMod.setTokenVerifierForTests(async (tok) => {
       if (tok === 'admin-token') {
         return { uid: 'admin_super', email: 'pamphile.gbede@gmail.com', email_verified: true, admin: true };
@@ -584,11 +587,19 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
     assert.match(sanitized, /\[BASE64_MASQUE\]/);
   });
 
-  await t.test('9. Normalisation GEMINI_API_KEY & classification précise des erreurs Gemini (400/403/404)', () => {
+  await t.test('9. Normalisation avancée GEMINI_API_KEY, inspectGeminiKeyFormat & classification des erreurs (400/403/404)', () => {
     assert.equal(normalizeGeminiApiKey('  "AIzaSyValidKey_123" \n'), 'AIzaSyValidKey_123');
     assert.equal(normalizeGeminiApiKey("GEMINI_API_KEY='AIzaSyValidKey_123'"), 'AIzaSyValidKey_123');
+    assert.equal(normalizeGeminiApiKey('\uFEFFexport GEMINI_API_KEY="AQ.Ab8RN6Sample_123";\r\n'), 'AQ.Ab8RN6Sample_123');
+    assert.equal(normalizeGeminiApiKey('GEMINI_API_KEY: Bearer AIzaSyValidKey_456'), 'AIzaSyValidKey_456');
     assert.equal(normalizeGeminiApiKey('replace-with-server-gemini-api-key-if-used'), '');
+    assert.equal(normalizeGeminiApiKey('your_gemini_api_key_here'), '');
     assert.equal(normalizeGeminiApiKey('""'), '');
+
+    assert.deepEqual(inspectGeminiKeyFormat(undefined), { configured: false, format: 'missing', length: 0 });
+    assert.equal(inspectGeminiKeyFormat('AIzaSyValidKey_123').format, 'google_aiza');
+    assert.equal(inspectGeminiKeyFormat('AQ.Ab8RN6Sample_123').format, 'aistudio_aq');
+    assert.equal(inspectGeminiKeyFormat('custom_opaque_value').format, 'unexpected_format');
 
     const refErr = classifyGeminiProviderError(
       {
@@ -654,5 +665,118 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
     );
     assert.equal(unrelatedErr.code, 'GEMINI_PROVIDER_ERROR');
   });
+
+  await t.test('10. Une erreur GEMINI_AUTH_ERROR répétée ne déclenche jamais le circuit-breaker 5xx', async () => {
+    const uid = 'courier_auth_no_circuit';
+    const prevKey = process.env.GEMINI_API_KEY;
+    process.env.GEMINI_API_KEY = 'AQ.TestKeyForAuthNoCircuit1234567890';
+    try {
+      const files = new Map([[`kyc/${uid}/id_front/id_front_1.jpg`, { contentType: 'image/jpeg', data: JPEG_BYTES }]]);
+      const { db, bucket } = createMockFirestoreAndStorage(
+        { kyc: new Map([[uid, buildFourDocDossier(uid)]]) },
+        files
+      );
+      serverMod.setFirestoreAdminForTests(db);
+      serverMod.setStorageBucketForTests(bucket);
+
+      serverMod.setGeminiKycAnalyzerForTests(async () => {
+        throw {
+          status: 400,
+          message: JSON.stringify({
+            error: {
+              code: 400,
+              status: 'INVALID_ARGUMENT',
+              message: 'API key not valid.',
+              details: [{ reason: 'API_KEY_INVALID' }],
+            },
+          }),
+        };
+      });
+
+      for (let i = 0; i < 6; i++) {
+        const res = await fetch(`${baseUrl}/api/admin/kyc/${uid}/analyze`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer admin-token' },
+          body: JSON.stringify({ force: true, __testMaxRetries: 0 }),
+        });
+        assert.equal(res.status, 502);
+        const body = await res.json();
+        assert.equal(body.code, 'GEMINI_AUTH_ERROR');
+      }
+
+      // Dès que l'appel redevient valide, le circuit-breaker ne doit pas bloquer (pas de 503 GEMINI_CIRCUIT_OPEN)
+      serverMod.setGeminiKycAnalyzerForTests(async () => ({
+        text: JSON.stringify({
+          summary: 'OK après correction clé',
+          documents: { idFront: { readabilityStatus: 'readable', extractionConfidence: 'high', anomalies: [] } },
+          crossChecks: [],
+          warnings: [],
+          issues: [],
+          recommendations: [],
+        }),
+      }));
+
+      const okRes = await fetch(`${baseUrl}/api/admin/kyc/${uid}/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer admin-token' },
+        body: JSON.stringify({ force: true }),
+      });
+      assert.equal(okRes.status, 200);
+    } finally {
+      if (prevKey === undefined) delete process.env.GEMINI_API_KEY;
+      else process.env.GEMINI_API_KEY = prevKey;
+    }
+  });
+
+  await t.test('11. Endpoint POST /api/admin/gemini/verify protégé RBAC et diagnostics propres sans fuite de clé', async () => {
+    const anonRes = await fetch(`${baseUrl}/api/admin/gemini/verify`, { method: 'POST' });
+    assert.equal(anonRes.status, 401);
+
+    const courierRes = await fetch(`${baseUrl}/api/admin/gemini/verify`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer courier-token' },
+    });
+    assert.equal(courierRes.status, 403);
+
+    serverMod.setGeminiBackendAuthVerifierForTests(async () => ({
+      ok: true,
+      keyConfigured: true,
+      keyFormat: 'aistudio_aq',
+      model: 'gemini-4-hydrogen',
+      httpStatus: 200,
+      code: 'GEMINI_MODEL_HIGH_DEMAND',
+      message: 'Clé GEMINI_API_KEY authentifiée avec succès auprès de Gemini (aistudio_aq).',
+    }));
+
+    const okRes = await fetch(`${baseUrl}/api/admin/gemini/verify`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer admin-token' },
+    });
+    assert.equal(okRes.status, 200);
+    const okBody = await okRes.json();
+    assert.equal(okBody.success, true);
+    assert.equal(okBody.keyFormat, 'aistudio_aq');
+    assert.equal(okBody.code, 'GEMINI_MODEL_HIGH_DEMAND');
+
+    serverMod.setGeminiBackendAuthVerifierForTests(async () => ({
+      ok: false,
+      keyConfigured: true,
+      keyFormat: 'google_aiza',
+      model: 'gemini-4-hydrogen',
+      httpStatus: 502,
+      code: 'GEMINI_AUTH_ERROR',
+      message: "Échec d'authentification Gemini : API_KEY_INVALID.",
+    }));
+
+    const failRes = await fetch(`${baseUrl}/api/admin/gemini/verify`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer admin-token' },
+    });
+    assert.equal(failRes.status, 502);
+    const failBody = await failRes.json();
+    assert.equal(failBody.success, false);
+    assert.equal(failBody.code, 'GEMINI_AUTH_ERROR');
+  });
 });
+
 

@@ -80,6 +80,29 @@ export function setGeminiGeneratorForTests(fn: GeminiGeneratorFn | null): void {
   }
 }
 
+export interface GeminiAuthVerifyResult {
+  ok: boolean;
+  keyConfigured: boolean;
+  keyFormat: GeminiKeyFormat;
+  model: string;
+  httpStatus?: number;
+  code?: string;
+  message: string;
+}
+
+export type GeminiAuthVerifierFn = (options?: {
+  timeoutMs?: number;
+  model?: string;
+}) => Promise<GeminiAuthVerifyResult>;
+
+let testAuthVerifierOverride: GeminiAuthVerifierFn | null = null;
+
+export function setGeminiAuthVerifierForTests(fn: GeminiAuthVerifierFn | null): void {
+  if (process.env.NODE_ENV === 'test') {
+    testAuthVerifierOverride = fn;
+  }
+}
+
 const inMemoryLocks = new Map<string, { leaseExpiresAt: number; lastRequestedAt: number; lastStatus?: string }>();
 const inMemoryCircuit = { consecutiveFailures: 0, openUntilMs: 0 };
 
@@ -98,6 +121,7 @@ export function redactSensitiveForLogs(input: unknown): string {
   const raw = String(input ?? '');
   return raw
     .replace(/AIza[0-9A-Za-z_-]{10,}/g, '[CLE_API_MASQUEE]')
+    .replace(/AQ\.[0-9A-Za-z._-]{10,}/g, '[CLE_API_MASQUEE]')
     .replace(/([?&]key=)[^&\s"']+/gi, '$1[CLE_API_MASQUEE]')
     .replace(/data:[^;\s]+;base64,[A-Za-z0-9+/=]+/gi, '[BASE64_MASQUE]')
     .replace(/\b(?=[A-Za-z0-9/-]*[A-Za-z])[A-Za-z0-9]{2,}(?:[-/][A-Za-z0-9]+)*[0-9]{4,}[A-Za-z0-9]*\b/g, '[ID_MASQUE]')
@@ -106,25 +130,57 @@ export function redactSensitiveForLogs(input: unknown): string {
 }
 
 /**
- * Normalise la clé GEMINI_API_KEY lue depuis Secret Manager / process.env :
- * supprime espaces, retours à la ligne, préfixe accidentel "GEMINI_API_KEY=" et guillemets englobants.
+ * Normalise la clé GEMINI_API_KEY lue depuis Secret Manager / Settings > Secrets / process.env :
+ * supprime BOM, caractères invisibles, retours à la ligne, préfixes accidentels
+ * ("export GEMINI_API_KEY=", "GEMINI_API_KEY=", "GEMINI_API_KEY:", "Bearer ") et guillemets englobants.
  * Retourne '' si vide ou placeholder d'exemple.
  */
 export function normalizeGeminiApiKey(raw?: string): string {
-  let cleaned = String(raw || '').trim();
-  if (/^GEMINI_API_KEY\s*=/i.test(cleaned)) {
-    cleaned = cleaned.replace(/^GEMINI_API_KEY\s*=\s*/i, '').trim();
+  let cleaned = String(raw || '')
+    .replace(/[\uFEFF\u200B-\u200D\u2060]/g, '')
+    .replace(/[\r\n\t]+/g, '')
+    .trim();
+
+  for (let i = 0; i < 3; i++) {
+    const before = cleaned;
+    while (
+      (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+      (cleaned.startsWith("'") && cleaned.endsWith("'")) ||
+      (cleaned.startsWith('`') && cleaned.endsWith('`'))
+    ) {
+      cleaned = cleaned.slice(1, -1).trim();
+    }
+    cleaned = cleaned.replace(/^export\s+/i, '').trim();
+    cleaned = cleaned.replace(/^GEMINI_API_KEY\s*[:=]\s*/i, '').trim();
+    cleaned = cleaned.replace(/^Bearer\s+/i, '').trim();
+    cleaned = cleaned.replace(/;+$/, '').trim();
+    if (cleaned === before) break;
   }
-  while (
-    (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
-    (cleaned.startsWith("'") && cleaned.endsWith("'"))
-  ) {
-    cleaned = cleaned.slice(1, -1).trim();
-  }
-  if (!cleaned || /^replace-with-/i.test(cleaned)) {
+
+  if (!cleaned || /^replace-with-/i.test(cleaned) || /^your[-_]/i.test(cleaned)) {
     return '';
   }
   return cleaned;
+}
+
+export type GeminiKeyFormat = 'missing' | 'google_aiza' | 'aistudio_aq' | 'unexpected_format';
+
+export function inspectGeminiKeyFormat(raw?: string): {
+  configured: boolean;
+  format: GeminiKeyFormat;
+  length: number;
+} {
+  const key = normalizeGeminiApiKey(raw);
+  if (!key) {
+    return { configured: false, format: 'missing', length: 0 };
+  }
+  if (key.startsWith('AIza')) {
+    return { configured: true, format: 'google_aiza', length: key.length };
+  }
+  if (key.startsWith('AQ.')) {
+    return { configured: true, format: 'aistudio_aq', length: key.length };
+  }
+  return { configured: true, format: 'unexpected_format', length: key.length };
 }
 
 function extractGeminiErrorMetadata(err: any): {
@@ -203,7 +259,7 @@ export function classifyGeminiProviderError(
     return new KycGeminiAnalysisError(
       'GEMINI_AUTH_ERROR',
       502,
-      "Échec d'authentification Gemini : la valeur de GEMINI_API_KEY est invalide, malformée ou révoquée (API_KEY_INVALID)."
+      "Échec d'authentification Gemini : la valeur de GEMINI_API_KEY est invalide, malformée ou révoquée (API_KEY_INVALID). Vérifiez ou remplacez la clé dans Paramètres > Secrets (ou Secret Manager GEMINI_API_KEY sur App Hosting puis redéployez)."
     );
   }
 
@@ -252,20 +308,18 @@ export function classifyGeminiProviderError(
 export async function verifyGeminiBackendAuth(options?: {
   timeoutMs?: number;
   model?: string;
-}): Promise<{
-  ok: boolean;
-  keyConfigured: boolean;
-  model: string;
-  httpStatus?: number;
-  code?: string;
-  message: string;
-}> {
+}): Promise<GeminiAuthVerifyResult> {
+  if (process.env.NODE_ENV === 'test' && testAuthVerifierOverride) {
+    return testAuthVerifierOverride(options);
+  }
   const model = process.env.GEMINI_KYC_MODEL?.trim() || options?.model || DEFAULT_GEMINI_KYC_MODEL;
+  const keyMeta = inspectGeminiKeyFormat(process.env.GEMINI_API_KEY);
   const apiKey = normalizeGeminiApiKey(process.env.GEMINI_API_KEY);
   if (!apiKey) {
     return {
       ok: false,
       keyConfigured: false,
+      keyFormat: keyMeta.format,
       model,
       code: 'GEMINI_API_KEY_MISSING',
       message: "Variable serveur process.env.GEMINI_API_KEY absente ou non configurée sur cet environnement d'exécution.",
@@ -291,15 +345,53 @@ export async function verifyGeminiBackendAuth(options?: {
     return {
       ok: Boolean(response.text !== undefined),
       keyConfigured: true,
+      keyFormat: keyMeta.format,
       model,
       httpStatus: 200,
       message: 'Authentification et appel Gemini réussis depuis le backend.',
     };
   } catch (err: any) {
+    const { statusNum, rpcStatus, rawMessage } = extractGeminiErrorMetadata(err);
+    if (statusNum === 503 || /UNAVAILABLE/i.test(`${rpcStatus} ${rawMessage}`)) {
+      // Vérifie via models.list si la clé elle-même authentifie correctement malgré la surcharge temporaire du modèle
+      try {
+        const aiList = new GoogleGenAI({
+          apiKey,
+          vertexai: false,
+          httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+        });
+        const pager = await aiList.models.list({ config: { pageSize: 1 } });
+        for await (const _m of pager) {
+          break;
+        }
+        return {
+          ok: true,
+          keyConfigured: true,
+          keyFormat: keyMeta.format,
+          model,
+          httpStatus: 200,
+          code: 'GEMINI_MODEL_HIGH_DEMAND',
+          message: `Clé GEMINI_API_KEY authentifiée avec succès auprès de Gemini (${keyMeta.format}), mais le modèle ${model} connaît une surcharge temporaire (503). Réessayez dans un instant.`,
+        };
+      } catch (listErr: any) {
+        const listClassified = classifyGeminiProviderError(listErr, model);
+        return {
+          ok: false,
+          keyConfigured: true,
+          keyFormat: keyMeta.format,
+          model,
+          httpStatus: listClassified.httpStatus,
+          code: listClassified.code,
+          message: listClassified.message,
+        };
+      }
+    }
+
     const classified = classifyGeminiProviderError(err, model);
     return {
       ok: false,
       keyConfigured: true,
+      keyFormat: keyMeta.format,
       model,
       httpStatus: classified.httpStatus,
       code: classified.code,
@@ -1414,7 +1506,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
             redactSensitiveForLogs(err?.message || 'Erreur interne lors de l’analyse Gemini.')
           );
 
-    if (geminiErr.httpStatus >= 500) {
+    if (geminiErr.httpStatus >= 500 && geminiErr.code !== 'GEMINI_AUTH_ERROR') {
       inMemoryCircuit.consecutiveFailures += 1;
       if (inMemoryCircuit.consecutiveFailures >= CIRCUIT_FAILURE_THRESHOLD) {
         inMemoryCircuit.openUntilMs = Date.now() + CIRCUIT_OPEN_DURATION_MS;

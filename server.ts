@@ -34,13 +34,17 @@ import {
   updateCourierAvailabilityAndGps,
 } from './src/server/dispatchService';
 import {
+  GeminiAuthVerifierFn,
   GeminiGeneratorFn,
+  inspectGeminiKeyFormat,
   KycGeminiAnalysisError,
   normalizeGeminiApiKey,
   redactSensitiveForLogs,
   resetInMemoryGeminiGuardsForTests,
   runKycGeminiAnalysis,
+  setGeminiAuthVerifierForTests,
   setGeminiGeneratorForTests,
+  verifyGeminiBackendAuth,
 } from './src/server/kycGeminiAnalysis';
 import {
   MapsGroundingGeneratorFn,
@@ -336,6 +340,12 @@ export function setGeminiKycAnalyzerForTests(fn: GeminiGeneratorFn | null): void
     if (fn === null) {
       resetInMemoryGeminiGuardsForTests();
     }
+  }
+}
+
+export function setGeminiBackendAuthVerifierForTests(fn: GeminiAuthVerifierFn | null): void {
+  if (process.env.NODE_ENV === 'test') {
+    setGeminiAuthVerifierForTests(fn);
   }
 }
 
@@ -2672,6 +2682,7 @@ app.get('/api/security/audit', requireAdminAuthorization as any, async (_req: Re
       emailEncryptionReady: evaluateEmailEncryptionSecret().valid,
       smtpConfigured,
       geminiApiKeyConfigured: Boolean(normalizeGeminiApiKey(process.env.GEMINI_API_KEY)),
+      geminiKeyFormat: inspectGeminiKeyFormat(process.env.GEMINI_API_KEY).format,
       appUrlConfigured: Boolean(
         process.env.APP_URL?.trim() ||
         process.env.PUBLIC_SITE_URL?.trim() ||
@@ -4004,6 +4015,42 @@ app.post('/api/admin/kyc/decision', requireAdminPermission('kyc.review') as any,
       error: isIamDenied
         ? '[KYC-STEP-F] Permissions IAM Firestore Admin indisponibles (7 PERMISSION_DENIED).'
         : '[KYC-STEP-F] Erreur lors de la décision administrative KYC.',
+    });
+  }
+});
+
+// =========================================================================
+// DIAGNOSTIC AUTHENTIFICATION GEMINI BACKEND (ADMIN UNIQUEMENT — SANS FUITE DE CLÉ)
+// =========================================================================
+app.post('/api/admin/gemini/verify', requireAdminPermission('kyc.read') as any, async (req: AuthenticatedRequest, res: Response) => {
+  const rateCheck = checkIpRateLimit(`gemini_verify_admin_${req.user!.uid}`, 15, 60_000);
+  if (!rateCheck.allowed) {
+    return res.status(429).json({
+      success: false,
+      code: 'ADMIN_RATE_LIMIT',
+      message: 'Trop de tests de connexion Gemini en moins d’une minute. Veuillez patienter.',
+    });
+  }
+
+  try {
+    const result = await verifyGeminiBackendAuth();
+    return res.status(result.ok ? 200 : result.httpStatus || 503).json({
+      success: result.ok,
+      keyConfigured: result.keyConfigured,
+      keyFormat: result.keyFormat,
+      model: result.model,
+      httpStatus: result.httpStatus,
+      code: result.code,
+      message: result.message,
+    });
+  } catch (err: any) {
+    console.warn('[KYC-GEMINI] Échec test auth Gemini:', redactSensitiveForLogs(err?.message || err));
+    return res.status(502).json({
+      success: false,
+      keyConfigured: Boolean(normalizeGeminiApiKey(process.env.GEMINI_API_KEY)),
+      keyFormat: inspectGeminiKeyFormat(process.env.GEMINI_API_KEY).format,
+      code: 'GEMINI_VERIFY_ERROR',
+      message: 'Impossible de tester la connexion Gemini depuis le serveur.',
     });
   }
 });

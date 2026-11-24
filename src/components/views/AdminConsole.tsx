@@ -348,6 +348,13 @@ export const AdminConsole: React.FC = () => {
   const [kycDocReloadTick, setKycDocReloadTick] = useState(0);
   const [isSubmittingKycDecision, setIsSubmittingKycDecision] = useState(false);
   const [isAnalyzingKyc, setIsAnalyzingKyc] = useState(false);
+  const [geminiAuthCheck, setGeminiAuthCheck] = useState<{
+    loading: boolean;
+    ok?: boolean;
+    keyFormat?: string;
+    code?: string;
+    message?: string;
+  } | null>(null);
   const kycDocObjectUrlsRef = useRef<string[]>([]);
   const [selectedDisputeOrder, setSelectedDisputeOrder] = useState<string | null>(null);
   const [isAddCourierModalOpen, setIsAddCourierModalOpen] = useState(false);
@@ -5607,32 +5614,113 @@ export const AdminConsole: React.FC = () => {
                         </p>
                       </div>
 
-                      <button
-                        type="button"
-                        disabled={isRunning || isSubmittingKycDecision}
-                        onClick={async () => {
-                          if (!reviewingKycItem) return;
-                          setIsAnalyzingKyc(true);
-                          try {
-                            await analyzeKYCWithGemini(reviewingKycItem.id);
-                          } finally {
-                            setIsAnalyzingKyc(false);
-                          }
-                        }}
-                        className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs shadow-sm inline-flex items-center justify-center gap-1.5 shrink-0 cursor-pointer transition-all"
-                      >
-                        <span className={`material-symbols-outlined text-sm ${isRunning ? 'animate-spin' : ''}`}>
-                          {isRunning ? 'progress_activity' : aiStatus === 'completed' || aiStatus === 'failed' ? 'refresh' : 'auto_awesome'}
-                        </span>
-                        <span>
-                          {isRunning
-                            ? 'Analyse en cours...'
-                            : aiStatus === 'completed' || aiStatus === 'failed'
-                            ? "Relancer l'analyse"
-                            : "Lancer l'analyse IA"}
-                        </span>
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          disabled={isRunning || isSubmittingKycDecision || Boolean(geminiAuthCheck?.loading)}
+                          onClick={async () => {
+                            if (!auth.currentUser) return;
+                            setGeminiAuthCheck({ loading: true });
+                            try {
+                              const token = await auth.currentUser.getIdToken();
+                              const res = await fetch('/api/admin/gemini/verify', {
+                                method: 'POST',
+                                headers: {
+                                  Authorization: `Bearer ${token}`,
+                                },
+                              });
+                              const data = await res.json().catch(() => ({}));
+                              setGeminiAuthCheck({
+                                loading: false,
+                                ok: Boolean(data?.success),
+                                keyFormat: data?.keyFormat,
+                                code: data?.code,
+                                message:
+                                  data?.message ||
+                                  data?.error ||
+                                  `Statut HTTP ${res.status}`,
+                              });
+                            } catch (err: any) {
+                              setGeminiAuthCheck({
+                                loading: false,
+                                ok: false,
+                                code: 'NETWORK_ERROR',
+                                message: err?.message || 'Erreur réseau lors du test de connexion Gemini.',
+                              });
+                            }
+                          }}
+                          className="px-3 py-2 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed text-slate-800 font-bold text-xs shadow-sm inline-flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                        >
+                          <span className={`material-symbols-outlined text-sm ${geminiAuthCheck?.loading ? 'animate-spin' : ''}`}>
+                            {geminiAuthCheck?.loading ? 'progress_activity' : 'verified_user'}
+                          </span>
+                          <span>{geminiAuthCheck?.loading ? 'Test en cours...' : 'Tester clé Gemini'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={isRunning || isSubmittingKycDecision}
+                          onClick={async () => {
+                            if (!reviewingKycItem) return;
+                            setIsAnalyzingKyc(true);
+                            try {
+                              await analyzeKYCWithGemini(reviewingKycItem.id);
+                            } finally {
+                              setIsAnalyzingKyc(false);
+                            }
+                          }}
+                          className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs shadow-sm inline-flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                        >
+                          <span className={`material-symbols-outlined text-sm ${isRunning ? 'animate-spin' : ''}`}>
+                            {isRunning ? 'progress_activity' : aiStatus === 'completed' || aiStatus === 'failed' ? 'refresh' : 'auto_awesome'}
+                          </span>
+                          <span>
+                            {isRunning
+                              ? 'Analyse en cours...'
+                              : aiStatus === 'completed' || aiStatus === 'failed'
+                              ? "Relancer l'analyse"
+                              : "Lancer l'analyse IA"}
+                          </span>
+                        </button>
+                      </div>
                     </div>
+
+                    {/* Diagnostic live de connexion backend Gemini */}
+                    {geminiAuthCheck && !geminiAuthCheck.loading && (
+                      <div
+                        role="status"
+                        className={`p-3 rounded-xl border text-xs flex items-start justify-between gap-3 ${
+                          geminiAuthCheck.ok
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                            : 'bg-amber-50 border-amber-200 text-amber-900'
+                        }`}
+                      >
+                        <div className="flex items-start gap-2">
+                          <span className={`material-symbols-outlined text-lg shrink-0 ${geminiAuthCheck.ok ? 'text-emerald-600' : 'text-amber-600'}`}>
+                            {geminiAuthCheck.ok ? 'check_circle' : 'warning'}
+                          </span>
+                          <div>
+                            <p className="font-bold">
+                              {geminiAuthCheck.ok ? 'Connexion backend Gemini opérationnelle' : 'Diagnostic authentification Gemini'}
+                              {geminiAuthCheck.keyFormat ? ` (format: ${geminiAuthCheck.keyFormat})` : ''}
+                            </p>
+                            <p className="text-[11px] mt-0.5">{geminiAuthCheck.message}</p>
+                            {geminiAuthCheck.ok && aiStatus === 'failed' && (
+                              <p className="text-[11px] mt-1 font-semibold">
+                                L&apos;erreur affichée ci-dessous provient d&apos;une tentative précédente : cliquez sur &laquo; Relancer l&apos;analyse &raquo;.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setGeminiAuthCheck(null)}
+                          className="text-[11px] font-bold opacity-70 hover:opacity-100 cursor-pointer shrink-0"
+                        >
+                          Fermer
+                        </button>
+                      </div>
+                    )}
 
                     {/* Metadata bar */}
                     {(ai?.analyzedAt || ai?.model || ai?.requestedBy) && (
