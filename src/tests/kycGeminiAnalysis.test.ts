@@ -595,14 +595,31 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
     assert.equal(normalizeGeminiApiKey('{"GEMINI_API_KEY":"AIzaSyJsonSecret_789"}'), 'AIzaSyJsonSecret_789');
     assert.equal(normalizeGeminiApiKey('{"apiKey":"AQ.JsonSample_321"}'), 'AQ.JsonSample_321');
     assert.equal(normalizeGeminiApiKey('AIzaSy With Spaces 123'), 'AIzaSyWithSpaces123');
+    const singleAq53 = 'AQ.' + 'Ab8RN6SampleKeyValue1234567890ABCDEFGHIJKLMNOPQRST';
+    assert.equal(singleAq53.length, 53);
+    assert.equal(normalizeGeminiApiKey(singleAq53 + singleAq53), singleAq53);
+    assert.equal(normalizeGeminiApiKey(`${singleAq53}\n${singleAq53}`), singleAq53);
+
+    const singleAiza39 = 'AIzaSy' + 'A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q';
+    assert.equal(normalizeGeminiApiKey(singleAiza39 + singleAiza39), singleAiza39);
+
     assert.equal(normalizeGeminiApiKey('replace-with-server-gemini-api-key-if-used'), '');
     assert.equal(normalizeGeminiApiKey('your_gemini_api_key_here'), '');
     assert.equal(normalizeGeminiApiKey('""'), '');
 
-    assert.deepEqual(inspectGeminiKeyFormat(undefined), { configured: false, format: 'missing', length: 0 });
+    assert.deepEqual(inspectGeminiKeyFormat(undefined), {
+      configured: false,
+      format: 'missing',
+      length: 0,
+      multipleKeysDetected: false,
+    });
     assert.equal(inspectGeminiKeyFormat('AIzaSyValidKey_123').format, 'google_aiza');
     assert.equal(inspectGeminiKeyFormat('AQ.Ab8RN6Sample_123').format, 'aistudio_aq');
     assert.equal(inspectGeminiKeyFormat('custom_opaque_value').format, 'unexpected_format');
+    assert.equal(
+      inspectGeminiKeyFormat('AQ.FirstKey_1234567890123456789012345678901234567890AQ.SecondKey_0987654321098765432109876543210987654321').multipleKeysDetected,
+      true
+    );
 
     const refErr = classifyGeminiProviderError(
       {

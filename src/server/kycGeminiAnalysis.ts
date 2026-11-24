@@ -178,6 +178,19 @@ export function normalizeGeminiApiKey(raw?: string): string {
 
   cleaned = cleaned.replace(/\s+/g, '');
 
+  // Auto-réparation sûre si l'utilisateur a collé deux fois de suite exactement la même clé dans Secret Manager
+  if (
+    cleaned.length >= 40 &&
+    cleaned.length % 2 === 0 &&
+    (cleaned.startsWith('AQ.') || cleaned.startsWith('AIza'))
+  ) {
+    const half = cleaned.length / 2;
+    const firstHalf = cleaned.slice(0, half);
+    if (firstHalf === cleaned.slice(half)) {
+      cleaned = firstHalf;
+    }
+  }
+
   if (!cleaned || /^replace-with-/i.test(cleaned) || /^your[-_]/i.test(cleaned)) {
     return '';
   }
@@ -190,18 +203,21 @@ export function inspectGeminiKeyFormat(raw?: string): {
   configured: boolean;
   format: GeminiKeyFormat;
   length: number;
+  multipleKeysDetected: boolean;
 } {
   const key = normalizeGeminiApiKey(raw);
   if (!key) {
-    return { configured: false, format: 'missing', length: 0 };
+    return { configured: false, format: 'missing', length: 0, multipleKeysDetected: false };
   }
+  const multipleKeysDetected =
+    (key.match(/AQ\./g) || []).length > 1 || (key.match(/AIza/g) || []).length > 1;
   if (key.startsWith('AIza')) {
-    return { configured: true, format: 'google_aiza', length: key.length };
+    return { configured: true, format: 'google_aiza', length: key.length, multipleKeysDetected };
   }
   if (key.startsWith('AQ.')) {
-    return { configured: true, format: 'aistudio_aq', length: key.length };
+    return { configured: true, format: 'aistudio_aq', length: key.length, multipleKeysDetected };
   }
-  return { configured: true, format: 'unexpected_format', length: key.length };
+  return { configured: true, format: 'unexpected_format', length: key.length, multipleKeysDetected };
 }
 
 function extractGeminiErrorMetadata(err: any): {
@@ -276,13 +292,28 @@ export function classifyGeminiProviderError(
     );
   }
 
-  if (/API_KEY_INVALID/i.test(reason) || /API key not valid|API_KEY_INVALID/i.test(combined)) {
+  if (
+    /API_KEY_INVALID|ACCESS_TOKEN_TYPE_UNSUPPORTED/i.test(reason) ||
+    /API key not valid|API_KEY_INVALID|ACCESS_TOKEN_TYPE_UNSUPPORTED/i.test(combined)
+  ) {
     const keyMeta = inspectGeminiKeyFormat(process.env.GEMINI_API_KEY);
-    const runtimeHint = process.env.K_SERVICE ? 'Cloud Run / App Hosting' : 'Serveur AI Studio / local';
+    const kService = String(process.env.K_SERVICE || '');
+    const runtimeHint = kService.startsWith('ais-dev-')
+      ? 'AI Studio Dev'
+      : kService.startsWith('ais-pre-')
+      ? 'AI Studio Shared App'
+      : kService
+      ? 'Cloud Run / App Hosting'
+      : 'Serveur local';
+    const extraHint = keyMeta.multipleKeysDetected
+      ? ' — plusieurs clés semblent collées bout à bout'
+      : keyMeta.format === 'aistudio_aq' && keyMeta.length !== 53
+      ? ' — format AQ inhabituel pour cette longueur ; utilisez une clé API Google AI Studio (AIza..., 39 car.) dans Secret Manager'
+      : '';
     return new KycGeminiAnalysisError(
       'GEMINI_AUTH_ERROR',
       502,
-      `Échec d'authentification Gemini : la valeur de GEMINI_API_KEY est invalide, malformée ou révoquée (API_KEY_INVALID) [format : ${keyMeta.format}, longueur : ${keyMeta.length}, environnement : ${runtimeHint}]. Vérifiez ou remplacez la clé dans Paramètres > Secrets (ou Secret Manager GEMINI_API_KEY sur App Hosting puis redéployez).`
+      `Échec d'authentification Gemini : la valeur de GEMINI_API_KEY est invalide, malformée ou révoquée (${reason || 'API_KEY_INVALID'}) [format : ${keyMeta.format}, longueur : ${keyMeta.length}, environnement : ${runtimeHint}${extraHint}]. Vérifiez ou remplacez la clé dans Paramètres > Secrets (ou Secret Manager GEMINI_API_KEY sur App Hosting puis redéployez).`
     );
   }
 
