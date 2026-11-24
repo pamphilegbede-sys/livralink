@@ -1,6 +1,19 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
+import { useApp, type AppView } from '../../context/AppContext';
 import { LivraLinkLogo } from './LivraLinkLogo';
+import { preloadView } from '../../utils/viewPreloader';
+
+const preloadHandlers = (view: AppView) => ({
+  onMouseEnter: () => {
+    void preloadView(view);
+  },
+  onFocus: () => {
+    void preloadView(view);
+  },
+  onTouchStart: () => {
+    void preloadView(view);
+  },
+});
 
 export const Sidebar: React.FC = () => {
   const {
@@ -80,6 +93,7 @@ export const Sidebar: React.FC = () => {
         {effectiveNavRole === 'vendeur' && (
           <button
             onClick={() => setCurrentView('vendeur_new_delivery')}
+            {...preloadHandlers('vendeur_new_delivery')}
             className="mb-5 w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm active:scale-95 transition-all"
           >
             <span className="material-symbols-outlined text-lg">add</span>
@@ -120,6 +134,7 @@ export const Sidebar: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCurrentView('vendeur_dashboard')}
+                {...preloadHandlers('vendeur_dashboard')}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'vendeur_dashboard'
                     ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
@@ -133,6 +148,7 @@ export const Sidebar: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCurrentView('vendeur_tracking')}
+                {...preloadHandlers('vendeur_tracking')}
                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'vendeur_tracking'
                     ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
@@ -149,6 +165,7 @@ export const Sidebar: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCurrentView('vendeur_reports')}
+                {...preloadHandlers('vendeur_reports')}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'vendeur_reports'
                     ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
@@ -162,6 +179,7 @@ export const Sidebar: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCurrentView('vendeur_chat')}
+                {...preloadHandlers('vendeur_chat')}
                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'vendeur_chat'
                     ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
@@ -178,6 +196,7 @@ export const Sidebar: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCurrentView('vendeur_settings')}
+                {...preloadHandlers('vendeur_settings')}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'vendeur_settings'
                     ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
@@ -250,6 +269,7 @@ export const Sidebar: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCurrentView('livreur_dashboard')}
+                {...preloadHandlers('livreur_dashboard')}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'livreur_dashboard'
                     ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
@@ -266,6 +286,7 @@ export const Sidebar: React.FC = () => {
                   setCourierMissionsFilter('en_attente');
                   setCurrentView('livreur_missions');
                 }}
+                {...preloadHandlers('livreur_missions')}
                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'livreur_missions' && (courierMissionsFilter === 'en_attente' || courierMissionsFilter === 'all')
                     ? 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 font-bold shadow-xs'
@@ -325,6 +346,7 @@ export const Sidebar: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCurrentView('livreur_wallet')}
+                {...preloadHandlers('livreur_wallet')}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'livreur_wallet'
                     ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
@@ -338,6 +360,7 @@ export const Sidebar: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCurrentView('livreur_chat')}
+                {...preloadHandlers('livreur_chat')}
                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'livreur_chat'
                     ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'
@@ -354,6 +377,7 @@ export const Sidebar: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCurrentView('livreur_settings')}
+                {...preloadHandlers('livreur_settings')}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   currentView === 'livreur_settings'
                     ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-bold shadow-xs'

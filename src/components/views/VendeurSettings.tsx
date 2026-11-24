@@ -304,6 +304,9 @@ export const VendeurSettings: React.FC = () => {
             </div>
           </div>
 
+          {/* Quick Manual Theme Switcher (Light / Dark / System) — always accessible */}
+          <DarkModeToggle compact className="shadow-2xs" />
+
           {/* Validation Diagnostics Report (if run) */}
           {testResults && (
             <div className="p-4 sm:p-5 rounded-3xl bg-slate-900 text-white shadow-xl space-y-3 border border-purple-500/30 animate-fade-in">
@@ -766,8 +769,8 @@ export const VendeurSettings: React.FC = () => {
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-xs space-y-6 animate-fade-in">
               {/* Dark Mode Toggle */}
               <DarkModeToggle
-                title="Mode Sombre &amp; Apparence"
-                subtitle="Basculez facilement entre le mode clair et le mode sombre pour un confort visuel optimal."
+                title="Apparence &amp; Thème (Clair / Sombre / Système)"
+                subtitle="Surchargez manuellement la détection automatique système ou laissez l'application suivre votre appareil."
               />
 
               {/* Notification Preferences */}

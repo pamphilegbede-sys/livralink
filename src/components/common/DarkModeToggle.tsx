@@ -12,64 +12,88 @@ export const DarkModeToggle: React.FC<{
   className = "",
   compact = false
 }) => {
-  const { isDarkMode, themeMode, setThemeMode } = useApp();
+  const { isDarkMode, themeMode, systemTheme, setThemeMode } = useApp();
+  const resolvedSystemLabel = systemTheme === 'dark' ? 'Sombre' : 'Clair';
+  const isManualOverride = themeMode !== 'system';
 
   if (compact) {
     return (
-      <div className={`flex items-center justify-between gap-3 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 transition-colors ${className}`}>
+      <div
+        data-testid="theme-switcher-compact"
+        className={`flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 transition-colors ${className}`}
+      >
         <div className="flex items-center gap-2.5 min-w-0">
           <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${isDarkMode ? 'bg-indigo-500/20 text-indigo-400' : 'bg-amber-100 text-amber-600'}`}>
             <span className="material-symbols-outlined text-lg">
               {themeMode === 'system' ? 'desktop_windows' : isDarkMode ? 'dark_mode' : 'light_mode'}
             </span>
           </div>
-          <div className="truncate">
+          <div className="min-w-0">
             <p className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">
-              {themeMode === 'system' ? 'Thème Système (Auto)' : isDarkMode ? 'Mode Sombre Activé' : 'Mode Clair Activé'}
+              {themeMode === 'system'
+                ? 'Thème Système (Auto)'
+                : isDarkMode
+                ? 'Surcharge manuelle : Sombre'
+                : 'Surcharge manuelle : Clair'}
             </p>
             <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-              {themeMode === 'system' ? `Aligné sur l'appareil (${isDarkMode ? 'Sombre' : 'Clair'})` : 'Synchronisation globale'}
+              {themeMode === 'system'
+                ? `Détection auto active (${resolvedSystemLabel})`
+                : `Remplace le thème système (${resolvedSystemLabel})`}
             </p>
           </div>
         </div>
 
-        {/* 3-Pill Switch */}
-        <div className="flex items-center p-1 rounded-xl bg-slate-200 dark:bg-slate-900 border border-slate-300 dark:border-slate-800">
+        {/* 3-Segment Switch: Light / Dark / System */}
+        <div
+          role="group"
+          aria-label="Sélecteur manuel de thème (Clair, Sombre, Système)"
+          className="flex items-center p-1 rounded-xl bg-slate-200 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 shrink-0"
+        >
           <button
             type="button"
+            data-theme-option="light"
+            aria-pressed={themeMode === 'light'}
             onClick={() => setThemeMode('light')}
-            className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
               themeMode === 'light'
                 ? 'bg-white text-amber-600 shadow-xs dark:bg-slate-800 dark:text-amber-400'
-                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
             }`}
-            title="Thème Clair"
+            title="Forcer le thème Clair"
           >
-            ☀️
+            <span>☀️</span>
+            <span>Clair</span>
           </button>
           <button
             type="button"
+            data-theme-option="dark"
+            aria-pressed={themeMode === 'dark'}
             onClick={() => setThemeMode('dark')}
-            className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
               themeMode === 'dark'
                 ? 'bg-indigo-600 text-white shadow-xs'
-                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
             }`}
-            title="Thème Sombre"
+            title="Forcer le thème Sombre"
           >
-            🌙
+            <span>🌙</span>
+            <span>Sombre</span>
           </button>
           <button
             type="button"
+            data-theme-option="system"
+            aria-pressed={themeMode === 'system'}
             onClick={() => setThemeMode('system')}
-            className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
               themeMode === 'system'
                 ? 'bg-blue-600 text-white shadow-xs'
-                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
             }`}
-            title="Thème Système (Automatique)"
+            title={`Suivre la préférence système (${resolvedSystemLabel})`}
           >
-            💻
+            <span>💻</span>
+            <span>Système</span>
           </button>
         </div>
       </div>
@@ -77,7 +101,10 @@ export const DarkModeToggle: React.FC<{
   }
 
   return (
-    <section className={`bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-xs transition-colors duration-200 space-y-5 ${className}`}>
+    <section
+      data-testid="theme-switcher-full"
+      className={`bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-xs transition-colors duration-200 space-y-5 ${className}`}
+    >
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
         <div className="flex items-center gap-3">
@@ -87,7 +114,7 @@ export const DarkModeToggle: React.FC<{
             </span>
           </div>
           <div>
-            <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            <h2 className="text-base font-bold text-slate-900 dark:text-white flex flex-wrap items-center gap-2">
               <span>{title}</span>
               <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                 themeMode === 'system'
@@ -96,7 +123,11 @@ export const DarkModeToggle: React.FC<{
                   ? 'bg-indigo-950 text-indigo-300 border border-indigo-700/50'
                   : 'bg-amber-50 text-amber-700 border border-amber-200'
               }`}>
-                {themeMode === 'system' ? '💻 Système (Auto)' : isDarkMode ? '🌙 Sombre' : '☀️ Clair'}
+                {themeMode === 'system'
+                  ? `💻 Système (Auto · ${resolvedSystemLabel})`
+                  : isDarkMode
+                  ? '🌙 Surcharge manuelle : Sombre'
+                  : '☀️ Surcharge manuelle : Clair'}
               </span>
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -105,22 +136,33 @@ export const DarkModeToggle: React.FC<{
           </div>
         </div>
 
-        {/* Active status indicator */}
-        <div className="flex items-center gap-2">
+        {/* Active status indicator & quick reset to System */}
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
             Mode effectif :
           </span>
           <span className={`px-2.5 py-1 rounded-xl text-xs font-bold ${isDarkMode ? 'bg-slate-800 text-indigo-300 border border-slate-700' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>
             {isDarkMode ? '🌙 Sombre (#090d16)' : '☀️ Clair (#faf8ff)'}
           </span>
+          {isManualOverride && (
+            <button
+              type="button"
+              onClick={() => setThemeMode('system')}
+              className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/60 cursor-pointer transition-colors"
+            >
+              Revenir en Auto
+            </button>
+          )}
         </div>
       </div>
 
       {/* 3 Interactive Selection Cards: Light, Dark, System */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div role="group" aria-label="Choix du thème (Clair, Sombre, Système)" className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {/* 1. Light Mode Card */}
         <button
           type="button"
+          data-theme-option="light"
+          aria-pressed={themeMode === 'light'}
           onClick={() => setThemeMode('light')}
           className={`p-4 rounded-2xl border text-left transition-all relative overflow-hidden flex flex-col justify-between gap-3 cursor-pointer active:scale-98 ${
             themeMode === 'light'
@@ -152,6 +194,8 @@ export const DarkModeToggle: React.FC<{
         {/* 2. Dark Mode Card */}
         <button
           type="button"
+          data-theme-option="dark"
+          aria-pressed={themeMode === 'dark'}
           onClick={() => setThemeMode('dark')}
           className={`p-4 rounded-2xl border text-left transition-all relative overflow-hidden flex flex-col justify-between gap-3 cursor-pointer active:scale-98 ${
             themeMode === 'dark'
@@ -183,6 +227,8 @@ export const DarkModeToggle: React.FC<{
         {/* 3. System Mode Card */}
         <button
           type="button"
+          data-theme-option="system"
+          aria-pressed={themeMode === 'system'}
           onClick={() => setThemeMode('system')}
           className={`p-4 rounded-2xl border text-left transition-all relative overflow-hidden flex flex-col justify-between gap-3 cursor-pointer active:scale-98 ${
             themeMode === 'system'
@@ -202,7 +248,7 @@ export const DarkModeToggle: React.FC<{
             )}
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Suit automatiquement le thème configuré sur votre smartphone iOS/Android ou PC.
+            Suit automatiquement l&apos;appareil (actuellement détecté : <strong className="text-slate-700 dark:text-slate-200">{resolvedSystemLabel}</strong>).
           </p>
           <div className="h-7 w-full rounded-lg bg-gradient-to-r from-white to-slate-950 border border-slate-300 dark:border-slate-700 flex items-center px-2 gap-1.5 shadow-2xs">
             <div className="w-2.5 h-2.5 rounded-full bg-emerald-500"></div>

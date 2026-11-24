@@ -1,6 +1,19 @@
 import React, { useState } from 'react';
-import { useApp } from '../../context/AppContext';
+import { useApp, type AppView } from '../../context/AppContext';
 import { LivraLinkLogo } from './LivraLinkLogo';
+import { preloadView, preloadViews } from '../../utils/viewPreloader';
+
+const preloadHandlers = (view: AppView) => ({
+  onMouseEnter: () => {
+    void preloadView(view);
+  },
+  onFocus: () => {
+    void preloadView(view);
+  },
+  onTouchStart: () => {
+    void preloadView(view);
+  },
+});
 
 export const Header: React.FC<{
   title?: string;
@@ -48,7 +61,19 @@ export const Header: React.FC<{
 
           <button
             type="button"
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            onClick={() => {
+              const nextOpen = !isMobileMenuOpen;
+              setIsMobileMenuOpen(nextOpen);
+              if (nextOpen) {
+                void preloadViews(
+                  effectiveNavRole === 'vendeur'
+                    ? ['vendeur_dashboard', 'vendeur_settings', 'vendeur_new_delivery', 'vendeur_tracking', 'vendeur_reports', 'vendeur_chat']
+                    : effectiveNavRole === 'livreur'
+                    ? ['livreur_dashboard', 'livreur_settings', 'livreur_missions', 'livreur_wallet', 'livreur_chat']
+                    : ['admin_console']
+                );
+              }
+            }}
             className="sm:hidden p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-95 shrink-0 cursor-pointer shadow-2xs"
             title="Ouvrir le menu de navigation"
             aria-label="Ouvrir le menu de navigation"
@@ -64,6 +89,7 @@ export const Header: React.FC<{
                   {b.view ? (
                     <button
                       onClick={() => setCurrentView(b.view)}
+                      {...preloadHandlers(b.view)}
                       className="hover:text-blue-600 transition-colors"
                     >
                       {b.label}
@@ -103,6 +129,7 @@ export const Header: React.FC<{
             {effectiveNavRole !== 'admin' && (
               <button
                 onClick={() => setCurrentView(effectiveNavRole === 'vendeur' ? 'vendeur_chat' : 'livreur_chat')}
+                {...preloadHandlers(effectiveNavRole === 'vendeur' ? 'vendeur_chat' : 'livreur_chat')}
                 className="p-1.5 sm:p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 transition-colors relative cursor-pointer active:scale-95"
                 title="Messagerie Directe Chat Vendeur-Livreur"
                 aria-label="Messagerie Directe"
@@ -142,6 +169,7 @@ export const Header: React.FC<{
           {effectiveNavRole === 'vendeur' && currentView !== 'vendeur_new_delivery' && (
             <button
               onClick={() => setCurrentView('vendeur_new_delivery')}
+              {...preloadHandlers('vendeur_new_delivery')}
               className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all"
             >
               <span className="material-symbols-outlined text-base">add</span>
@@ -168,6 +196,7 @@ export const Header: React.FC<{
                   <>
                     <button
                       onClick={() => { setCurrentView('vendeur_dashboard'); setIsMobileMenuOpen(false); }}
+                      {...preloadHandlers('vendeur_dashboard')}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'vendeur_dashboard' ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 font-bold' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                     >
                       <span className="material-symbols-outlined text-lg">dashboard</span>
@@ -175,6 +204,7 @@ export const Header: React.FC<{
                     </button>
                     <button
                       onClick={() => { setCurrentView('vendeur_new_delivery'); setIsMobileMenuOpen(false); }}
+                      {...preloadHandlers('vendeur_new_delivery')}
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold bg-blue-600 text-white shadow-sm active:scale-95 transition-transform"
                     >
                       <span className="material-symbols-outlined text-lg">add</span>
@@ -182,6 +212,7 @@ export const Header: React.FC<{
                     </button>
                     <button
                       onClick={() => { setCurrentView('vendeur_tracking'); setIsMobileMenuOpen(false); }}
+                      {...preloadHandlers('vendeur_tracking')}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'vendeur_tracking' ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 font-bold' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                     >
                       <span className="material-symbols-outlined text-lg">local_shipping</span>
@@ -189,6 +220,7 @@ export const Header: React.FC<{
                     </button>
                     <button
                       onClick={() => { setCurrentView('vendeur_reports'); setIsMobileMenuOpen(false); }}
+                      {...preloadHandlers('vendeur_reports')}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'vendeur_reports' ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 font-bold' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                     >
                       <span className="material-symbols-outlined text-lg">insights</span>
@@ -196,6 +228,7 @@ export const Header: React.FC<{
                     </button>
                     <button
                       onClick={() => { setCurrentView('vendeur_chat'); setIsMobileMenuOpen(false); }}
+                      {...preloadHandlers('vendeur_chat')}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'vendeur_chat' ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 font-bold' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                     >
                       <span className="material-symbols-outlined text-lg">forum</span>
@@ -203,6 +236,7 @@ export const Header: React.FC<{
                     </button>
                     <button
                       onClick={() => { setCurrentView('vendeur_settings'); setIsMobileMenuOpen(false); }}
+                      {...preloadHandlers('vendeur_settings')}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'vendeur_settings' ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 font-bold' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                     >
                       <span className="material-symbols-outlined text-lg">settings</span>
@@ -215,6 +249,7 @@ export const Header: React.FC<{
                   <>
                     <button
                       onClick={() => { setCurrentView('livreur_dashboard'); setIsMobileMenuOpen(false); }}
+                      {...preloadHandlers('livreur_dashboard')}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'livreur_dashboard' ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 font-bold' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                     >
                       <span className="material-symbols-outlined text-lg">dashboard</span>
@@ -226,6 +261,7 @@ export const Header: React.FC<{
                         setCurrentView('livreur_missions');
                         setIsMobileMenuOpen(false);
                       }}
+                      {...preloadHandlers('livreur_missions')}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'livreur_missions' && (courierMissionsFilter === 'en_attente' || courierMissionsFilter === 'all') ? 'bg-emerald-50 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 font-bold' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                     >
                       <span className="material-symbols-outlined text-lg">two_wheeler</span>
@@ -237,6 +273,7 @@ export const Header: React.FC<{
                         setCurrentView('livreur_missions');
                         setIsMobileMenuOpen(false);
                       }}
+                      {...preloadHandlers('livreur_missions')}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'livreur_missions' && courierMissionsFilter === 'en_cours' ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 font-bold' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                     >
                       <span className="material-symbols-outlined text-lg">local_shipping</span>
@@ -248,6 +285,7 @@ export const Header: React.FC<{
                         setCurrentView('livreur_missions');
                         setIsMobileMenuOpen(false);
                       }}
+                      {...preloadHandlers('livreur_missions')}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'livreur_missions' && courierMissionsFilter === 'livree' ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 font-bold' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                     >
                       <span className="material-symbols-outlined text-lg">history</span>
@@ -255,6 +293,7 @@ export const Header: React.FC<{
                     </button>
                     <button
                       onClick={() => { setCurrentView('livreur_wallet'); setIsMobileMenuOpen(false); }}
+                      {...preloadHandlers('livreur_wallet')}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'livreur_wallet' ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 font-bold' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                     >
                       <span className="material-symbols-outlined text-lg">account_balance_wallet</span>
@@ -262,6 +301,7 @@ export const Header: React.FC<{
                     </button>
                     <button
                       onClick={() => { setCurrentView('livreur_chat'); setIsMobileMenuOpen(false); }}
+                      {...preloadHandlers('livreur_chat')}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'livreur_chat' ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 font-bold' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                     >
                       <span className="material-symbols-outlined text-lg">forum</span>
@@ -269,6 +309,7 @@ export const Header: React.FC<{
                     </button>
                     <button
                       onClick={() => { setCurrentView('livreur_settings'); setIsMobileMenuOpen(false); }}
+                      {...preloadHandlers('livreur_settings')}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${currentView === 'livreur_settings' ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 font-bold' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                     >
                       <span className="material-symbols-outlined text-lg">settings</span>

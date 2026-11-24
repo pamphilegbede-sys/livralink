@@ -1,6 +1,19 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
+import { useApp, type AppView } from '../../context/AppContext';
 import { filterVendorDeliveries } from '../../utils/deliveryIsolation';
+import { preloadView } from '../../utils/viewPreloader';
+
+const preloadHandlers = (view: AppView) => ({
+  onMouseEnter: () => {
+    void preloadView(view);
+  },
+  onFocus: () => {
+    void preloadView(view);
+  },
+  onTouchStart: () => {
+    void preloadView(view);
+  },
+});
 
 export const MobileBottomNav: React.FC = () => {
   const {
@@ -260,6 +273,7 @@ export const MobileBottomNav: React.FC = () => {
         {/* Destination 1: Tableau de bord */}
         <button
           onClick={() => setCurrentView(effectiveNavRole === 'vendeur' ? 'vendeur_dashboard' : 'livreur_dashboard')}
+          {...preloadHandlers(effectiveNavRole === 'vendeur' ? 'vendeur_dashboard' : 'livreur_dashboard')}
           className={`flex flex-col items-center justify-center py-1 transition-colors ${
             currentView === 'vendeur_dashboard' || currentView === 'livreur_dashboard'
               ? 'text-blue-600 dark:text-blue-400 font-bold'
@@ -280,6 +294,7 @@ export const MobileBottomNav: React.FC = () => {
               setCurrentView('livreur_missions');
             }
           }}
+          {...preloadHandlers(effectiveNavRole === 'vendeur' ? 'vendeur_tracking' : 'livreur_missions')}
           className={`flex flex-col items-center justify-center py-1 transition-colors relative ${
             currentView === 'vendeur_tracking' || currentView === 'livreur_missions'
               ? 'text-blue-600 dark:text-blue-400 font-bold'
@@ -301,6 +316,7 @@ export const MobileBottomNav: React.FC = () => {
         {effectiveNavRole === 'vendeur' ? (
           <button
             onClick={() => setCurrentView('vendeur_new_delivery')}
+            {...preloadHandlers('vendeur_new_delivery')}
             className="flex flex-col items-center justify-center text-blue-600 dark:text-blue-400 py-1 transition-transform active:scale-95"
           >
             <div className="w-10 h-10 -mt-4 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg ring-4 ring-white dark:ring-slate-900">
@@ -314,6 +330,7 @@ export const MobileBottomNav: React.FC = () => {
               setCourierMissionsFilter('en_attente');
               setCurrentView('livreur_missions');
             }}
+            {...preloadHandlers('livreur_missions')}
             className="flex flex-col items-center justify-center text-emerald-600 dark:text-emerald-400 py-1 transition-transform active:scale-95"
           >
             <div className="w-10 h-10 -mt-4 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-lg ring-4 ring-white dark:ring-slate-900">
@@ -326,6 +343,7 @@ export const MobileBottomNav: React.FC = () => {
         {/* Destination 4: Messagerie Directe Chat */}
         <button
           onClick={() => setCurrentView(effectiveNavRole === 'vendeur' ? 'vendeur_chat' : 'livreur_chat')}
+          {...preloadHandlers(effectiveNavRole === 'vendeur' ? 'vendeur_chat' : 'livreur_chat')}
           className={`flex flex-col items-center justify-center py-1 transition-colors relative ${
             currentView === 'vendeur_chat' || currentView === 'livreur_chat'
               ? 'text-blue-600 dark:text-blue-400 font-bold'
@@ -342,6 +360,7 @@ export const MobileBottomNav: React.FC = () => {
         {/* Destination 5: Profil / Réglages */}
         <button
           onClick={() => setCurrentView(effectiveNavRole === 'vendeur' ? 'vendeur_settings' : 'livreur_settings')}
+          {...preloadHandlers(effectiveNavRole === 'vendeur' ? 'vendeur_settings' : 'livreur_settings')}
           className={`flex flex-col items-center justify-center py-1 transition-colors ${
             currentView === 'vendeur_settings' || currentView === 'livreur_settings'
               ? 'text-blue-600 dark:text-blue-400 font-bold'

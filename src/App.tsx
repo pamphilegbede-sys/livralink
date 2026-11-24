@@ -10,35 +10,61 @@ import { LandingPage } from './components/views/LandingPage';
 import { NotFoundView } from './components/views/NotFoundView';
 import { applySeoMetadata } from './config/seo';
 import { canAccessVendorSpace, canAccessCourierSpace } from './utils/deliveryIsolation';
+import {
+  lazyWithPreload,
+  registerViewPreloaders,
+  schedulePriorityViewsForView,
+  preloadViews,
+  shouldSkipBackgroundPreload,
+} from './utils/viewPreloader';
 
-// Lazy-loaded Views for ultra-fast initial load & reduced bundle size
-const LoginVendeurPage = React.lazy(() => import('./components/views/LoginVendeurPage').then(m => ({ default: m.LoginVendeurPage })));
-const LoginLivreurPage = React.lazy(() => import('./components/views/LoginLivreurPage').then(m => ({ default: m.LoginLivreurPage })));
-const RegisterPage = React.lazy(() => import('./components/views/RegisterPage').then(m => ({ default: m.RegisterPage })));
-const VendeurDashboard = React.lazy(() => import('./components/views/VendeurDashboard').then(m => ({ default: m.VendeurDashboard })));
-const VendeurNewDelivery = React.lazy(() => import('./components/views/VendeurNewDelivery').then(m => ({ default: m.VendeurNewDelivery })));
-const VendeurTracking = React.lazy(() => import('./components/views/VendeurTracking').then(m => ({ default: m.VendeurTracking })));
-const VendeurReports = React.lazy(() => import('./components/views/VendeurReports').then(m => ({ default: m.VendeurReports })));
-const VendeurSettings = React.lazy(() => import('./components/views/VendeurSettings').then(m => ({ default: m.VendeurSettings })));
-const LivreurDashboard = React.lazy(() => import('./components/views/LivreurDashboard').then(m => ({ default: m.LivreurDashboard })));
-const LivreurMissions = React.lazy(() => import('./components/views/LivreurMissions').then(m => ({ default: m.LivreurMissions })));
-const LivreurWallet = React.lazy(() => import('./components/views/LivreurWallet').then(m => ({ default: m.LivreurWallet })));
-const LivreurSettings = React.lazy(() => import('./components/views/LivreurSettings').then(m => ({ default: m.LivreurSettings })));
-const AdminConsole = React.lazy(() => import('./components/views/AdminConsole').then(m => ({ default: m.AdminConsole })));
+// Lazy-loaded Views with deterministic `.preload()` support for instant Suspense transitions
+const LoginVendeurPage = lazyWithPreload(() => import('./components/views/LoginVendeurPage').then(m => ({ default: m.LoginVendeurPage })));
+const LoginLivreurPage = lazyWithPreload(() => import('./components/views/LoginLivreurPage').then(m => ({ default: m.LoginLivreurPage })));
+const RegisterPage = lazyWithPreload(() => import('./components/views/RegisterPage').then(m => ({ default: m.RegisterPage })));
+const VendeurDashboard = lazyWithPreload(() => import('./components/views/VendeurDashboard').then(m => ({ default: m.VendeurDashboard })));
+const VendeurNewDelivery = lazyWithPreload(() => import('./components/views/VendeurNewDelivery').then(m => ({ default: m.VendeurNewDelivery })));
+const VendeurTracking = lazyWithPreload(() => import('./components/views/VendeurTracking').then(m => ({ default: m.VendeurTracking })));
+const VendeurReports = lazyWithPreload(() => import('./components/views/VendeurReports').then(m => ({ default: m.VendeurReports })));
+const VendeurSettings = lazyWithPreload(() => import('./components/views/VendeurSettings').then(m => ({ default: m.VendeurSettings })));
+const LivreurDashboard = lazyWithPreload(() => import('./components/views/LivreurDashboard').then(m => ({ default: m.LivreurDashboard })));
+const LivreurMissions = lazyWithPreload(() => import('./components/views/LivreurMissions').then(m => ({ default: m.LivreurMissions })));
+const LivreurWallet = lazyWithPreload(() => import('./components/views/LivreurWallet').then(m => ({ default: m.LivreurWallet })));
+const LivreurSettings = lazyWithPreload(() => import('./components/views/LivreurSettings').then(m => ({ default: m.LivreurSettings })));
+const AdminConsole = lazyWithPreload(() => import('./components/views/AdminConsole').then(m => ({ default: m.AdminConsole })));
 
-const ChatView = React.lazy(() => import('./components/views/ChatView').then(m => ({ default: m.ChatView })));
+const ChatView = lazyWithPreload(() => import('./components/views/ChatView').then(m => ({ default: m.ChatView })));
+
+// Register priority preloaders so Sidebar, Header, MobileBottomNav, and idle scheduler share cached loaders
+registerViewPreloaders({
+  login_vendeur: LoginVendeurPage.preload,
+  login_livreur: LoginLivreurPage.preload,
+  register: RegisterPage.preload,
+  vendeur_dashboard: VendeurDashboard.preload,
+  vendeur_new_delivery: VendeurNewDelivery.preload,
+  vendeur_tracking: VendeurTracking.preload,
+  vendeur_reports: VendeurReports.preload,
+  vendeur_settings: VendeurSettings.preload,
+  vendeur_chat: ChatView.preload,
+  livreur_dashboard: LivreurDashboard.preload,
+  livreur_missions: LivreurMissions.preload,
+  livreur_wallet: LivreurWallet.preload,
+  livreur_settings: LivreurSettings.preload,
+  livreur_chat: ChatView.preload,
+  admin_console: AdminConsole.preload,
+});
 
 // Lazy-loaded Modals
-const PODValidationModal = React.lazy(() => import('./components/modals/PODValidationModal').then(m => ({ default: m.PODValidationModal })));
-const WhatsAppPreviewModal = React.lazy(() => import('./components/modals/WhatsAppPreviewModal').then(m => ({ default: m.WhatsAppPreviewModal })));
-const UrgentMissionModal = React.lazy(() => import('./components/modals/UrgentMissionModal').then(m => ({ default: m.UrgentMissionModal })));
-const FirebaseTestModal = React.lazy(() => import('./components/modals/FirebaseTestModal').then(m => ({ default: m.FirebaseTestModal })));
-const EmailNotificationCenterModal = React.lazy(() => import('./components/modals/EmailNotificationCenterModal').then(m => ({ default: m.EmailNotificationCenterModal })));
-const NotificationCenterModal = React.lazy(() => import('./components/modals/NotificationCenterModal').then(m => ({ default: m.NotificationCenterModal })));
-const LivreurSearchModal = React.lazy(() => import('./components/modals/LivreurSearchModal').then(m => ({ default: m.LivreurSearchModal })));
-const KYCSubmissionModal = React.lazy(() => import('./components/modals/KYCSubmissionModal').then(m => ({ default: m.KYCSubmissionModal })));
-const RateLivreurModal = React.lazy(() => import('./components/modals/RateLivreurModal').then(m => ({ default: m.RateLivreurModal })));
-const ChatModal = React.lazy(() => import('./components/modals/ChatModal').then(m => ({ default: m.ChatModal })));
+const PODValidationModal = lazyWithPreload(() => import('./components/modals/PODValidationModal').then(m => ({ default: m.PODValidationModal })));
+const WhatsAppPreviewModal = lazyWithPreload(() => import('./components/modals/WhatsAppPreviewModal').then(m => ({ default: m.WhatsAppPreviewModal })));
+const UrgentMissionModal = lazyWithPreload(() => import('./components/modals/UrgentMissionModal').then(m => ({ default: m.UrgentMissionModal })));
+const FirebaseTestModal = lazyWithPreload(() => import('./components/modals/FirebaseTestModal').then(m => ({ default: m.FirebaseTestModal })));
+const EmailNotificationCenterModal = lazyWithPreload(() => import('./components/modals/EmailNotificationCenterModal').then(m => ({ default: m.EmailNotificationCenterModal })));
+const NotificationCenterModal = lazyWithPreload(() => import('./components/modals/NotificationCenterModal').then(m => ({ default: m.NotificationCenterModal })));
+const LivreurSearchModal = lazyWithPreload(() => import('./components/modals/LivreurSearchModal').then(m => ({ default: m.LivreurSearchModal })));
+const KYCSubmissionModal = lazyWithPreload(() => import('./components/modals/KYCSubmissionModal').then(m => ({ default: m.KYCSubmissionModal })));
+const RateLivreurModal = lazyWithPreload(() => import('./components/modals/RateLivreurModal').then(m => ({ default: m.RateLivreurModal })));
+const ChatModal = lazyWithPreload(() => import('./components/modals/ChatModal').then(m => ({ default: m.ChatModal })));
 
 const MainAppRouter: React.FC = () => {
   const { 
@@ -107,6 +133,23 @@ const MainAppRouter: React.FC = () => {
   useEffect(() => {
     applySeoMetadata(effectiveView);
   }, [effectiveView]);
+
+  // Priority View Preloading for React.Suspense: warm up Dashboard <-> Settings and adjacent routes
+  useEffect(() => {
+    if (isAuthLoading) return;
+    return schedulePriorityViewsForView(effectiveView);
+  }, [effectiveView, isAuthLoading]);
+
+  // As soon as role access is active, keep Dashboard & Settings chunks hot in background
+  useEffect(() => {
+    if (isAuthLoading || shouldSkipBackgroundPreload()) return;
+    if (canAccessVendeur && (effectiveView === 'vendeur_dashboard' || effectiveView === 'vendeur_settings')) {
+      void preloadViews(['vendeur_dashboard', 'vendeur_settings']);
+    }
+    if (canAccessLivreur && (effectiveView === 'livreur_dashboard' || effectiveView === 'livreur_settings')) {
+      void preloadViews(['livreur_dashboard', 'livreur_settings']);
+    }
+  }, [isAuthLoading, canAccessVendeur, canAccessLivreur, effectiveView]);
 
   const isCourierActive = Boolean(
     firebaseUser != null &&
