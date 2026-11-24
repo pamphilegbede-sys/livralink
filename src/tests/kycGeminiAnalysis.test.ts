@@ -592,6 +592,9 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
     assert.equal(normalizeGeminiApiKey("GEMINI_API_KEY='AIzaSyValidKey_123'"), 'AIzaSyValidKey_123');
     assert.equal(normalizeGeminiApiKey('\uFEFFexport GEMINI_API_KEY="AQ.Ab8RN6Sample_123";\r\n'), 'AQ.Ab8RN6Sample_123');
     assert.equal(normalizeGeminiApiKey('GEMINI_API_KEY: Bearer AIzaSyValidKey_456'), 'AIzaSyValidKey_456');
+    assert.equal(normalizeGeminiApiKey('{"GEMINI_API_KEY":"AIzaSyJsonSecret_789"}'), 'AIzaSyJsonSecret_789');
+    assert.equal(normalizeGeminiApiKey('{"apiKey":"AQ.JsonSample_321"}'), 'AQ.JsonSample_321');
+    assert.equal(normalizeGeminiApiKey('AIzaSy With Spaces 123'), 'AIzaSyWithSpaces123');
     assert.equal(normalizeGeminiApiKey('replace-with-server-gemini-api-key-if-used'), '');
     assert.equal(normalizeGeminiApiKey('your_gemini_api_key_here'), '');
     assert.equal(normalizeGeminiApiKey('""'), '');

@@ -141,6 +141,25 @@ export function normalizeGeminiApiKey(raw?: string): string {
     .replace(/[\r\n\t]+/g, '')
     .trim();
 
+  if (cleaned.startsWith('{') && cleaned.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(cleaned);
+      if (parsed && typeof parsed === 'object') {
+        const candidate =
+          parsed.GEMINI_API_KEY ??
+          parsed.gemini_api_key ??
+          parsed.apiKey ??
+          parsed.api_key ??
+          parsed.key;
+        if (typeof candidate === 'string') {
+          cleaned = candidate.trim();
+        }
+      }
+    } catch {
+      // Pas un objet JSON
+    }
+  }
+
   for (let i = 0; i < 3; i++) {
     const before = cleaned;
     while (
@@ -156,6 +175,8 @@ export function normalizeGeminiApiKey(raw?: string): string {
     cleaned = cleaned.replace(/;+$/, '').trim();
     if (cleaned === before) break;
   }
+
+  cleaned = cleaned.replace(/\s+/g, '');
 
   if (!cleaned || /^replace-with-/i.test(cleaned) || /^your[-_]/i.test(cleaned)) {
     return '';
@@ -256,10 +277,12 @@ export function classifyGeminiProviderError(
   }
 
   if (/API_KEY_INVALID/i.test(reason) || /API key not valid|API_KEY_INVALID/i.test(combined)) {
+    const keyMeta = inspectGeminiKeyFormat(process.env.GEMINI_API_KEY);
+    const runtimeHint = process.env.K_SERVICE ? 'Cloud Run / App Hosting' : 'Serveur AI Studio / local';
     return new KycGeminiAnalysisError(
       'GEMINI_AUTH_ERROR',
       502,
-      "Échec d'authentification Gemini : la valeur de GEMINI_API_KEY est invalide, malformée ou révoquée (API_KEY_INVALID). Vérifiez ou remplacez la clé dans Paramètres > Secrets (ou Secret Manager GEMINI_API_KEY sur App Hosting puis redéployez)."
+      `Échec d'authentification Gemini : la valeur de GEMINI_API_KEY est invalide, malformée ou révoquée (API_KEY_INVALID) [format : ${keyMeta.format}, longueur : ${keyMeta.length}, environnement : ${runtimeHint}]. Vérifiez ou remplacez la clé dans Paramètres > Secrets (ou Secret Manager GEMINI_API_KEY sur App Hosting puis redéployez).`
     );
   }
 
