@@ -8,6 +8,8 @@ import {
   normalizeGeminiApiKey,
   redactSensitiveForLogs,
   resetInMemoryGeminiGuardsForTests,
+  resolveKycCandidateModels,
+  resolveThinkingLevelForModel,
 } from '../server/kycGeminiAnalysis';
 
 process.env.NODE_ENV = 'test';
@@ -849,6 +851,81 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
     assert.equal('identifiedDocumentType' in body.aiAnalysis.documents.idBack, false);
     assert.equal('summary' in body.aiAnalysis.documents.idBack, false);
     assert.equal(store.kyc.get(uid)!.aiAnalysis.status, 'completed');
+  });
+
+  await t.test('13. Bascule automatique vers gemini-3.1-flash-lite lorsque gemini-4-hydrogen renvoie 503 UNAVAILABLE', async () => {
+    const uid = 'courier_503_fallback';
+    const files = new Map([
+      [`kyc/${uid}/id_front/id_front_1.jpg`, { contentType: 'image/jpeg', data: JPEG_BYTES }],
+    ]);
+    const { store, db, bucket } = createMockFirestoreAndStorage(
+      { kyc: new Map([[uid, buildFourDocDossier(uid)]]) },
+      files
+    );
+    serverMod.setFirestoreAdminForTests(db);
+    serverMod.setStorageBucketForTests(bucket);
+
+    const attemptedModels: string[] = [];
+    serverMod.setGeminiKycAnalyzerForTests(async ({ model }) => {
+      attemptedModels.push(model);
+      if (model === 'gemini-4-hydrogen') {
+        throw {
+          status: 503,
+          message: JSON.stringify({
+            error: {
+              code: 503,
+              message: 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.',
+              status: 'UNAVAILABLE',
+            },
+          }),
+        };
+      }
+      return {
+        text: JSON.stringify({
+          summary: 'Analyse complétée via modèle de secours.',
+          documents: {
+            idFront: { identifiedDocumentType: 'CIP', readabilityStatus: 'readable', extractionConfidence: 'high', anomalies: [] },
+          },
+          crossChecks: [],
+          warnings: [],
+          issues: [],
+          recommendations: [],
+        }),
+      };
+    });
+
+    const res = await fetch(`${baseUrl}/api/admin/kyc/${uid}/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer admin-token' },
+      body: JSON.stringify({ __testMaxRetries: 0 }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.deepEqual(attemptedModels, ['gemini-4-hydrogen', 'gemini-3.1-flash-lite']);
+    assert.equal(body.aiAnalysis.status, 'completed');
+    assert.equal(body.aiAnalysis.model, 'gemini-3.1-flash-lite');
+    assert.equal(store.kyc.get(uid)!.aiAnalysis.model, 'gemini-3.1-flash-lite');
+  });
+
+  await t.test('14. Classification lisible des erreurs 503 UNAVAILABLE et sélection thinkingLevel par modèle', () => {
+    const models = resolveKycCandidateModels();
+    assert.equal(models[0], 'gemini-4-hydrogen');
+    assert.equal(models.includes('gemini-3.1-flash-lite'), true);
+    assert.equal(resolveThinkingLevelForModel('gemini-4-hydrogen'), 'LOW');
+    assert.equal(resolveThinkingLevelForModel('gemini-3.1-flash-lite'), 'MINIMAL');
+
+    const overloadErr = classifyGeminiProviderError(
+      {
+        status: 503,
+        message: '{"error":{"code":503,"message":"This model is currently experiencing high demand.","status":"UNAVAILABLE"}}',
+      },
+      'gemini-4-hydrogen'
+    );
+    assert.equal(overloadErr.code, 'GEMINI_PROVIDER_ERROR');
+    assert.equal(overloadErr.retryable, true);
+    assert.match(overloadErr.message, /pic de charge temporaire/i);
+    assert.equal(overloadErr.message.includes('{"error"'), false);
   });
 });
 

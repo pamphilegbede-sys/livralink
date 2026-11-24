@@ -11,6 +11,30 @@ import type {
 } from '../types';
 
 export const DEFAULT_GEMINI_KYC_MODEL = 'gemini-4-hydrogen';
+export const FALLBACK_GEMINI_KYC_MODELS = ['gemini-3.1-flash-lite'] as const;
+
+export function resolveKycCandidateModels(primaryOverride?: string): string[] {
+  const primary = primaryOverride?.trim() || process.env.GEMINI_KYC_MODEL?.trim() || DEFAULT_GEMINI_KYC_MODEL;
+  const envFallbacks = String(process.env.GEMINI_KYC_FALLBACK_MODELS || '')
+    .split(',')
+    .map((m) => m.trim())
+    .filter(Boolean);
+  const fallbacks = envFallbacks.length > 0 ? envFallbacks : [...FALLBACK_GEMINI_KYC_MODELS];
+  const seen = new Set<string>();
+  const list: string[] = [];
+  for (const m of [primary, ...fallbacks]) {
+    if (m && !seen.has(m)) {
+      seen.add(m);
+      list.push(m);
+    }
+  }
+  return list;
+}
+
+export function resolveThinkingLevelForModel(modelName: string): ThinkingLevel {
+  return modelName === 'gemini-3.1-flash-lite' ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW;
+}
+
 const MAX_KYC_FILE_BYTES = 10 * 1024 * 1024;
 const LOCK_LEASE_MS = 90_000;
 const COOLDOWN_MS = 30_000;
@@ -347,6 +371,15 @@ export function classifyGeminiProviderError(
     );
   }
 
+  if (statusNum === 503 || /UNAVAILABLE|high demand|overloaded/i.test(combined)) {
+    return new KycGeminiAnalysisError(
+      'GEMINI_PROVIDER_ERROR',
+      502,
+      `Le modèle Gemini (${redactSensitiveForLogs(model)}) connaît actuellement un pic de charge temporaire (503 UNAVAILABLE). Veuillez cliquer sur « Relancer l'analyse » dans quelques instants.`,
+      true
+    );
+  }
+
   return new KycGeminiAnalysisError(
     'GEMINI_PROVIDER_ERROR',
     502,
@@ -357,6 +390,7 @@ export function classifyGeminiProviderError(
 
 /**
  * Effectue un appel minimal réel vers l'API Gemini depuis le backend pour valider GEMINI_API_KEY et le modèle.
+ * Si le modèle principal retourne 503 UNAVAILABLE, teste automatiquement le modèle de secours (gemini-3.1-flash-lite).
  * Ne journalise et ne retourne jamais la clé API.
  */
 export async function verifyGeminiBackendAuth(options?: {
@@ -366,7 +400,8 @@ export async function verifyGeminiBackendAuth(options?: {
   if (process.env.NODE_ENV === 'test' && testAuthVerifierOverride) {
     return testAuthVerifierOverride(options);
   }
-  const model = process.env.GEMINI_KYC_MODEL?.trim() || options?.model || DEFAULT_GEMINI_KYC_MODEL;
+  const candidateModels = resolveKycCandidateModels(options?.model);
+  const model = candidateModels[0];
   const keyMeta = inspectGeminiKeyFormat(process.env.GEMINI_API_KEY);
   const apiKey = normalizeGeminiApiKey(process.env.GEMINI_API_KEY);
   if (!apiKey) {
@@ -392,7 +427,7 @@ export async function verifyGeminiBackendAuth(options?: {
       model,
       contents: 'Réponds uniquement OK.',
       config: {
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        thinkingConfig: { thinkingLevel: resolveThinkingLevelForModel(model) },
         abortSignal: controller.signal,
       },
     });
@@ -407,7 +442,39 @@ export async function verifyGeminiBackendAuth(options?: {
   } catch (err: any) {
     const { statusNum, rpcStatus, rawMessage } = extractGeminiErrorMetadata(err);
     if (statusNum === 503 || /UNAVAILABLE/i.test(`${rpcStatus} ${rawMessage}`)) {
-      // Vérifie via models.list si la clé elle-même authentifie correctement malgré la surcharge temporaire du modèle
+      // Vérifie d'abord si un modèle de secours gratuit actif (ex: gemini-3.1-flash-lite) répond immédiatement
+      for (const fallbackModel of candidateModels.slice(1)) {
+        try {
+          const aiFallback = new GoogleGenAI({
+            apiKey,
+            vertexai: false,
+            httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+          });
+          const fallbackResp = await aiFallback.models.generateContent({
+            model: fallbackModel,
+            contents: 'Réponds uniquement OK.',
+            config: {
+              thinkingConfig: { thinkingLevel: resolveThinkingLevelForModel(fallbackModel) },
+              abortSignal: controller.signal,
+            },
+          });
+          if (fallbackResp.text !== undefined) {
+            return {
+              ok: true,
+              keyConfigured: true,
+              keyFormat: keyMeta.format,
+              model: fallbackModel,
+              httpStatus: 200,
+              code: 'GEMINI_FALLBACK_MODEL_READY',
+              message: `Clé GEMINI_API_KEY authentifiée (${keyMeta.format}). Le modèle principal (${model}) est temporairement surchargé (503), bascule automatique prête sur ${fallbackModel}.`,
+            };
+          }
+        } catch {
+          // Poursuit vers la vérification models.list
+        }
+      }
+
+      // Vérifie via models.list si la clé elle-même authentifie correctement malgré la surcharge temporaire des modèles
       try {
         const aiList = new GoogleGenAI({
           apiKey,
@@ -988,7 +1055,9 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
     fallbackCircuitFailure,
   } = options;
 
-  const model = process.env.GEMINI_KYC_MODEL?.trim() || DEFAULT_GEMINI_KYC_MODEL;
+  const candidateModels = resolveKycCandidateModels();
+  const model = candidateModels[0];
+  let effectiveModel = model;
   const apiKey = normalizeGeminiApiKey(process.env.GEMINI_API_KEY);
   const hasGenerator = Boolean(testGeneratorOverride || apiKey);
 
@@ -1406,7 +1475,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
       });
     }
 
-    // 4. Appel Gemini avec timeout + retry exponentiel sur erreurs transitoires
+    // 4. Appel Gemini avec timeout + retry exponentiel + bascule automatique vers modèle de secours (503/429/404)
     const runGeminiOnce: GeminiGeneratorFn =
       testGeneratorOverride ||
       (async ({ model: m, contents: c, systemInstruction, responseSchema, signal }) => {
@@ -1422,7 +1491,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
             systemInstruction,
             responseMimeType: 'application/json',
             responseSchema,
-            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            thinkingConfig: { thinkingLevel: resolveThinkingLevelForModel(m) },
             abortSignal: signal,
           },
         });
@@ -1439,94 +1508,127 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
       });
 
     let lastCallErr: any = null;
+    let lastAttemptedModel = model;
     let rawResult: GeminiRawGenerateResult | null = null;
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const abortController = new AbortController();
-      let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-      let timedOut = false;
-      try {
-        const timeoutPromise = new Promise<never>((_resolve, reject) => {
-          timeoutHandle = setTimeout(() => {
-            timedOut = true;
-            reject(
-              new KycGeminiAnalysisError(
-                'GEMINI_TIMEOUT',
-                504,
-                `Délai d'attente dépassé lors de l'analyse Gemini (${Math.round(timeoutMs / 1000)}s).`,
-                true
-              )
-            );
-            abortController.abort();
-          }, timeoutMs);
-        });
+    modelLoop: for (let modelIdx = 0; modelIdx < candidateModels.length; modelIdx++) {
+      const targetModel = candidateModels[modelIdx];
+      lastAttemptedModel = targetModel;
+      const attemptsForModel = modelIdx === 0 ? maxRetries + 1 : Math.min(2, maxRetries + 1);
 
-        rawResult = await Promise.race([
-          runGeminiOnce({
-            model,
-            contents,
-            systemInstruction: SYSTEM_INSTRUCTION,
-            responseSchema: GEMINI_KYC_RESPONSE_SCHEMA,
-            signal: abortController.signal,
-          }),
-          timeoutPromise,
-        ]);
-        break;
-      } catch (err: any) {
-        lastCallErr = err;
-        const statusNum = Number(err?.status || err?.httpStatus || 0);
-        const msg = String(err?.message || err || '');
-        const isTimeoutErr =
-          timedOut ||
-          abortController.signal.aborted ||
-          (err instanceof KycGeminiAnalysisError && err.code === 'GEMINI_TIMEOUT') ||
-          err?.name === 'AbortError';
+      for (let attempt = 0; attempt < attemptsForModel; attempt++) {
+        const abortController = new AbortController();
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+        let timedOut = false;
+        try {
+          const timeoutPromise = new Promise<never>((_resolve, reject) => {
+            timeoutHandle = setTimeout(() => {
+              timedOut = true;
+              reject(
+                new KycGeminiAnalysisError(
+                  'GEMINI_TIMEOUT',
+                  504,
+                  `Délai d'attente dépassé lors de l'analyse Gemini (${Math.round(timeoutMs / 1000)}s).`,
+                  true
+                )
+              );
+              abortController.abort();
+            }, timeoutMs);
+          });
 
-        const effectiveErr =
-          isTimeoutErr && !(err instanceof KycGeminiAnalysisError && err.code === 'GEMINI_TIMEOUT')
-            ? new KycGeminiAnalysisError(
-                'GEMINI_TIMEOUT',
-                504,
-                `Délai d'attente dépassé lors de l'analyse Gemini (${Math.round(timeoutMs / 1000)}s).`,
-                true
-              )
-            : err;
+          rawResult = await Promise.race([
+            runGeminiOnce({
+              model: targetModel,
+              contents,
+              systemInstruction: SYSTEM_INSTRUCTION,
+              responseSchema: GEMINI_KYC_RESPONSE_SCHEMA,
+              signal: abortController.signal,
+            }),
+            timeoutPromise,
+          ]);
+          effectiveModel = targetModel;
+          break modelLoop;
+        } catch (err: any) {
+          lastCallErr = err;
+          const { statusNum, rpcStatus, reason, rawMessage: msg } = extractGeminiErrorMetadata(err);
+          const isTimeoutErr =
+            timedOut ||
+            abortController.signal.aborted ||
+            (err instanceof KycGeminiAnalysisError && err.code === 'GEMINI_TIMEOUT') ||
+            err?.name === 'AbortError';
 
-        const isTransient =
-          isTimeoutErr ||
-          (effectiveErr instanceof KycGeminiAnalysisError
-            ? effectiveErr.retryable
-            : statusNum === 429 ||
+          const effectiveErr =
+            isTimeoutErr && !(err instanceof KycGeminiAnalysisError && err.code === 'GEMINI_TIMEOUT')
+              ? new KycGeminiAnalysisError(
+                  'GEMINI_TIMEOUT',
+                  504,
+                  `Délai d'attente dépassé lors de l'analyse Gemini (${Math.round(timeoutMs / 1000)}s).`,
+                  true
+                )
+              : err;
+
+          const isAuthFailure =
+            !(effectiveErr instanceof KycGeminiAnalysisError) &&
+            (statusNum === 400 ||
+              statusNum === 401 ||
+              statusNum === 403 ||
+              /API_KEY_INVALID|ACCESS_TOKEN_TYPE_UNSUPPORTED|PERMISSION_DENIED|UNAUTHENTICATED|API_KEY_HTTP_REFERRER_BLOCKED|API_KEY_SERVICE_BLOCKED|SERVICE_DISABLED/i.test(
+                `${rpcStatus} ${reason} ${msg}`
+              ));
+
+          const isCapacityOrModelUnavailable =
+            !isAuthFailure &&
+            (statusNum === 429 ||
               statusNum === 500 ||
               statusNum === 502 ||
               statusNum === 503 ||
-              statusNum === 504 ||
-              /429|503|500|UNAVAILABLE|RESOURCE_EXHAUSTED|DEADLINE_EXCEEDED|ECONNRESET|ETIMEDOUT|fetch failed|abort/i.test(
-                msg
-              ));
+              statusNum === 404 ||
+              /429|503|500|UNAVAILABLE|RESOURCE_EXHAUSTED|NOT_FOUND|high demand|overloaded/i.test(`${rpcStatus} ${msg}`));
 
-        if (isTransient && attempt < maxRetries) {
-          const backoffMs = 400 * Math.pow(2, attempt);
-          await new Promise((r) => setTimeout(r, backoffMs));
-          continue;
-        }
+          const isTransient =
+            isTimeoutErr ||
+            (effectiveErr instanceof KycGeminiAnalysisError
+              ? effectiveErr.retryable
+              : isCapacityOrModelUnavailable ||
+                /504|DEADLINE_EXCEEDED|ECONNRESET|ETIMEDOUT|fetch failed|abort/i.test(msg));
 
-        if (effectiveErr instanceof KycGeminiAnalysisError) {
-          throw effectiveErr;
+          if (isTransient && attempt + 1 < attemptsForModel) {
+            const backoffMs = 400 * Math.pow(2, attempt);
+            await new Promise((r) => setTimeout(r, backoffMs));
+            continue;
+          }
+
+          const canFallbackToNextModel =
+            modelIdx + 1 < candidateModels.length &&
+            !isAuthFailure &&
+            (isCapacityOrModelUnavailable || (isTimeoutErr && maxRetries > 0));
+
+          if (canFallbackToNextModel) {
+            console.warn(
+              `[KYC-GEMINI] Modèle ${targetModel} indisponible ou surchargé (upstreamHttp=${statusNum || 'n/a'}, rpcStatus=${rpcStatus || 'n/a'}), bascule automatique vers ${candidateModels[modelIdx + 1]}`
+            );
+            break;
+          }
+
+          if (effectiveErr instanceof KycGeminiAnalysisError) {
+            throw effectiveErr;
+          }
+          const classified = classifyGeminiProviderError(effectiveErr, targetModel, isTransient);
+          console.warn(
+            `[KYC-GEMINI] Erreur fournisseur Gemini (code=${classified.code}, upstreamHttp=${statusNum || 'n/a'}, rpcStatus=${rpcStatus || 'n/a'}, reason=${reason || 'n/a'}, model=${targetModel}): ${redactSensitiveForLogs(msg)}`
+          );
+          throw classified;
+        } finally {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
         }
-        const classified = classifyGeminiProviderError(effectiveErr, model, isTransient);
-        const { statusNum: upstreamStatus, rpcStatus, reason } = extractGeminiErrorMetadata(effectiveErr);
-        console.warn(
-          `[KYC-GEMINI] Erreur fournisseur Gemini (code=${classified.code}, upstreamHttp=${upstreamStatus || 'n/a'}, rpcStatus=${rpcStatus || 'n/a'}, reason=${reason || 'n/a'}, model=${model}): ${redactSensitiveForLogs(msg)}`
-        );
-        throw classified;
-      } finally {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
       }
     }
 
     if (!rawResult || !rawResult.text) {
-      throw lastCallErr || new KycGeminiAnalysisError('GEMINI_EMPTY_RESPONSE', 502, 'Réponse Gemini vide.');
+      if (lastCallErr) {
+        throw classifyGeminiProviderError(lastCallErr, lastAttemptedModel, true);
+      }
+      throw new KycGeminiAnalysisError('GEMINI_EMPTY_RESPONSE', 502, 'Réponse Gemini vide.');
     }
 
     let parsedJson: any;
@@ -1550,7 +1652,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
     const aiAnalysis = validateAndNormalizeGeminiKycOutput({
       rawJson: parsedJson,
       slotInputs,
-      model,
+      model: effectiveModel,
       requestedBy,
       analyzedAt,
       startedAt,
