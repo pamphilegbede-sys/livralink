@@ -645,6 +645,24 @@ const sanitizeStringArray = (raw: unknown, maxItems = 12, maxLen = 280): string[
   return out;
 };
 
+export function stripUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => item !== undefined)
+      .map((item) => stripUndefinedDeep(item)) as unknown as T;
+  }
+  if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
+    const cleanObj: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (v !== undefined) {
+        cleanObj[k] = stripUndefinedDeep(v);
+      }
+    }
+    return cleanObj as T;
+  }
+  return value;
+}
+
 const ALLOWED_READABILITY: Set<KycAiReadabilityStatus> = new Set([
   'readable',
   'partially_readable',
@@ -794,18 +812,21 @@ export function validateAndNormalizeGeminiKycOutput(params: {
       if (!warnings.includes(unreadNote)) warnings.push(unreadNote);
     }
 
+    const identifiedDocumentType = cleanText(rawSlot.identifiedDocumentType, 120);
+    const slotSummary = cleanText(rawSlot.summary, 300);
+
     normalizedDocs[slot.slotKey] = {
       slotKey: slot.slotKey,
       docType: slot.docType,
       documentPresent: true,
-      identifiedDocumentType: cleanText(rawSlot.identifiedDocumentType, 120),
+      ...(identifiedDocumentType ? { identifiedDocumentType } : {}),
       readabilityStatus,
       extractionConfidence,
       ...(rawPct !== undefined ? { confidencePercent: rawPct } : {}),
       ...(Object.keys(extractedFields).length > 0 ? { extractedFields } : {}),
       ...(Object.keys(detectedDates).length > 0 ? { detectedDates } : {}),
       anomalies: slotAnomalies,
-      summary: cleanText(rawSlot.summary, 300),
+      ...(slotSummary ? { summary: slotSummary } : {}),
     };
   }
 
@@ -893,7 +914,7 @@ export function validateAndNormalizeGeminiKycOutput(params: {
   const candidatesTokens = typeof usageMetadata?.candidatesTokenCount === 'number' ? usageMetadata.candidatesTokenCount : undefined;
   const totalTokens = typeof usageMetadata?.totalTokenCount === 'number' ? usageMetadata.totalTokenCount : undefined;
 
-  return {
+  return stripUndefinedDeep({
     status: 'completed',
     provider: 'gemini',
     model,
@@ -921,7 +942,7 @@ export function validateAndNormalizeGeminiKycOutput(params: {
       ...(params.dailyCapSnapshot !== undefined ? { dailyCapSnapshot: params.dailyCapSnapshot } : {}),
       scope: params.scope || 'instance_memory',
     },
-  };
+  });
 }
 
 export interface RunKycGeminiAnalysisOptions {
@@ -1177,7 +1198,7 @@ export async function runKycGeminiAnalysis(options: RunKycGeminiAnalysisOptions)
     if (!kycRef) return;
     await kycRef.set(
       {
-        aiAnalysis: payload,
+        aiAnalysis: stripUndefinedDeep(payload),
         updatedAt: new Date().toISOString(),
       },
       { merge: true }

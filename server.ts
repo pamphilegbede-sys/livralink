@@ -444,6 +444,11 @@ try {
       configuredDatabaseId && configuredDatabaseId !== '(default)'
         ? getFirestore(firebaseAdminApp, configuredDatabaseId)
         : getFirestore(firebaseAdminApp);
+    try {
+      firestoreAdmin.settings({ ignoreUndefinedProperties: true });
+    } catch {
+      // Déjà initialisé sur une instance existante
+    }
     console.log(`[FIREBASE-ADMIN] Firestore Admin DB (${configuredDatabaseId}) disponible pour historisation centralisée.`);
   }
 } catch (adminInitErr: any) {

@@ -52,6 +52,19 @@ function createMockFirestoreAndStorage(initial?: Partial<InMemoryDocStore>, stor
       };
     },
     set: async (data: Record<string, any>, opts?: { merge?: boolean }) => {
+      const assertNoUndefinedDeep = (val: unknown, path = 'data'): void => {
+        if (val === undefined) {
+          throw new Error(`Value for argument "data" is not a valid Firestore document. Cannot use "undefined" as a Firestore value (found in field "${path}").`);
+        }
+        if (Array.isArray(val)) {
+          val.forEach((item, idx) => assertNoUndefinedDeep(item, `${path}[${idx}]`));
+        } else if (val && typeof val === 'object') {
+          for (const [k, v] of Object.entries(val)) {
+            assertNoUndefinedDeep(v, `${path}.${k}`);
+          }
+        }
+      };
+      assertNoUndefinedDeep(data);
       const prev = store[colName].get(id);
       if (opts?.merge && prev) {
         store[colName].set(id, { ...prev, ...structuredClone(data) });
@@ -796,6 +809,46 @@ test('Suite complète Phase 2 — Analyse KYC Gemini serveur, sécurité, erreur
     const failBody = await failRes.json();
     assert.equal(failBody.success, false);
     assert.equal(failBody.code, 'GEMINI_AUTH_ERROR');
+  });
+
+  await t.test('12. Aucune valeur undefined dans aiAnalysis persisté (compatible Firestore strict sans ignoreUndefinedProperties)', async () => {
+    const uid = 'courier_sparse_gemini';
+    const files = new Map([
+      [`kyc/${uid}/id_front/id_front_1.jpg`, { contentType: 'image/jpeg', data: JPEG_BYTES }],
+      [`kyc/${uid}/id_back/id_back_1.png`, { contentType: 'image/png', data: PNG_BYTES }],
+    ]);
+    const { store, db, bucket } = createMockFirestoreAndStorage(
+      { kyc: new Map([[uid, buildFourDocDossier(uid)]]) },
+      files
+    );
+    serverMod.setFirestoreAdminForTests(db);
+    serverMod.setStorageBucketForTests(bucket);
+
+    // Réponse Gemini volontairement partielle (sans identifiedDocumentType, summary, usageMetadata)
+    serverMod.setGeminiKycAnalyzerForTests(async () => ({
+      text: JSON.stringify({
+        summary: 'Analyse partielle sans champs optionnels.',
+        documents: {
+          idFront: { readabilityStatus: 'readable', extractionConfidence: 'high', anomalies: [] },
+          idBack: { readabilityStatus: 'partially_readable', extractionConfidence: 'medium', anomalies: [] },
+        },
+        crossChecks: [],
+        warnings: [],
+        issues: [],
+        recommendations: [],
+      }),
+    }));
+
+    const res = await fetch(`${baseUrl}/api/admin/kyc/${uid}/analyze`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer admin-token' },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.equal('identifiedDocumentType' in body.aiAnalysis.documents.idBack, false);
+    assert.equal('summary' in body.aiAnalysis.documents.idBack, false);
+    assert.equal(store.kyc.get(uid)!.aiAnalysis.status, 'completed');
   });
 });
 
