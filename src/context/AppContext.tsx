@@ -41,6 +41,17 @@ import {
   normalizePricingConfig,
   calculateDynamicDeliveryQuote,
 } from '../utils/pricingCalculator';
+import {
+  type ThemeMode,
+  type ResolvedTheme,
+  THEME_STORAGE_KEY,
+  LEGACY_DARK_STORAGE_KEY,
+  getSystemThemePreference,
+  readSavedThemeMode,
+  resolveTheme,
+  subscribeToSystemThemeChange,
+  applyThemeToDocument,
+} from '../utils/themeUtils';
 import { sendPlatformNotification, sendKycSubmissionEmail, notifyClientDeliveryOtp } from '../services/emailService';
 
 const secureRandomInt = (min: number, maxExclusive: number): number => {
@@ -171,7 +182,7 @@ export type AdminTab =
   | 'audit'
   | 'security';
 
-export type ThemeMode = 'light' | 'dark' | 'system';
+export type { ThemeMode, ResolvedTheme };
 
 export interface AdminTestResultItem {
   id: string;
@@ -357,6 +368,8 @@ interface AppContextType {
   refreshAdminData: (silent?: boolean) => Promise<void>;
   // Dark Mode & Theme Selector
   themeMode: ThemeMode;
+  systemTheme: ResolvedTheme;
+  resolvedTheme: ResolvedTheme;
   setThemeMode: (mode: ThemeMode) => void;
   isDarkMode: boolean;
   toggleDarkMode: () => void;
@@ -1238,104 +1251,77 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setChatModalOrder(null);
   };
 
-  // Theme Selector State (light | dark | system)
-  const [themeMode, setThemeModeState] = useState<ThemeMode>(() => {
-    try {
-      const savedMode = localStorage.getItem('livralink_theme_mode') as ThemeMode | null;
-      if (savedMode === 'light' || savedMode === 'dark' || savedMode === 'system') {
-        return savedMode;
-      }
-      return 'system';
-    } catch {
-      return 'system';
-    }
-  });
+  // Theme Selector State (light | dark | system) + Automatic OS System Theme Detection
+  const [themeMode, setThemeModeState] = useState<ThemeMode>(() => readSavedThemeMode());
+  const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() => getSystemThemePreference());
 
-  const [isDarkMode, setIsDarkModeState] = useState<boolean>(() => {
-    try {
-      const savedMode = localStorage.getItem('livralink_theme_mode');
-      if (savedMode === 'dark') return true;
-      if (savedMode === 'light') return false;
-      return typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-    } catch {
-      return false;
-    }
-  });
+  const resolvedTheme: ResolvedTheme = resolveTheme(themeMode, systemTheme);
+  const isDarkMode = resolvedTheme === 'dark';
 
-  // Synchronize isDarkMode with themeMode & System OS preference changes in real-time
+  const themeModeRef = React.useRef<ThemeMode>(themeMode);
+  themeModeRef.current = themeMode;
+  const showToastRef = React.useRef<(text: string, type?: 'success' | 'info' | 'error') => void>(() => {});
+
+  // Listen to OS/browser prefers-color-scheme changes in real time & sync across tabs
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const computeIsDark = (mode: ThemeMode): boolean => {
-      if (mode === 'dark') return true;
-      if (mode === 'light') return false;
-      return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    };
+    const currentSystemTheme = getSystemThemePreference();
+    setSystemTheme(currentSystemTheme);
 
-    const newIsDark = computeIsDark(themeMode);
-    setIsDarkModeState(newIsDark);
-
-    const mediaQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
-
-    const handleSystemThemeChange = (e: MediaQueryListEvent | MediaQueryList) => {
-      if (themeMode === 'system') {
-        const isSystemDark = e.matches;
-        setIsDarkModeState(isSystemDark);
-        showToast(
-          isSystemDark ? '🌙 Thème système appliqué : Mode Sombre' : '☀️ Thème système appliqué : Mode Clair',
+    const unsubscribeMedia = subscribeToSystemThemeChange((nextSystemTheme) => {
+      setSystemTheme(nextSystemTheme);
+      if (themeModeRef.current === 'system') {
+        showToastRef.current(
+          nextSystemTheme === 'dark'
+            ? '🌙 Thème système appliqué : Mode Sombre'
+            : '☀️ Thème système appliqué : Mode Clair',
           'info'
         );
       }
+    });
+
+    const handleStorageSync = (event: StorageEvent) => {
+      if (event.key !== THEME_STORAGE_KEY) return;
+      const nextMode = event.newValue;
+      if (nextMode === 'light' || nextMode === 'dark' || nextMode === 'system') {
+        setThemeModeState(nextMode);
+      } else if (nextMode === null) {
+        setThemeModeState('system');
+      }
     };
 
-    if (mediaQuery) {
-      if (mediaQuery.addEventListener) {
-        mediaQuery.addEventListener('change', handleSystemThemeChange);
-      } else if ('addListener' in mediaQuery) {
-        (mediaQuery as any).addListener(handleSystemThemeChange);
-      }
-    }
-
+    window.addEventListener('storage', handleStorageSync);
     return () => {
-      if (mediaQuery) {
-        if (mediaQuery.removeEventListener) {
-          mediaQuery.removeEventListener('change', handleSystemThemeChange);
-        } else if ('removeListener' in mediaQuery) {
-          (mediaQuery as any).removeListener(handleSystemThemeChange);
-        }
-      }
+      unsubscribeMedia();
+      window.removeEventListener('storage', handleStorageSync);
     };
-  }, [themeMode]);
+  }, []);
 
+  // Apply resolved theme ('dark' | 'light') to document, meta theme-color, and persist choice
   useEffect(() => {
     try {
-      if (isDarkMode) {
-        document.documentElement.classList.add('dark');
-        document.body.classList.add('dark');
-      } else {
-        document.documentElement.classList.remove('dark');
-        document.body.classList.remove('dark');
-      }
-      localStorage.setItem('livralink_dark_mode', String(isDarkMode));
-      localStorage.setItem('livralink_theme_mode', themeMode);
+      applyThemeToDocument(resolvedTheme);
+      localStorage.setItem(LEGACY_DARK_STORAGE_KEY, String(isDarkMode));
+      localStorage.setItem(THEME_STORAGE_KEY, themeMode);
     } catch (e) {
       console.warn('Erreur mise à jour mode sombre:', e);
     }
-  }, [isDarkMode, themeMode]);
+  }, [resolvedTheme, isDarkMode, themeMode]);
 
   const setThemeMode = (mode: ThemeMode) => {
     setThemeModeState(mode);
-    let isDark = false;
-    if (mode === 'dark') isDark = true;
-    else if (mode === 'light') isDark = false;
-    else isDark = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const nextSystemTheme = getSystemThemePreference();
+    setSystemTheme(nextSystemTheme);
+    const nextResolved = resolveTheme(mode, nextSystemTheme);
 
-    setIsDarkModeState(isDark);
-
-    const labels = {
+    const labels: Record<ThemeMode, string> = {
       light: '☀️ Mode Clair activé',
       dark: '🌙 Mode Sombre activé',
-      system: isDark ? '💻 Thème Système (Sombre) appliqué' : '💻 Thème Système (Clair) appliqué',
+      system:
+        nextResolved === 'dark'
+          ? '💻 Thème Système (Sombre) appliqué'
+          : '💻 Thème Système (Clair) appliqué',
     };
     showToast(labels[mode], 'info');
   };
@@ -3101,6 +3087,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setToastMessage({ text, type });
     setTimeout(() => setToastMessage(null), 3500);
   };
+  showToastRef.current = showToast;
 
   const addAuditLog = (type: SystemAuditLog['type'], title: string, details: string) => {
     const newLog: SystemAuditLog = {
@@ -6741,6 +6728,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         lastAdminSyncAt,
         refreshAdminData,
         themeMode,
+        systemTheme,
+        resolvedTheme,
         setThemeMode,
         isDarkMode,
         toggleDarkMode,
