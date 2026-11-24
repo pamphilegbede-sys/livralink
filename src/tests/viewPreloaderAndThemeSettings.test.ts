@@ -9,6 +9,14 @@ import {
   createViewPreloadManager,
   shouldSkipBackgroundPreload,
 } from '../utils/viewPreloader';
+import {
+  MAIN_ROUTER_VIEW_VARIANTS,
+  computeViewTransitionContext,
+  getViewNavigationDirection,
+  getViewTransitionKind,
+  VIEW_TRANSITION_DURATION_ENTER,
+  VIEW_TRANSITION_DURATION_EXIT,
+} from '../utils/viewTransitions';
 
 test('Système de préchargement des vues prioritaires React.Suspense et commutateurs manuels de thème', async (t) => {
   await t.test('lazyWithPreload déduplique les appels concurrents et réinitialise le cache en cas d\'erreur', async () => {
@@ -162,5 +170,48 @@ test('Système de préchargement des vues prioritaires React.Suspense et commuta
     assert.match(mobileNavSrc, /preloadView\(/);
     assert.match(headerSrc, /preloadView\(/);
     assert.match(headerSrc, /preloadViews\(/);
+
+    // App.tsx wires Framer Motion AnimatePresence, MotionConfig, useReducedMotion & motion.div
+    assert.match(appSrc, /from 'motion\/react'/);
+    assert.match(appSrc, /<MotionConfig reducedMotion="user">/);
+    assert.match(appSrc, /<AnimatePresence mode="wait" initial=\{false\}/);
+    assert.match(appSrc, /MAIN_ROUTER_VIEW_VARIANTS/);
+    assert.match(appSrc, /data-router-view=\{activeRouteKey\}/);
+  });
+
+  await t.test('Transitions Framer Motion natives (push/pop/modal/reducedMotion) dans viewTransitions', () => {
+    assert.equal(getViewNavigationDirection(null, 'landing'), 0);
+    assert.equal(getViewNavigationDirection('landing', 'login_vendeur'), 1);
+    assert.equal(getViewNavigationDirection('vendeur_dashboard', 'vendeur_settings'), 1);
+    assert.equal(getViewNavigationDirection('vendeur_settings', 'vendeur_dashboard'), -1);
+    assert.equal(getViewNavigationDirection('livreur_dashboard', 'livreur_settings'), 1);
+    assert.equal(getViewNavigationDirection('livreur_settings', 'livreur_dashboard'), -1);
+
+    assert.equal(getViewTransitionKind('vendeur_dashboard', 'vendeur_new_delivery'), 'modal_up');
+    assert.equal(getViewTransitionKind('vendeur_dashboard', 'vendeur_settings'), 'tab');
+    assert.equal(getViewTransitionKind('landing', 'login_livreur'), 'stack');
+
+    const pushCtx = computeViewTransitionContext('vendeur_dashboard', 'vendeur_settings', false);
+    const popCtx = computeViewTransitionContext('vendeur_settings', 'vendeur_dashboard', false);
+    const modalCtx = computeViewTransitionContext('vendeur_dashboard', 'vendeur_new_delivery', false);
+    const reducedCtx = computeViewTransitionContext('vendeur_dashboard', 'vendeur_settings', true);
+
+    const resolveInitial = MAIN_ROUTER_VIEW_VARIANTS.initial as (ctx?: any) => Record<string, any>;
+    const resolveExit = MAIN_ROUTER_VIEW_VARIANTS.exit as (ctx?: any) => Record<string, any>;
+
+    assert.equal(resolveInitial(pushCtx).x, 18);
+    assert.equal(resolveExit(pushCtx).x, -12);
+    assert.equal(resolveInitial(popCtx).x, -18);
+    assert.equal(resolveExit(popCtx).x, 12);
+    assert.equal(resolveInitial(modalCtx).y, 20);
+
+    // Reduced motion removes spatial offsets
+    assert.equal(resolveInitial(reducedCtx).x, 0);
+    assert.equal(resolveInitial(reducedCtx).y, 0);
+    assert.equal(resolveExit(reducedCtx).x, 0);
+
+    // Budgets de latence <= 200ms
+    assert.ok(VIEW_TRANSITION_DURATION_ENTER <= 0.2);
+    assert.ok(VIEW_TRANSITION_DURATION_EXIT <= 0.15);
   });
 });

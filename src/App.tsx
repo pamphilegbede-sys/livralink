@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, MotionConfig, motion, useReducedMotion } from 'motion/react';
 import { AppProvider, useApp, type AppView } from './context/AppContext';
 import { Toast } from './components/common/Toast';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
@@ -17,6 +18,10 @@ import {
   preloadViews,
   shouldSkipBackgroundPreload,
 } from './utils/viewPreloader';
+import {
+  MAIN_ROUTER_VIEW_VARIANTS,
+  computeViewTransitionContext,
+} from './utils/viewTransitions';
 
 // Lazy-loaded Views with deterministic `.preload()` support for instant Suspense transitions
 const LoginVendeurPage = lazyWithPreload(() => import('./components/views/LoginVendeurPage').then(m => ({ default: m.LoginVendeurPage })));
@@ -130,6 +135,18 @@ const MainAppRouter: React.FC = () => {
     return currentView;
   })();
 
+  const shouldReduceMotion = Boolean(useReducedMotion());
+  const previousViewRef = useRef<AppView | null>(null);
+  const transitionContext = computeViewTransitionContext(
+    previousViewRef.current,
+    effectiveView,
+    shouldReduceMotion
+  );
+
+  useEffect(() => {
+    previousViewRef.current = effectiveView;
+  }, [effectiveView]);
+
   useEffect(() => {
     applySeoMetadata(effectiveView);
   }, [effectiveView]);
@@ -157,59 +174,76 @@ const MainAppRouter: React.FC = () => {
     currentView.startsWith('livreur_')
   );
 
-  const renderActiveView = () => {
-    if (isAuthLoading || (firebaseUser != null && !userProfile)) {
-      return <FullViewSkeleton label="Vérification de session sécurisée..." />;
-    }
+  const isSessionResolving = isAuthLoading || (firebaseUser != null && !userProfile);
+  const activeRouteKey = isSessionResolving ? '__auth_loading__' : effectiveView;
 
-    return (
-      <React.Suspense fallback={<FullViewSkeleton label="Chargement instantané..." />}>
-        {(() => {
-          switch (currentView) {
-            case 'landing':
-              return <LandingPage />;
-            case 'login_vendeur':
-              return <LoginVendeurPage />;
-            case 'login_livreur':
-              return <LoginLivreurPage />;
-            case 'register':
-              return <RegisterPage />;
-            case 'vendeur_dashboard':
-              return canAccessVendeur ? <VendeurDashboard /> : <LoginVendeurPage />;
-            case 'vendeur_new_delivery':
-              return canAccessVendeur ? <VendeurNewDelivery /> : <LoginVendeurPage />;
-            case 'vendeur_tracking':
-              return canAccessVendeur ? <VendeurTracking /> : <LoginVendeurPage />;
-            case 'vendeur_reports':
-              return canAccessVendeur ? <VendeurReports /> : <LoginVendeurPage />;
-            case 'vendeur_settings':
-              return canAccessVendeur ? <VendeurSettings /> : <LoginVendeurPage />;
-            case 'vendeur_chat':
-              return canAccessVendeur ? <ChatView /> : <LoginVendeurPage />;
-            case 'livreur_dashboard':
-              return canAccessLivreur ? <LivreurDashboard /> : <LoginLivreurPage />;
-            case 'livreur_missions':
-              return canAccessLivreur ? <LivreurMissions /> : <LoginLivreurPage />;
-            case 'livreur_wallet':
-              return canAccessLivreur ? <LivreurWallet /> : <LoginLivreurPage />;
-            case 'livreur_settings':
-              return canAccessLivreur ? <LivreurSettings /> : <LoginLivreurPage />;
-            case 'livreur_chat':
-              return canAccessLivreur ? <ChatView /> : <LoginLivreurPage />;
-            case 'admin_console':
-              return <AdminConsole />;
-            case 'not_found':
-              return <NotFoundView />;
-            default:
-              return <NotFoundView />;
-          }
-        })()}
-      </React.Suspense>
-    );
+  const renderSwitchView = () => {
+    switch (effectiveView) {
+      case 'landing':
+        return <LandingPage />;
+      case 'login_vendeur':
+        return <LoginVendeurPage />;
+      case 'login_livreur':
+        return <LoginLivreurPage />;
+      case 'register':
+        return <RegisterPage />;
+      case 'vendeur_dashboard':
+        return canAccessVendeur ? <VendeurDashboard /> : <LoginVendeurPage />;
+      case 'vendeur_new_delivery':
+        return canAccessVendeur ? <VendeurNewDelivery /> : <LoginVendeurPage />;
+      case 'vendeur_tracking':
+        return canAccessVendeur ? <VendeurTracking /> : <LoginVendeurPage />;
+      case 'vendeur_reports':
+        return canAccessVendeur ? <VendeurReports /> : <LoginVendeurPage />;
+      case 'vendeur_settings':
+        return canAccessVendeur ? <VendeurSettings /> : <LoginVendeurPage />;
+      case 'vendeur_chat':
+        return canAccessVendeur ? <ChatView /> : <LoginVendeurPage />;
+      case 'livreur_dashboard':
+        return canAccessLivreur ? <LivreurDashboard /> : <LoginLivreurPage />;
+      case 'livreur_missions':
+        return canAccessLivreur ? <LivreurMissions /> : <LoginLivreurPage />;
+      case 'livreur_wallet':
+        return canAccessLivreur ? <LivreurWallet /> : <LoginLivreurPage />;
+      case 'livreur_settings':
+        return canAccessLivreur ? <LivreurSettings /> : <LoginLivreurPage />;
+      case 'livreur_chat':
+        return canAccessLivreur ? <ChatView /> : <LoginLivreurPage />;
+      case 'admin_console':
+        return <AdminConsole />;
+      case 'not_found':
+        return <NotFoundView />;
+      default:
+        return <NotFoundView />;
+    }
   };
 
+  const renderActiveView = () => (
+    <React.Suspense fallback={<FullViewSkeleton label="Chargement instantané..." />}>
+      <AnimatePresence mode="wait" initial={false} custom={transitionContext}>
+        <motion.div
+          key={activeRouteKey}
+          custom={transitionContext}
+          variants={MAIN_ROUTER_VIEW_VARIANTS}
+          initial="initial"
+          animate="animate"
+          exit="exit"
+          data-router-view={activeRouteKey}
+          className="flex-1 flex flex-col min-h-0 w-full"
+        >
+          {isSessionResolving ? (
+            <FullViewSkeleton label="Vérification de session sécurisée..." />
+          ) : (
+            renderSwitchView()
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </React.Suspense>
+  );
+
   return (
-    <div className={`flex flex-col min-h-screen w-full bg-[#f8fafc] dark:bg-slate-950 text-[#131b2e] dark:text-slate-100 antialiased transition-colors duration-200 ${isDarkMode ? 'dark' : ''}`}>
+    <MotionConfig reducedMotion="user">
+    <div className={`flex flex-col min-h-screen w-full overflow-x-hidden bg-[#f8fafc] dark:bg-slate-950 text-[#131b2e] dark:text-slate-100 antialiased transition-colors duration-200 ${isDarkMode ? 'dark' : ''}`}>
       {/* Global Toast */}
       <Toast />
 
@@ -239,7 +273,7 @@ const MainAppRouter: React.FC = () => {
             </div>
 
             {/* Simulated Phone Screen Viewport */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col bg-[#faf8ff] relative">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col bg-[#faf8ff] relative">
               {renderActiveView()}
             </div>
 
@@ -250,7 +284,7 @@ const MainAppRouter: React.FC = () => {
           </div>
         </div>
       ) : (
-        <div className="flex-1 flex flex-col min-h-0 w-full">
+        <div className="flex-1 flex flex-col min-h-0 w-full overflow-x-hidden">
           {renderActiveView()}
         </div>
       )}
@@ -311,6 +345,7 @@ const MainAppRouter: React.FC = () => {
         )}
       </React.Suspense>
     </div>
+    </MotionConfig>
   );
 };
 
