@@ -44,7 +44,7 @@ export class ServerRouteValidationError extends Error {
   }
 }
 
-const MAX_COMMUNE_COORDINATE_DRIFT_KM = 65;
+const MAX_COMMUNE_COORDINATE_DRIFT_KM = 25;
 
 function resolveAndValidateEndpoint(
   input: unknown,

@@ -562,6 +562,15 @@ const checkCallerIsAdmin = async (user?: AuthenticatedRequest['user']): Promise<
   return ctx.isAdmin && ctx.isActive;
 };
 
+const resolveAndAttachAdminContext = async (req: AuthenticatedRequest): Promise<boolean> => {
+  const ctx = await resolveAdminContext(getActiveDb(), req.user);
+  if (ctx.isAdmin && ctx.isActive) {
+    req.adminContext = ctx;
+    return true;
+  }
+  return false;
+};
+
 /**
  * Middleware: Require any valid Firebase ID Token
  */
@@ -6196,7 +6205,7 @@ app.post('/api/deliveries', requireVerifiedUser as any, async (req: Authenticate
     }
 
     const callerUid = req.user!.uid;
-    const isAdmin = await checkCallerIsAdmin(req.user);
+    const isAdmin = await resolveAndAttachAdminContext(req);
     const body = req.body || {};
 
     const callerSnap = await activeDb.collection('users').doc(callerUid).get();
@@ -6642,7 +6651,7 @@ app.patch('/api/deliveries/:orderId', requireVerifiedUser as any, async (req: Au
 
     const orderData = snap.data() || {};
     const callerUid = req.user!.uid;
-    const isAdmin = await checkCallerIsAdmin(req.user);
+    const isAdmin = await resolveAndAttachAdminContext(req);
     const body = req.body || {};
 
     if (!isAdmin) {
@@ -6657,8 +6666,13 @@ app.patch('/api/deliveries/:orderId', requireVerifiedUser as any, async (req: Au
         body.promoDiscountFCFA !== undefined ||
         body.totalCustomerPayable !== undefined ||
         body.pricingSnapshot !== undefined ||
+        body.remunerationSnapshot !== undefined ||
+        body.commissionSnapshot !== undefined ||
         body.distanceKm !== undefined ||
-        body.status !== undefined
+        body.status !== undefined ||
+        body.merchantId !== undefined ||
+        body.courierId !== undefined ||
+        body.courier !== undefined
       ) {
         recordSecurityAnomaly(
           getClientIp(req),
@@ -6725,19 +6739,36 @@ app.patch('/api/deliveries/:orderId', requireVerifiedUser as any, async (req: Au
       throw routeErr;
     }
 
+    const cfg = await loadPlatformConfigBundle(activeDb);
     const nextDeliveryType =
       body.deliveryType === 'express' || body.deliveryType === 'urgent'
         ? body.deliveryType
+        : body.deliveryType === 'standard'
+        ? 'standard'
         : orderData.deliveryType === 'express' || orderData.deliveryType === 'urgent'
         ? orderData.deliveryType
         : 'standard';
+    if (nextDeliveryType !== 'standard' && !cfg.bundle.featureFlags.allowPriorityDeliveries && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        code: 'PRIORITY_DELIVERIES_DISABLED',
+        error: 'Les livraisons express et prioritaires sont temporairement désactivées.',
+      });
+    }
+
     const nextVehicleCategory =
       body.vehicleCategory === 'tricycle' || body.vehicleCategory === 'voiture' || body.vehicleCategory === 'camionnette'
         ? body.vehicleCategory
+        : body.vehicleCategory === 'moto'
+        ? 'moto'
         : orderData.vehicleCategory || 'moto';
     const nextIsFragile = body.isFragile !== undefined ? Boolean(body.isFragile) : Boolean(orderData.isFragile);
     const nextPromoCode =
-      typeof body.promoCode === 'string' ? body.promoCode.trim().slice(0, 64) : orderData.promoCode;
+      typeof body.promoCode === 'string' && cfg.bundle.featureFlags.allowPromotions
+        ? body.promoCode.trim().slice(0, 64)
+        : cfg.bundle.featureFlags.allowPromotions
+        ? orderData.promoCode
+        : undefined;
 
     const financials = await computeAuthoritativeOrderFinancials(activeDb, {
       distanceKm: validatedRoute.distanceKm,
@@ -6777,6 +6808,7 @@ app.patch('/api/deliveries/:orderId', requireVerifiedUser as any, async (req: Au
       totalCustomerPayable,
       deliveryType: nextDeliveryType,
       vehicleCategory: nextVehicleCategory,
+      ...(typeof nextPromoCode === 'string' ? { promoCode: nextPromoCode || null } : {}),
       promoDiscountFCFA: financials.pricingSnapshot.promoDiscountFCFA,
       pricingSnapshot: {
         ...financials.pricingSnapshot,
@@ -6794,26 +6826,43 @@ app.patch('/api/deliveries/:orderId', requireVerifiedUser as any, async (req: Au
       patch.statusNote = body.statusNote.trim().slice(0, 300);
     }
 
-    const batch = activeDb.batch();
-    batch.set(deliveryRef, patch, { merge: true });
     const missionRef = activeDb.collection('priority_missions').doc(cleanDocId);
-    const missionSnap = await missionRef.get();
-    if (missionSnap.exists) {
-      batch.set(
-        missionRef,
-        {
-          pickupCommune: validatedRoute.pickupLocation.commune,
-          dropoffCommune: validatedRoute.dropoffLocation.commune,
-          itemDescription: nextItemDesc,
-          fee: finalFee,
-          cod: nextCod,
-          ...(patch.status ? { status: patch.status } : {}),
-          updatedAt: nowEpoch,
-        },
-        { merge: true }
-      );
+    const txResult = await activeDb.runTransaction(async (tx: any) => {
+      const [latestSnap, latestMissionSnap] = await Promise.all([tx.get(deliveryRef), tx.get(missionRef)]);
+      if (!latestSnap.exists) {
+        return { ok: false as const, status: 404, error: 'Livraison introuvable.' };
+      }
+      const latestData = latestSnap.data() || {};
+      if (!isAdmin) {
+        if (latestData.merchantId !== callerUid) {
+          return { ok: false as const, status: 403, error: 'Accès refusé : vous ne pouvez modifier que vos propres commandes.' };
+        }
+        if (latestData.status !== 'en_attente' || getAssignedCourierIdFromOrder(latestData)) {
+          return { ok: false as const, status: 409, error: 'Modification verrouillée : cette course a déjà été prise en charge.' };
+        }
+      }
+      tx.set(deliveryRef, patch, { merge: true });
+      if (latestMissionSnap.exists) {
+        tx.set(
+          missionRef,
+          {
+            pickupCommune: validatedRoute.pickupLocation.commune,
+            dropoffCommune: validatedRoute.dropoffLocation.commune,
+            itemDescription: nextItemDesc,
+            fee: finalFee,
+            cod: nextCod,
+            ...(patch.status ? { status: patch.status } : {}),
+            updatedAt: nowEpoch,
+          },
+          { merge: true }
+        );
+      }
+      return { ok: true as const, merged: { ...latestData, ...patch } };
+    });
+
+    if (!txResult.ok) {
+      return res.status(txResult.status).json({ success: false, error: txResult.error });
     }
-    await batch.commit();
 
     if (adminManualFeeApplied && req.adminContext) {
       await recordAdminAuditLog(activeDb, {
@@ -6831,7 +6880,7 @@ app.patch('/api/deliveries/:orderId', requireVerifiedUser as any, async (req: Au
 
     return res.json({
       success: true,
-      delivery: { ...orderData, ...patch },
+      delivery: txResult.merged,
     });
   } catch (err: any) {
     if (isFirestoreIamDeniedError(err)) {
@@ -6944,7 +6993,7 @@ app.post('/api/deliveries/:orderId/finalize-pricing', requireVerifiedUser as any
       return res.status(404).json({ success: false, error: 'Livraison introuvable.' });
     }
     const orderData = snap.data() || {};
-    const isAdmin = await checkCallerIsAdmin(req.user);
+    const isAdmin = await resolveAndAttachAdminContext(req);
     if (!isAdmin && orderData.merchantId !== req.user!.uid) {
       return res.status(403).json({ success: false, error: 'Non autorisé à verrouiller le tarif de cette course.' });
     }
@@ -6961,7 +7010,11 @@ app.post('/api/deliveries/:orderId/finalize-pricing', requireVerifiedUser as any
     }
 
     const body = req.body || {};
-    let distanceKm = Number(orderData.distanceKm ?? body.distanceKm ?? 1);
+    if (!isAdmin && ['livree', 'echec'].includes(String(orderData.status || ''))) {
+      return res.status(409).json({ success: false, error: 'Impossible de recalculer une livraison clôturée.' });
+    }
+
+    let distanceKm: number | null = null;
     if (orderData.pickupLocation && orderData.dropoffLocation) {
       try {
         const route = resolveAuthoritativeRouteDistance({
@@ -6979,23 +7032,47 @@ app.post('/api/deliveries/:orderId/finalize-pricing', requireVerifiedUser as any
         }
         throw routeErr;
       }
+    } else if (typeof orderData.distanceKm === 'number' && Number.isFinite(orderData.distanceKm) && orderData.distanceKm > 0) {
+      distanceKm = Math.min(1000, Math.max(1, orderData.distanceKm));
+    } else if (isAdmin && Number.isFinite(Number(body.distanceKm)) && Number(body.distanceKm) > 0) {
+      distanceKm = Math.min(1000, Math.max(1, Number(body.distanceKm)));
+    } else {
+      return res.status(400).json({
+        success: false,
+        code: 'MISSING_ROUTE_DATA',
+        error: 'Les informations d\'itinéraire enregistrées sont requises pour verrouiller le tarif.',
+      });
     }
 
+    const cfg = await loadPlatformConfigBundle(activeDb);
     const deliveryType =
       orderData.deliveryType === 'express' || orderData.deliveryType === 'urgent'
         ? orderData.deliveryType
-        : body.deliveryType === 'express' || body.deliveryType === 'urgent'
+        : isAdmin && (body.deliveryType === 'express' || body.deliveryType === 'urgent')
         ? body.deliveryType
         : 'standard';
-    const vehicleCategory = orderData.vehicleCategory || body.vehicleCategory || 'moto';
+    if (deliveryType !== 'standard' && !cfg.bundle.featureFlags.allowPriorityDeliveries && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        code: 'PRIORITY_DELIVERIES_DISABLED',
+        error: 'Les livraisons express et prioritaires sont temporairement désactivées.',
+      });
+    }
+    const vehicleCategory = orderData.vehicleCategory || (isAdmin ? body.vehicleCategory : undefined) || 'moto';
+    const effectivePromo =
+      typeof orderData.promoCode === 'string'
+        ? orderData.promoCode
+        : isAdmin && typeof body.promoCode === 'string'
+        ? body.promoCode
+        : undefined;
 
     const financials = await computeAuthoritativeOrderFinancials(activeDb, {
-      distanceKm: Number.isFinite(distanceKm) && distanceKm > 0 ? Math.min(1000, distanceKm) : 1,
+      distanceKm,
       isFragile: Boolean(orderData.isFragile),
       itemWeightKg: Math.min(500, Math.max(0.1, Number(orderData.itemWeightKg || 1))),
       deliveryType,
       vehicleCategory,
-      promoCode: typeof orderData.promoCode === 'string' ? orderData.promoCode : typeof body.promoCode === 'string' ? body.promoCode : undefined,
+      promoCode: effectivePromo,
       merchantId: String(orderData.merchantId || req.user!.uid),
       courierId: orderData.courierId ? String(orderData.courierId) : undefined,
     });
@@ -7006,7 +7083,9 @@ app.post('/api/deliveries/:orderId/finalize-pricing', requireVerifiedUser as any
 
     const finalFee = financials.pricingSnapshot.finalDeliveryFeeFCFA;
     const cod = Math.max(0, Math.round(Number(orderData.itemValueCOD || 0)));
-    await deliveryRef.set(
+    const batch = activeDb.batch();
+    batch.set(
+      deliveryRef,
       {
         distanceKm: financials.pricingSnapshot.distanceKm,
         deliveryType,
@@ -7021,6 +7100,20 @@ app.post('/api/deliveries/:orderId/finalize-pricing', requireVerifiedUser as any
       },
       { merge: true }
     );
+    const missionRef = activeDb.collection('priority_missions').doc(cleanDocId);
+    const missionSnap = await missionRef.get();
+    if (missionSnap.exists) {
+      batch.set(
+        missionRef,
+        {
+          fee: finalFee,
+          cod,
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
+    }
+    await batch.commit();
 
     return res.json({
       success: true,

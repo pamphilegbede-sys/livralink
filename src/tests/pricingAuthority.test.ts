@@ -132,6 +132,46 @@ class PricingTestMockFirestore {
       },
     };
   }
+
+  private txChain: Promise<any> = Promise.resolve();
+
+  async runTransaction<T>(fn: (tx: any) => Promise<T>): Promise<T> {
+    const run = async () => {
+      const staged = new Map<string, Record<string, any> | null>();
+      const tx = {
+        get: async (ref: any) => {
+          const val = staged.has(ref.path) ? staged.get(ref.path) || undefined : this.docs.get(ref.path);
+          return this.makeSnap(ref.path, val);
+        },
+        set: (ref: any, data: Record<string, any>, options?: { merge?: boolean }) => {
+          const prev = staged.has(ref.path) ? staged.get(ref.path) || undefined : this.docs.get(ref.path);
+          if (options?.merge && prev) {
+            staged.set(ref.path, { ...structuredClone(prev), ...structuredClone(data) });
+          } else {
+            staged.set(ref.path, structuredClone(data));
+          }
+        },
+        update: (ref: any, data: Record<string, any>) => {
+          const prev = staged.has(ref.path) ? staged.get(ref.path) || undefined : this.docs.get(ref.path);
+          if (!prev) throw new Error(`Missing doc in tx: ${ref.path}`);
+          staged.set(ref.path, { ...structuredClone(prev), ...structuredClone(data) });
+        },
+        delete: (ref: any) => {
+          staged.set(ref.path, null);
+        },
+      };
+      const result = await fn(tx);
+      for (const [p, v] of staged.entries()) {
+        if (v === null) this.docs.delete(p);
+        else this.docs.set(p, v);
+      }
+      return result;
+    };
+
+    const next = this.txChain.then(run, run);
+    this.txChain = next.catch(() => {});
+    return next;
+  }
 }
 
 async function startTestServer(): Promise<{ baseUrl: string; close: () => Promise<void> }> {
@@ -373,6 +413,99 @@ test('Server Pricing Authority & Client Price Manipulation Lock (Problem #4)', a
     const syncedMission = db.docs.get(`priority_missions/${cleanDocId}`);
     assert.equal(syncedMission?.fee, updatedBody.delivery.deliveryFee);
     assert.equal(syncedMission?.cod, 20000);
+
+    // Non-admin cannot forge remunerationSnapshot or courierId via PATCH
+    const extraTamperPatch = await fetch(`${baseUrl}/api/deliveries/${cleanDocId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer vendor-1' },
+      body: JSON.stringify({ remunerationSnapshot: { netCourierEarningFCFA: 999999 } }),
+    });
+    assert.equal(extraTamperPatch.status, 403);
+    assert.equal((await extraTamperPatch.json()).code, 'PRICE_OVERRIDE_FORBIDDEN');
+
+    // Once assigned to a courier, vendor PATCH MUST fail with 409
+    db.docs.set(`deliveries/${cleanDocId}`, {
+      ...db.docs.get(`deliveries/${cleanDocId}`),
+      status: 'assignee',
+      courierId: 'courier_1',
+    });
+    const assignedPatch = await fetch(`${baseUrl}/api/deliveries/${cleanDocId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer vendor-1' },
+      body: JSON.stringify({ itemValueCOD: 1000 }),
+    });
+    assert.equal(assignedPatch.status, 409);
+  });
+
+  await t.test('Inter-city coordinate spoofing (Cotonou coords declared as Porto-Novo) is rejected at <= 25 km threshold', async () => {
+    const interCitySpoof = await fetch(`${baseUrl}/api/deliveries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer vendor-1' },
+      body: JSON.stringify({
+        clientName: 'Client Porto-Novo',
+        clientPhone: '+22997112233',
+        pickupLocation: { commune: 'Cotonou - Haie Vive', coordinates: [6.3571, 2.4175] },
+        dropoffLocation: { commune: 'Porto-Novo', coordinates: [6.3571, 2.4175] },
+      }),
+    });
+    assert.equal(interCitySpoof.status, 400);
+    assert.equal((await interCitySpoof.json()).code, 'COORDINATES_COMMUNE_MISMATCH');
+  });
+
+  await t.test('POST /api/deliveries/finalize-pricing rejects client-supplied distanceKm on legacy doc without route', async () => {
+    db.docs.set('deliveries/legacy_no_route', {
+      id: '#LL-LEGACY',
+      merchantId: 'vendor_1',
+      status: 'en_attente',
+      itemValueCOD: 5000,
+    });
+    const res = await fetch(`${baseUrl}/api/deliveries/legacy_no_route/finalize-pricing`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer vendor-1' },
+      body: JSON.stringify({ distanceKm: 1, deliveryType: 'standard' }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).code, 'MISSING_ROUTE_DATA');
+  });
+
+  await t.test('Admin delivery creation, manual override audit, notifications, and dispatch compatibility remain intact', async () => {
+    const adminCreateRes = await fetch(`${baseUrl}/api/deliveries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer admin-1' },
+      body: JSON.stringify({
+        merchantId: 'vendor_1',
+        clientName: 'Client VIP Admin',
+        clientPhone: '+22997009988',
+        itemValueCOD: 10000,
+        pickupLocation: { name: 'Boutique A', commune: 'Cotonou - Haie Vive' },
+        dropoffLocation: { name: 'Domicile', commune: 'Cotonou - Akpakpa' },
+        manualDeliveryFeeOverride: 2200,
+      }),
+    });
+    assert.equal(adminCreateRes.status, 201);
+    const adminBody = await adminCreateRes.json();
+    assert.equal(adminBody.delivery.deliveryFee, 2200);
+    assert.equal(adminBody.delivery.totalCustomerPayable, 12200);
+    assert.equal(adminBody.delivery.pricingSnapshot.adminManualOverride, true);
+
+    const adminCleanId = adminBody.delivery.id.replace(/[^a-zA-Z0-9_-]/g, '');
+    const auditLogs = Array.from(db.docs.entries())
+      .filter(([k]) => k.startsWith('admin_audit_logs/'))
+      .map(([, v]) => v);
+    assert.ok(auditLogs.some((l) => l.action === 'ADMIN_ORDER_MANUAL_FEE' && l.targetId === adminCleanId));
+
+    const notifs = Array.from(db.docs.entries())
+      .filter(([k]) => k.startsWith('notifications/'))
+      .map(([, v]) => v);
+    assert.ok(notifs.some((n) => n.recipientId === 'vendor_1' && n.orderDocId === adminCleanId));
+
+    const dispatchStartRes = await fetch(`${baseUrl}/api/deliveries/${adminCleanId}/dispatch/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer admin-1' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(dispatchStartRes.status, 200);
+    assert.equal((await dispatchStartRes.json()).success, true);
   });
 
   await t.test('POST /api/deliveries/calculate-quote overrides spoofed distanceKm when locations are given', async () => {
