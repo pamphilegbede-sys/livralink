@@ -11,6 +11,7 @@ import { fetchAuthorizedKYCDocumentBlob, normalizeMimeType, formatFileSizeFr } f
 import { getKycDocumentSlots } from '../../utils/adminReconciliation';
 import { downloadCsvFile } from '../../utils/csvExport';
 import { buildSandboxedEmailPreviewDocument } from '../../utils/htmlSanitizer';
+import { getLocationForCommune } from '../../config/maps';
 import { AdminOverviewDashboard } from './AdminOverviewDashboard';
 import { AdminCommunicationsSection } from '../admin/AdminCommunicationsSection';
 import { AdminMerchantsPanel } from '../admin/AdminMerchantsPanel';
@@ -1014,33 +1015,38 @@ export const AdminConsole: React.FC = () => {
     setSelectedCourierForAssign('');
   };
 
-  const handleCreateDeliverySubmit = (e: React.FormEvent) => {
+  const handleCreateDeliverySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newOrderClientName.trim() || !newOrderClientPhone.trim()) {
       showToast('Nom du client et téléphone requis.', 'error');
       return;
     }
     const codVal = parseInt(newOrderCOD, 10) || 0;
-    const feeVal = parseInt(newOrderFee, 10) || 1500;
-    const created = createDelivery({
-      clientName: newOrderClientName.trim(),
-      clientPhone: newOrderClientPhone.trim(),
-      pickupLocation: {
-        name: newOrderStoreName.trim(),
-        commune: newOrderPickupCommune,
-        address: `${newOrderPickupCommune}, Cotonou, Bénin`,
-        coordinates: [6.37, 2.43]
+    const feeVal = parseInt(newOrderFee, 10);
+    const pickupPos = getLocationForCommune(newOrderPickupCommune);
+    const dropoffPos = getLocationForCommune(newOrderDropoffCommune);
+    const created = await createDelivery(
+      {
+        clientName: newOrderClientName.trim(),
+        clientPhone: newOrderClientPhone.trim(),
+        pickupLocation: {
+          name: newOrderStoreName.trim(),
+          commune: newOrderPickupCommune,
+          address: `${newOrderPickupCommune}, Bénin`,
+          coordinates: [pickupPos.lat, pickupPos.lng]
+        },
+        dropoffLocation: {
+          name: 'Domicile Client',
+          commune: newOrderDropoffCommune,
+          address: newOrderDropoffAddress.trim() || `${newOrderDropoffCommune}, Bénin`,
+          coordinates: [dropoffPos.lat, dropoffPos.lng]
+        },
+        itemValueCOD: codVal,
+        status: 'en_attente'
       },
-      dropoffLocation: {
-        name: 'Domicile Client',
-        commune: newOrderDropoffCommune,
-        address: newOrderDropoffAddress.trim(),
-        coordinates: [6.3654, 2.4183]
-      },
-      itemValueCOD: codVal,
-      deliveryFee: feeVal,
-      status: 'en_attente'
-    });
+      Number.isFinite(feeVal) && feeVal >= 100 ? { manualDeliveryFeeOverride: feeVal } : undefined
+    );
+    if (!created) return;
     setNewOrderClientName('');
     setNewOrderClientPhone('');
     setIsAddDeliveryModalOpen(false);
@@ -1167,31 +1173,44 @@ export const AdminConsole: React.FC = () => {
     setEditDeliveryItemDesc(d.itemDescription || '');
   };
 
-  const handleUpdateDeliverySubmit = (e: React.FormEvent) => {
+  const handleUpdateDeliverySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingDelivery) return;
     const codVal = parseInt(editDeliveryCOD, 10) || 0;
     const feeVal = parseInt(editDeliveryFee, 10) || 0;
-    updateDeliveryDetails(editingDelivery.id, {
+    const pickupCommuneChanged = editDeliveryPickupCommune !== (editingDelivery.pickupLocation?.commune || '');
+    const dropoffCommuneChanged = editDeliveryDropoffCommune !== (editingDelivery.dropoffLocation?.commune || '');
+    const nextPickupPos = pickupCommuneChanged
+      ? getLocationForCommune(editDeliveryPickupCommune)
+      : null;
+    const nextDropoffPos = dropoffCommuneChanged
+      ? getLocationForCommune(editDeliveryDropoffCommune)
+      : null;
+    const feeManuallyChanged = feeVal !== (editingDelivery.deliveryFee || 0);
+
+    const updated = await updateDeliveryDetails(editingDelivery.id, {
       clientName: editDeliveryClientName.trim(),
       clientPhone: editDeliveryClientPhone.trim(),
       pickupLocation: {
         ...editingDelivery.pickupLocation,
         name: editDeliveryStoreName.trim(),
-        commune: editDeliveryPickupCommune
+        commune: editDeliveryPickupCommune,
+        ...(nextPickupPos ? { coordinates: [nextPickupPos.lat, nextPickupPos.lng] as [number, number] } : {}),
       },
       dropoffLocation: {
         ...editingDelivery.dropoffLocation,
         commune: editDeliveryDropoffCommune,
-        address: editDeliveryDropoffAddress.trim()
+        address: editDeliveryDropoffAddress.trim(),
+        ...(nextDropoffPos ? { coordinates: [nextDropoffPos.lat, nextDropoffPos.lng] as [number, number] } : {}),
       },
       itemValueCOD: codVal,
-      deliveryFee: feeVal,
-      totalCustomerPayable: codVal + feeVal,
+      ...(feeManuallyChanged ? { deliveryFee: feeVal } : {}),
       status: editDeliveryStatus,
       itemDescription: editDeliveryItemDesc.trim()
     });
-    setEditingDelivery(null);
+    if (updated) {
+      setEditingDelivery(null);
+    }
   };
 
   const handleConfirmDeleteDelivery = async () => {

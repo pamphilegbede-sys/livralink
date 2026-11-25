@@ -1013,22 +1013,43 @@ export function calculateDeliveryPrice(distanceKm: number): number {
   return roundedPrice;
 }
 
+export const BENIN_COORDINATE_BOUNDS = {
+  minLat: 5.5,
+  maxLat: 13.0,
+  minLng: 0.4,
+  maxLng: 4.3,
+} as const;
+
+export function isValidBeninCoordinate(lat: unknown, lng: unknown): boolean {
+  return (
+    typeof lat === 'number' &&
+    typeof lng === 'number' &&
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    lat >= BENIN_COORDINATE_BOUNDS.minLat &&
+    lat <= BENIN_COORDINATE_BOUNDS.maxLat &&
+    lng >= BENIN_COORDINATE_BOUNDS.minLng &&
+    lng <= BENIN_COORDINATE_BOUNDS.maxLng
+  );
+}
+
 /**
- * Recherche ou extrait les coordonnées d'une commune béninoise parmi les 77 communes
+ * Recherche stricte d'une commune béninoise sans repli silencieux vers Cotonou.
  */
-export function getLocationForCommune(communeName: string): LocationPoint {
-  if (!communeName) {
-    return BENIN_COMMUNES_COORDS['Cotonou - Haie Vive'];
+export function findBeninCommuneLocation(communeName: string): LocationPoint | null {
+  if (!communeName || typeof communeName !== 'string') {
+    return null;
   }
 
-  // Correspondance exacte
-  if (BENIN_COMMUNES_COORDS[communeName]) {
-    return BENIN_COMMUNES_COORDS[communeName];
+  const trimmed = communeName.trim();
+  if (!trimmed) return null;
+
+  if (BENIN_COMMUNES_COORDS[trimmed]) {
+    return BENIN_COMMUNES_COORDS[trimmed];
   }
 
-  const cleanName = communeName.toLowerCase().trim();
+  const cleanName = trimmed.toLowerCase();
 
-  // Recherche directe ou sur sous-parties (ex: "Kandi", "Parakou", "Fidjrossè")
   for (const [key, val] of Object.entries(BENIN_COMMUNES_COORDS)) {
     const keyLower = key.toLowerCase();
     const valNameLower = val.name.toLowerCase();
@@ -1040,7 +1061,6 @@ export function getLocationForCommune(communeName: string): LocationPoint {
     }
   }
 
-  // Recherche par mot clé principal
   for (const [key, val] of Object.entries(BENIN_COMMUNES_COORDS)) {
     const subParts = key.split(/[-–—/()]/).map((s) => s.trim().toLowerCase()).filter(Boolean);
     if (subParts.some((p) => p.length >= 3 && cleanName.includes(p))) {
@@ -1048,8 +1068,14 @@ export function getLocationForCommune(communeName: string): LocationPoint {
     }
   }
 
-  // Par défaut: Cotonou Haie Vive
-  return BENIN_COMMUNES_COORDS['Cotonou - Haie Vive'];
+  return null;
+}
+
+/**
+ * Recherche ou extrait les coordonnées d'une commune béninoise parmi les 77 communes
+ */
+export function getLocationForCommune(communeName: string): LocationPoint {
+  return findBeninCommuneLocation(communeName) || BENIN_COMMUNES_COORDS['Cotonou - Haie Vive'];
 }
 
 /**

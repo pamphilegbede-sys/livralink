@@ -366,11 +366,11 @@
     },
     "/deliveries/{deliveryId}": {
       "schema": "DeliveryOrder",
-      "description": "Commandes et expéditions gérées."
+      "description": "Commandes et expéditions gérées (création et montants financiers certifiés exclusivement par le serveur Admin SDK via POST /api/deliveries)."
     },
     "/priority_missions/{missionId}": {
       "schema": "PriorityMission",
-      "description": "Missions prioritaires publiées pour les coursiers vérifiés KYC."
+      "description": "Missions prioritaires publiées pour les coursiers vérifiés KYC (création atomique serveur Admin SDK exclusivement)."
     },
     "/admins/{adminId}": {
       "schema": "AdminUser",

@@ -238,8 +238,9 @@ interface AppContextType {
       dispatchMode?: 'auto' | 'direct';
       preferredCourierId?: string | null;
       offerTimeoutSeconds?: number;
+      manualDeliveryFeeOverride?: number;
     }
-  ) => DeliveryOrder;
+  ) => Promise<DeliveryOrder | null>;
   relaunchDeliveryDispatch: (
     orderId: string,
     options?: { preferredCourierId?: string | null; offerTimeoutSeconds?: number }
@@ -284,7 +285,7 @@ interface AppContextType {
   
   // Admin Entity Management & Full Control
   deleteDelivery: (orderId: string) => void;
-  updateDeliveryDetails: (orderId: string, updates: Partial<DeliveryOrder>) => void;
+  updateDeliveryDetails: (orderId: string, updates: Partial<DeliveryOrder>) => Promise<boolean>;
   deliveryDraft: DeliveryDraftData | null;
   setDeliveryDraft: React.Dispatch<React.SetStateAction<DeliveryDraftData | null>>;
   duplicateDeliveryOrder: (orderId: string) => boolean;
@@ -3030,24 +3031,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const simulateNewPriorityMission = async () => {
     const simNum = secureRandomInt(1000, 10000);
-    const simOrderId = `#LL-${simNum}`;
-    const cleanDocId = simOrderId.replace(/[^a-zA-Z0-9_-]/g, '');
     const communes = ['Haie Vive', 'Ganhi', 'Cadjehoun', 'Akpakpa', 'Fidjrossè', 'Godomey', 'Calavi'];
     const pickup = communes[secureRandomInt(0, 3)];
     const dropoff = communes[3 + secureRandomInt(0, 4)];
-    const fee = 1800 + secureRandomInt(0, 6) * 200; // 1800 - 2800 FCFA
     const cod = secureRandomInt(0, 10) > 3 ? 12000 + secureRandomInt(0, 15) * 1000 : 0;
     const storeNames = ['Mode & Élégance Cotonou', 'TechZone Bénin', 'Parfumerie Divine', 'Pharmacie Haie Vive'];
     const store = storeNames[secureRandomInt(0, storeNames.length)];
-    const currentMerchantUid = firebaseUser?.uid || userProfile?.uid || 'simulated_admin';
 
-    // Create in local deliveries state
-    createDelivery({
+    const created = await createDelivery({
       clientName: 'Client Express ' + simNum,
       clientPhone: '+229 97 ' + secureRandomInt(100000, 1000000),
       itemDescription: 'Commande Prioritaire VIP',
-      deliveryFee: fee,
       itemValueCOD: cod,
+      deliveryType: 'urgent',
       pickupLocation: {
         name: store,
         address: `${pickup}, Cotonou`,
@@ -3061,26 +3057,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       status: 'en_attente'
     });
 
-    try {
-      await setDoc(doc(db, 'priority_missions', cleanDocId), {
-        id: simOrderId,
-        orderId: simOrderId,
-        merchantId: currentMerchantUid,
-        storeName: store,
-        pickupCommune: pickup,
-        dropoffCommune: dropoff,
-        fee,
-        cod,
-        itemDescription: 'Commande Prioritaire VIP',
-        status: 'en_attente',
-        createdAt: Date.now(),
-        urgency: 'high'
-      });
-    } catch (err) {
-      console.warn('Erreur écriture simulation priority_missions:', err);
+    if (created) {
+      showToast(`⚡ Mission prioritaire ${created.id} publiée via le serveur (${created.deliveryFee.toLocaleString('fr-FR')} FCFA) !`, 'success');
     }
-
-    showToast(`⚡ Simulation : Mission prioritaire ${simOrderId} publiée sur Firestore !`, 'success');
   };
 
   const showToast = (text: string, type: 'success' | 'info' | 'error' = 'success') => {
@@ -3428,59 +3407,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => clearInterval(interval);
   }, [firebaseUser?.uid, firebaseUser?.emailVerified, isAdminAuthenticated, advanceExpiredOffer]);
 
-  const createDelivery = (
+  const createDelivery = async (
     newOrderData: Partial<DeliveryOrder>,
     options?: {
       clientEmail?: string;
       dispatchMode?: 'auto' | 'direct';
       preferredCourierId?: string | null;
       offerTimeoutSeconds?: number;
+      manualDeliveryFeeOverride?: number;
     }
-  ): DeliveryOrder => {
-    const randPart = secureRandomInt(1000, 10000);
-    const timePart = Date.now().toString(36).toUpperCase().slice(-4);
-    const newId = `#LL-${timePart}${randPart}`;
-    const computedDistanceKm =
-      typeof newOrderData.distanceKm === 'number' && newOrderData.distanceKm > 0
-        ? newOrderData.distanceKm
-        : newOrderData.pickupLocation?.coordinates && newOrderData.dropoffLocation?.coordinates
-          ? calculateDistanceKm(
-              { lat: newOrderData.pickupLocation.coordinates[0], lng: newOrderData.pickupLocation.coordinates[1] },
-              { lat: newOrderData.dropoffLocation.coordinates[0], lng: newOrderData.dropoffLocation.coordinates[1] }
-            )
-          : 1;
+  ): Promise<DeliveryOrder | null> => {
+    const authenticatedMerchantUid =
+      (isDirectorModeActive && isAdminAuthenticated && directorTargetId)
+        ? directorTargetId
+        : (auth.currentUser?.uid || firebaseUser?.uid || userProfile?.uid);
+
+    if (!auth.currentUser || !authenticatedMerchantUid) {
+      showToast('Authentification vendeur requise pour créer une livraison.', 'error');
+      return null;
+    }
+    if (!auth.currentUser.emailVerified) {
+      showToast('Veuillez confirmer votre adresse e-mail avant de publier une livraison.', 'error');
+      return null;
+    }
+    if (featureFlags.allowNewOrders === false && !isAdminAuthenticated) {
+      showToast('La création de nouvelles livraisons est temporairement suspendue par l\'administration.', 'error');
+      return null;
+    }
+
     const requestedDeliveryType: 'standard' | 'express' | 'urgent' =
       featureFlags.allowPriorityDeliveries === false
         ? 'standard'
         : newOrderData.deliveryType || 'standard';
     const requestedVehicleCategory = newOrderData.vehicleCategory || 'moto';
-    const clientPricingSnapshot = calculateDynamicDeliveryQuote(
-      {
-        distanceKm: computedDistanceKm,
-        isFragile: Boolean(newOrderData.isFragile),
-        itemWeightKg: typeof newOrderData.itemWeightKg === 'number' ? newOrderData.itemWeightKg : 1,
-        deliveryType: requestedDeliveryType,
-        vehicleCategory: requestedVehicleCategory,
-        promoCode: newOrderData.promoCode,
-        allowPromotions: featureFlags.allowPromotions !== false,
-        source: 'client_preview',
-        configVersionUpdatedAt: platformConfig.updatedAt,
-      },
-      platformConfig.pricing
-    );
-    const calculatedFee =
-      typeof newOrderData.deliveryFee === 'number' && newOrderData.deliveryFee > 0
-        ? newOrderData.deliveryFee
-        : clientPricingSnapshot.finalDeliveryFeeFCFA;
-    const codVal = typeof newOrderData.itemValueCOD === 'number' ? newOrderData.itemValueCOD : 0;
-
-    const clientName = newOrderData.clientName?.trim() || 'Client';
-    const clientPhone = newOrderData.clientPhone?.trim() || '';
-    const clientNote = newOrderData.clientNote?.trim() || '';
-    const itemDesc = newOrderData.itemDescription?.trim() || 'Colis';
     const courierObj = newOrderData.courier || undefined;
-    const initialStatus: DeliveryStatus = newOrderData.status || (courierObj ? 'assignee' : 'en_attente');
-    const resolvedDispatchMode: 'auto' | 'direct' = courierObj || options?.dispatchMode === 'direct' ? 'direct' : 'auto';
+    const resolvedDispatchMode: 'auto' | 'direct' =
+      courierObj || options?.dispatchMode === 'direct' ? 'direct' : 'auto';
     const resolvedPreferredCourierId =
       options?.preferredCourierId !== undefined
         ? options.preferredCourierId
@@ -3492,304 +3454,162 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const resolvedTimeoutSec = clampOfferTimeoutSeconds(
       options?.offerTimeoutSeconds ?? merchantSettings.dispatchOfferTimeoutSeconds ?? DEFAULT_OFFER_TIMEOUT_SECONDS
     );
-
-    const authenticatedMerchantUid =
-      (isDirectorModeActive && isAdminAuthenticated && directorTargetId)
-        ? directorTargetId
-        : (auth.currentUser?.uid || firebaseUser?.uid || userProfile?.uid);
-
     const resolvedStoreName =
       merchantSettings.storeName?.trim() ||
       newOrderData.pickupLocation?.name?.trim() ||
       userProfile?.storeName?.trim() ||
       'Ma Boutique';
 
-    const newOrder: DeliveryOrder = {
-      id: newId,
-      clientName,
-      clientPhone,
-      clientNote,
-      isClientVerified: Boolean(clientPhone),
+    const requestBody: Record<string, any> = {
+      ...(isAdminAuthenticated && authenticatedMerchantUid !== auth.currentUser.uid
+        ? { merchantId: authenticatedMerchantUid }
+        : {}),
+      clientName: newOrderData.clientName?.trim() || '',
+      clientPhone: newOrderData.clientPhone?.trim() || '',
+      clientNote: newOrderData.clientNote?.trim() || '',
       channel: newOrderData.channel || 'WhatsApp',
       pickupLocation: newOrderData.pickupLocation || {
         name: resolvedStoreName,
         address: merchantSettings.defaultPickupAddress || merchantSettings.storeCommune || 'Cotonou',
-        commune: merchantSettings.storeCommune || 'Cotonou - Haie Vive'
+        commune: merchantSettings.storeCommune || 'Cotonou - Haie Vive',
       },
       dropoffLocation: newOrderData.dropoffLocation || {
-        name: clientName,
+        name: newOrderData.clientName?.trim() || 'Client',
         address: 'Cotonou, Bénin',
-        commune: 'Cotonou - Haie Vive'
+        commune: 'Cotonou - Haie Vive',
       },
-      itemDescription: itemDesc,
+      itemDescription: newOrderData.itemDescription?.trim() || 'Colis',
       itemWeightKg: typeof newOrderData.itemWeightKg === 'number' ? newOrderData.itemWeightKg : 1,
       itemFormat: newOrderData.itemFormat || 'M',
       isFragile: Boolean(newOrderData.isFragile),
-      itemValueCOD: codVal,
-      deliveryFee: calculatedFee,
-      totalCustomerPayable: codVal + calculatedFee,
-      distanceKm: computedDistanceKm,
+      itemValueCOD: typeof newOrderData.itemValueCOD === 'number' ? Math.round(newOrderData.itemValueCOD) : 0,
       deliveryType: requestedDeliveryType,
       vehicleCategory: requestedVehicleCategory,
-      promoCode: newOrderData.promoCode,
-      promoDiscountFCFA: clientPricingSnapshot.promoDiscountFCFA,
-      pricingSnapshot: clientPricingSnapshot,
-      courier: courierObj,
-      status: initialStatus,
+      ...(featureFlags.allowPromotions !== false && newOrderData.promoCode?.trim()
+        ? { promoCode: newOrderData.promoCode.trim() }
+        : {}),
       dispatchMode: resolvedDispatchMode,
-      dispatchState: courierObj ? 'assigned' : 'searching',
       preferredCourierId: resolvedPreferredCourierId,
       preferredCourierName: resolvedPreferredCourierName,
       offerTimeoutSeconds: resolvedTimeoutSec,
-      statusNote: newOrderData.statusNote || (courierObj
-        ? `Assignée à ${courierObj.name}`
-        : `Recherche intelligente du livreur le plus proche en cours...`),
-      createdAt: new Date().toISOString(),
-      estimatedArrival: 'Dans ~20 min',
-      otpCode: newOrderData.otpCode || secureRandomInt(1000, 10000).toString(),
-      otpGeneratedAt: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-      merchantId: authenticatedMerchantUid,
-      merchantEmail: userProfile?.email || merchantSettings.email,
-      merchantStoreName: resolvedStoreName,
-      timeline: [
-        { id: 't1', stepNumber: 1, title: 'Commande créée', description: 'Enregistrée avec succès', timestamp: 'Maintenant', status: 'completed' },
-        {
-          id: 't2',
-          stepNumber: 2,
-          title: courierObj ? 'Livreur assigné' : 'Attribution intelligente GPS',
-          description: courierObj
-            ? `Attribuée à ${courierObj.name}`
-            : 'Recherche du livreur préféré ou du coursier actif le plus proche du point de collecte',
-          timestamp: 'Maintenant',
-          status: 'completed'
-        },
-        {
-          id: 't3',
-          stepNumber: 3,
-          title: courierObj ? 'Mission acceptée' : 'Proposition séquentielle en cours',
-          description: courierObj ? 'En attente de prise en charge' : 'En attente de réponse du livreur ciblé',
-          status: 'active'
-        },
-        { id: 't4', stepNumber: 4, title: 'Colis récupéré', description: 'Point de collecte boutique', status: 'pending' },
-        { id: 't5', stepNumber: 5, title: 'En cours de livraison', description: 'En transit vers client', status: 'pending' },
-        { id: 't6', stepNumber: 6, title: 'Preuve de livraison (POD)', description: 'Validation obligatoire : Code OTP + Photo en direct + Signature tactile', status: 'pending' }
-      ]
+      ...(courierObj?.id ? { courierId: courierObj.id } : {}),
+      ...(isAdminAuthenticated && typeof options?.manualDeliveryFeeOverride === 'number'
+        ? { manualDeliveryFeeOverride: options.manualDeliveryFeeOverride }
+        : {}),
     };
 
-    if (!authenticatedMerchantUid) {
-      showToast('Authentification vendeur requise pour créer une livraison.', 'error');
-      return newOrder;
-    }
+    try {
+      const token = await auth.currentUser.getIdToken();
+      const res = await fetch('/api/deliveries', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success || !data?.delivery) {
+        showToast(data?.error || 'Impossible d\'enregistrer la livraison sur le serveur.', 'error');
+        return null;
+      }
 
-    if (featureFlags.allowNewOrders === false && !isAdminAuthenticated) {
-      showToast('La création de nouvelles livraisons est temporairement suspendue par l\'administration.', 'error');
-      return newOrder;
-    }
-
-    setDeliveries((prev) => {
-      const scopedPrev = isAdminAuthenticated && !isDirectorModeActive
-        ? prev
-        : prev.filter((d) => isOrderOwnedByVendor(d, authenticatedMerchantUid));
-      return [newOrder, ...scopedPrev];
-    });
-    setSelectedDelivery(newOrder);
-    setDeliveryDraft(null);
-    addAuditLog('system', 'Nouvelle course créée', `Commande ${newId} pour ${clientName} (${newOrder.dropoffLocation.commune})`);
-
-    addNotification({
-      type: 'order_created',
-      recipientId: authenticatedMerchantUid,
-      title: `📦 Nouvelle livraison ${newId} créée`,
-      message: `Destination : ${newOrder.dropoffLocation.commune} (${clientName}). Colis : ${itemDesc}.`,
-      orderId: newId,
-      actionView: 'vendeur_tracking',
-      roleTarget: 'vendeur'
-    });
-
-    const cleanDocId = newId.replace(/[^a-zA-Z0-9_-]/g, '');
-    if (newOrder.otpCode) {
-      setPrivateOtps((prev) => ({ ...prev, [newId]: newOrder.otpCode! }));
-    }
-
-    if (auth.currentUser) {
-      const firestoreDeliveryPayload: Record<string, any> = {
-        id: newId,
-        orderId: newId,
-        merchantId: authenticatedMerchantUid,
-        merchantEmail: newOrder.merchantEmail || userProfile?.email || '',
-        merchantStoreName: resolvedStoreName,
-        clientName: newOrder.clientName,
-        clientPhone: newOrder.clientPhone,
-        clientNote: newOrder.clientNote || '',
-        channel: newOrder.channel || 'WhatsApp',
-        pickupLocation: newOrder.pickupLocation,
-        dropoffLocation: newOrder.dropoffLocation,
-        itemDescription: newOrder.itemDescription,
-        itemWeightKg: newOrder.itemWeightKg,
-        itemFormat: newOrder.itemFormat,
-        isFragile: newOrder.isFragile,
-        itemValueCOD: newOrder.itemValueCOD,
-        deliveryFee: newOrder.deliveryFee,
-        totalCustomerPayable: newOrder.totalCustomerPayable,
-        status: 'en_attente',
-        dispatchMode: resolvedDispatchMode,
-        dispatchState: courierObj ? 'assigned' : 'searching',
-        preferredCourierId: resolvedPreferredCourierId,
-        preferredCourierName: resolvedPreferredCourierName,
-        offerTimeoutSeconds: resolvedTimeoutSec,
-        rejectedCourierIds: [],
-        expiredCourierIds: [],
-        offerAttempt: 0,
-        statusNote: newOrder.statusNote,
-        distanceKm: computedDistanceKm,
-        deliveryType: requestedDeliveryType,
-        vehicleCategory: requestedVehicleCategory,
-        ...(newOrderData.promoCode ? { promoCode: newOrderData.promoCode } : {}),
-        promoDiscountFCFA: clientPricingSnapshot.promoDiscountFCFA,
-        pricingSnapshot: clientPricingSnapshot,
-        createdAt: Date.now(),
-        otpRequired: true,
+      const rawDelivery = data.delivery;
+      const serverDelivery: DeliveryOrder = {
+        ...rawDelivery,
+        createdAt:
+          rawDelivery.createdAtIso ||
+          (typeof rawDelivery.createdAt === 'number'
+            ? new Date(rawDelivery.createdAt).toISOString()
+            : String(rawDelivery.createdAt || new Date().toISOString())),
+        ...(typeof data.otpCode === 'string' ? { otpCode: data.otpCode } : {}),
       };
 
-      const shouldAutoDispatch = !courierObj && initialStatus === 'en_attente' && resolvedDispatchMode === 'auto';
+      const newId = serverDelivery.id;
+      const cleanDocId = newId.replace(/[^a-zA-Z0-9_-]/g, '');
 
-      try {
-        const missionInitPromise = (!courierObj || initialStatus === 'en_attente')
-          ? setDoc(doc(db, 'priority_missions', cleanDocId), {
-              id: newId,
-              orderId: newId,
-              merchantId: authenticatedMerchantUid,
-              storeName: resolvedStoreName,
-              pickupCommune: newOrder.pickupLocation.commune || 'Cotonou',
-              dropoffCommune: newOrder.dropoffLocation.commune || 'Cotonou',
-              fee: calculatedFee,
-              cod: codVal,
-              itemDescription: itemDesc,
-              status: 'en_attente',
-              dispatchMode: resolvedDispatchMode,
-              dispatchState: courierObj ? 'assigned' : 'searching',
-              preferredCourierId: resolvedPreferredCourierId,
-              preferredCourierName: resolvedPreferredCourierName,
-              offerTimeoutSeconds: resolvedTimeoutSec,
-              createdAt: Date.now(),
-              urgency: 'high'
-            }).catch((err: any) => {
-              console.error('Erreur synchro priority_missions:', err?.message || err);
-            })
-          : Promise.resolve();
+      setDeliveries((prev) => {
+        const scopedPrev =
+          isAdminAuthenticated && !isDirectorModeActive
+            ? prev
+            : prev.filter((d) => isOrderOwnedByVendor(d, authenticatedMerchantUid));
+        return [serverDelivery, ...scopedPrev.filter((d) => d.id !== newId)];
+      });
+      setSelectedDelivery(serverDelivery);
+      setDeliveryDraft(null);
 
-        setDoc(doc(db, 'deliveries', cleanDocId), firestoreDeliveryPayload)
-          .then(async () => {
-            await missionInitPromise;
-            // Finalize authoritative server snapshots (pricingSnapshot, remunerationSnapshot, commissionSnapshot)
-            if (auth.currentUser?.emailVerified) {
-              try {
-                const token = await auth.currentUser.getIdToken();
-                await fetch(`/api/deliveries/${encodeURIComponent(cleanDocId)}/finalize-pricing`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`,
-                  },
-                  body: JSON.stringify({
-                    distanceKm: computedDistanceKm,
-                    isFragile: Boolean(newOrderData.isFragile),
-                    itemWeightKg: newOrder.itemWeightKg,
-                    deliveryType: requestedDeliveryType,
-                    vehicleCategory: requestedVehicleCategory,
-                    promoCode: newOrderData.promoCode || '',
-                  }),
-                });
-              } catch {}
-            }
-            if (newOrder.otpCode) {
-              await setDoc(doc(db, 'deliveries', cleanDocId, 'private', 'otp'), {
-                otpCode: newOrder.otpCode,
-                merchantId: authenticatedMerchantUid,
-                generatedAt: Date.now(),
-              });
-              const cleanClientEmail = options?.clientEmail?.trim();
-              if (cleanClientEmail) {
-                const emailRes = await notifyClientDeliveryOtp({
-                  orderId: newId,
-                  clientEmail: cleanClientEmail,
-                  clientName: newOrder.clientName,
-                });
-                if (emailRes.success) {
-                  showToast(emailRes.message || `Code OTP transmis par e-mail à ${cleanClientEmail}.`, 'success');
-                } else {
-                  showToast(emailRes.error || `Course créée, mais échec d'envoi de l'OTP à ${cleanClientEmail}.`, 'info');
-                }
-              }
-            }
-            if (courierObj?.id && isAdminAuthenticated && initialStatus !== 'en_attente') {
-              await setDoc(
-                doc(db, 'deliveries', cleanDocId),
-                {
-                  status: initialStatus,
-                  dispatchState: 'assigned',
-                  courierId: courierObj.id,
-                  courierName: courierObj.name,
-                  updatedAt: Date.now(),
-                },
-                { merge: true }
-              );
-            }
-            if (shouldAutoDispatch) {
-              await triggerStartDispatch(newOrder, cleanDocId, {
-                preferredCourierId: resolvedPreferredCourierId,
-                offerTimeoutSeconds: resolvedTimeoutSec,
-              });
-            }
-            if (newOrder.merchantEmail || userProfile?.email) {
-              void sendPlatformNotification({
-                eventType: 'delivery_created',
-                recipientEmail: newOrder.merchantEmail || userProfile?.email || '',
-                recipientName: newOrder.merchantStoreName || userProfile?.fullName || 'Commerçant',
-                details: {
-                  orderId: newOrder.id,
-                  pickupName: newOrder.pickupLocation.name,
-                  dropoffCommune: newOrder.dropoffLocation.commune,
-                  feeFCFA: newOrder.deliveryFee,
-                  codFCFA: newOrder.itemValueCOD,
-                },
-              });
-            }
-            void dispatchTrustedNotification({
-              type: 'order_created',
-              recipientId: authenticatedMerchantUid,
-              title: `📦 Nouvelle livraison ${newId} créée`,
-              message: `Destination : ${newOrder.dropoffLocation.commune} (${clientName}). Colis : ${itemDesc}.`,
-              orderId: newId,
-              actionView: 'vendeur_tracking',
-              dedupKey: `order_created:${cleanDocId}`,
-            });
-            if (userProfile?.role === 'vendeur' || (isDirectorModeActive && isAdminAuthenticated && currentRole === 'vendeur')) {
-              void fetchDeliveries(authenticatedMerchantUid);
-            }
-          })
-          .catch((err: any) => {
-            console.error('Erreur synchro deliveries Firestore:', err?.message || err);
-            if (err?.code === 'permission-denied') {
-              showToast('Synchro Firestore refusée : vérifiez la confirmation de votre email vendeur.', 'error');
-              if (auth.currentUser?.emailVerified) {
-                handleFirestoreError(err, OperationType.CREATE, `deliveries/${cleanDocId}`);
-              }
-            } else {
-              showToast('Erreur réseau/Firestore lors de l\'enregistrement de la course.', 'error');
-            }
-          });
-      } catch (err: any) {
-        console.warn('Erreur synchro deliveries Firestore:', err);
+      if (typeof data.otpCode === 'string') {
+        setPrivateOtps((prev) => ({ ...prev, [newId]: data.otpCode }));
       }
-    }
 
-    if (courierObj) {
-      showToast(`Commande ${newId} créée et assignée à ${courierObj.name}.`, 'success');
-    } else {
-      showToast(`Commande ${newId} enregistrée. Recherche du livreur actif le plus proche...`, 'info');
+      addAuditLog(
+        'system',
+        'Nouvelle course créée',
+        `Commande ${newId} certifiée serveur (${serverDelivery.deliveryFee.toLocaleString('fr-FR')} FCFA) pour ${serverDelivery.clientName}`
+      );
+
+      const cleanClientEmail = options?.clientEmail?.trim();
+      if (cleanClientEmail && typeof data.otpCode === 'string') {
+        const emailRes = await notifyClientDeliveryOtp({
+          orderId: newId,
+          clientEmail: cleanClientEmail,
+          clientName: serverDelivery.clientName,
+        });
+        if (emailRes.success) {
+          showToast(emailRes.message || `Code OTP transmis par e-mail à ${cleanClientEmail}.`, 'success');
+        } else {
+          showToast(emailRes.error || `Course créée, mais échec d'envoi de l'OTP à ${cleanClientEmail}.`, 'info');
+        }
+      }
+
+      const shouldAutoDispatch =
+        !serverDelivery.courier &&
+        serverDelivery.status === 'en_attente' &&
+        resolvedDispatchMode === 'auto';
+      if (shouldAutoDispatch) {
+        await triggerStartDispatch(serverDelivery, cleanDocId, {
+          preferredCourierId: resolvedPreferredCourierId,
+          offerTimeoutSeconds: resolvedTimeoutSec,
+        });
+      }
+
+      if (serverDelivery.merchantEmail || userProfile?.email) {
+        void sendPlatformNotification({
+          eventType: 'delivery_created',
+          recipientEmail: serverDelivery.merchantEmail || userProfile?.email || '',
+          recipientName: serverDelivery.merchantStoreName || userProfile?.fullName || 'Commerçant',
+          details: {
+            orderId: serverDelivery.id,
+            pickupName: serverDelivery.pickupLocation.name,
+            dropoffCommune: serverDelivery.dropoffLocation.commune,
+            feeFCFA: serverDelivery.deliveryFee,
+            codFCFA: serverDelivery.itemValueCOD,
+          },
+        });
+      }
+
+      if (userProfile?.role === 'vendeur' || (isDirectorModeActive && isAdminAuthenticated && currentRole === 'vendeur')) {
+        void fetchDeliveries(authenticatedMerchantUid);
+      }
+
+      if (serverDelivery.courier) {
+        showToast(
+          `Commande ${newId} créée (${serverDelivery.deliveryFee.toLocaleString('fr-FR')} FCFA) et assignée à ${serverDelivery.courier.name}.`,
+          'success'
+        );
+      } else {
+        showToast(
+          `Commande ${newId} enregistrée (${serverDelivery.deliveryFee.toLocaleString('fr-FR')} FCFA certifié serveur). Recherche du livreur en cours...`,
+          'info'
+        );
+      }
+
+      return serverDelivery;
+    } catch (err: any) {
+      console.error('Erreur création sécurisée livraison:', err?.message || err);
+      showToast('Erreur réseau lors de l\'enregistrement sécurisé de la livraison.', 'error');
+      return null;
     }
-    return newOrder;
   };
 
   const selectActiveCourier = (courierOrId: Courier | string) => {
@@ -5941,83 +5761,111 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
-  const updateDeliveryDetails = (orderId: string, updates: Partial<DeliveryOrder>) => {
+  const updateDeliveryDetails = async (orderId: string, updates: Partial<DeliveryOrder>): Promise<boolean> => {
     const activeUid = userProfile?.uid || firebaseUser?.uid;
     const isSupervisory = isAdminAuthenticated || isDirectorModeActive;
     const targetOrder = deliveriesRef.current.find((d) => d.id === orderId);
 
-    if (!targetOrder) return;
+    if (!targetOrder) return false;
     if (!isSupervisory && !isOrderOwnedByVendor(targetOrder, activeUid)) {
       showToast('Accès refusé : vous ne pouvez modifier que vos propres commandes.', 'error');
-      return;
+      return false;
+    }
+    if (!isSupervisory && targetOrder.status !== 'en_attente') {
+      showToast('Modification verrouillée : cette course a déjà été prise en charge.', 'error');
+      return false;
+    }
+    if (!auth.currentUser) {
+      showToast('Authentification requise pour modifier cette course.', 'error');
+      return false;
     }
 
-    // Non-admin vendors may only update customer/amount fields while order is still pending
-    const safeUpdates: Partial<DeliveryOrder> = isSupervisory
-      ? updates
+    const requestPatch: Record<string, any> = isSupervisory
+      ? {
+          ...(updates.clientName !== undefined ? { clientName: updates.clientName } : {}),
+          ...(updates.clientPhone !== undefined ? { clientPhone: updates.clientPhone } : {}),
+          ...(updates.itemDescription !== undefined ? { itemDescription: updates.itemDescription } : {}),
+          ...(updates.pickupLocation !== undefined ? { pickupLocation: updates.pickupLocation } : {}),
+          ...(updates.dropoffLocation !== undefined ? { dropoffLocation: updates.dropoffLocation } : {}),
+          ...(updates.itemValueCOD !== undefined ? { itemValueCOD: updates.itemValueCOD } : {}),
+          ...(updates.itemWeightKg !== undefined ? { itemWeightKg: updates.itemWeightKg } : {}),
+          ...(updates.isFragile !== undefined ? { isFragile: updates.isFragile } : {}),
+          ...(updates.deliveryType !== undefined ? { deliveryType: updates.deliveryType } : {}),
+          ...(updates.vehicleCategory !== undefined ? { vehicleCategory: updates.vehicleCategory } : {}),
+          ...(updates.promoCode !== undefined ? { promoCode: updates.promoCode } : {}),
+          ...(updates.deliveryFee !== undefined ? { deliveryFee: updates.deliveryFee } : {}),
+          ...(updates.status !== undefined ? { status: updates.status } : {}),
+          ...(updates.statusNote !== undefined ? { statusNote: updates.statusNote } : {}),
+        }
       : {
           ...(updates.clientName !== undefined ? { clientName: updates.clientName } : {}),
           ...(updates.clientPhone !== undefined ? { clientPhone: updates.clientPhone } : {}),
+          ...(updates.itemDescription !== undefined ? { itemDescription: updates.itemDescription } : {}),
+          ...(updates.pickupLocation !== undefined ? { pickupLocation: updates.pickupLocation } : {}),
+          ...(updates.dropoffLocation !== undefined ? { dropoffLocation: updates.dropoffLocation } : {}),
           ...(updates.itemValueCOD !== undefined ? { itemValueCOD: updates.itemValueCOD } : {}),
-          ...(updates.deliveryFee !== undefined ? { deliveryFee: updates.deliveryFee } : {}),
+          ...(updates.itemWeightKg !== undefined ? { itemWeightKg: updates.itemWeightKg } : {}),
+          ...(updates.isFragile !== undefined ? { isFragile: updates.isFragile } : {}),
+          ...(updates.deliveryType !== undefined ? { deliveryType: updates.deliveryType } : {}),
+          ...(updates.vehicleCategory !== undefined ? { vehicleCategory: updates.vehicleCategory } : {}),
+          ...(updates.promoCode !== undefined ? { promoCode: updates.promoCode } : {}),
         };
 
-    if (!isSupervisory && targetOrder.status !== 'en_attente') {
-      showToast('Modification verrouillée : cette course a déjà été prise en charge.', 'error');
-      return;
-    }
+    const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
 
-    const nextCod = typeof safeUpdates.itemValueCOD === 'number' ? safeUpdates.itemValueCOD : targetOrder.itemValueCOD;
-    const nextFee = typeof safeUpdates.deliveryFee === 'number' ? safeUpdates.deliveryFee : targetOrder.deliveryFee;
-    const totalPayable = nextCod + nextFee;
+    try {
+      const token = await auth.currentUser.getIdToken();
+      const res = await fetch(`/api/deliveries/${encodeURIComponent(cleanDocId)}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(requestPatch),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success || !data?.delivery) {
+        showToast(data?.error || 'Impossible de mettre à jour la livraison côté serveur.', 'error');
+        return false;
+      }
 
-    setDeliveries(prev =>
-      prev.map(ord => {
-        if (ord.id === orderId) {
-          const updated: DeliveryOrder = {
+      const rawUpdated = data.delivery;
+      setDeliveries((prev) =>
+        prev.map((ord) => {
+          if (ord.id !== orderId) return ord;
+          const merged: DeliveryOrder = {
             ...ord,
-            ...safeUpdates,
-            merchantId: ord.merchantId, // immutable ownership
-            totalCustomerPayable: totalPayable,
+            ...rawUpdated,
+            createdAt:
+              rawUpdated.createdAtIso ||
+              ord.createdAt,
+            merchantId: ord.merchantId,
           };
           if (isSupervisory && updates.status && updates.status !== ord.status) {
-            updated.timeline = [
-              ...ord.timeline,
+            merged.timeline = [
+              ...(ord.timeline || []),
               {
                 id: 't-up-' + Date.now(),
-                stepNumber: ord.timeline.length + 1,
+                stepNumber: (ord.timeline?.length || 0) + 1,
                 title: `Statut modifié : ${updates.status.toUpperCase()}`,
                 description: updates.statusNote || 'Mise à jour administrative',
                 timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                status: 'completed' as const
-              }
+                status: 'completed' as const,
+              },
             ];
           }
-          return updated;
-        }
-        return ord;
-      })
-    );
-
-    if (auth.currentUser) {
-      const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
-      const firestorePatch: Record<string, any> = {
-        updatedAt: Date.now(),
-        totalCustomerPayable: totalPayable,
-      };
-      if (safeUpdates.clientName !== undefined) firestorePatch.clientName = safeUpdates.clientName;
-      if (safeUpdates.clientPhone !== undefined) firestorePatch.clientPhone = safeUpdates.clientPhone;
-      if (safeUpdates.itemValueCOD !== undefined) firestorePatch.itemValueCOD = safeUpdates.itemValueCOD;
-      if (safeUpdates.deliveryFee !== undefined) firestorePatch.deliveryFee = safeUpdates.deliveryFee;
-      if (isSupervisory && updates.status !== undefined) firestorePatch.status = updates.status;
-      if (isSupervisory && updates.statusNote !== undefined) firestorePatch.statusNote = updates.statusNote;
-      setDoc(doc(db, 'deliveries', cleanDocId), firestorePatch, { merge: true }).catch((err) =>
-        console.warn('Erreur synchro updateDeliveryDetails:', err?.message || err)
+          return merged;
+        })
       );
-    }
 
-    addAuditLog('system', `Course modifiée ${orderId}`, `Détails de la course ${orderId} mis à jour`);
-    showToast(`Course ${orderId} mise à jour avec succès !`, 'success');
+      addAuditLog('system', `Course modifiée ${orderId}`, `Détails et montants recalculés côté serveur pour ${orderId}`);
+      showToast(`Course ${orderId} mise à jour avec succès !`, 'success');
+      return true;
+    } catch (err: any) {
+      console.warn('Erreur synchro updateDeliveryDetails:', err?.message || err);
+      showToast('Erreur réseau lors de la mise à jour sécurisée de la livraison.', 'error');
+      return false;
+    }
   };
 
   // --- Admin Couriers Management (Flotte & Livreurs) ---
@@ -6256,15 +6104,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Test 1: Supervision des Courses & Dispatch Cycle
     const t1Start = Date.now();
     try {
-      const testOrder = createDelivery({
+      const testOrder = await createDelivery({
         clientName: 'Client Audit Suite',
         clientPhone: '+229 97 44 55 66',
         itemValueCOD: 20000,
-        deliveryFee: 1500,
         itemDescription: 'Colis test supervision'
-      });
+      }, { manualDeliveryFeeOverride: 1500 });
+      if (!testOrder) {
+        throw new Error('Échec de création autoritaire de la course test.');
+      }
       updateDeliveryStatus(testOrder.id, 'en_cours', 'Dispatch automatisé en transit');
-      updateDeliveryDetails(testOrder.id, { clientName: 'Client Audit Modifié', deliveryFee: 1600 });
+      await updateDeliveryDetails(testOrder.id, { clientName: 'Client Audit Modifié', deliveryFee: 1600 });
       await validatePOD(testOrder.id, 'otp', '8842', 'admin');
       results.push({
         id: 't-dispatch-workflow',

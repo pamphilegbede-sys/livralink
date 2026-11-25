@@ -397,7 +397,7 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
   });
 
   // 13. Legitimate operations continue working (with private OTP isolation and backend POD gating)
-  test('13. Legitimate vendor create, private OTP, and KYC-verified courier pickup/transit succeed', async () => {
+  test('13. Direct vendor client create/financial-tamper fail while backend-seeded docs, private OTP, and KYC-verified courier pickup/transit succeed', async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       await context.firestore().doc('users/vendor_ok').set({
         uid: 'vendor_ok',
@@ -422,33 +422,71 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
     });
     const vendorDb = vendorCtx.firestore();
 
-    await assertSucceeds(
+    // Direct client creation of /deliveries and /priority_missions by a vendor MUST FAIL (server-only via POST /api/deliveries)
+    await assertFails(
       vendorDb.doc('deliveries/m_ok').set({
         id: 'm_ok',
         merchantId: 'vendor_ok',
         clientName: 'Client A',
         clientPhone: '+22997001122',
-        deliveryFee: 2500,
+        deliveryFee: 1,
         status: 'en_attente',
         otpRequired: true,
       })
     );
 
+    await assertFails(
+      vendorDb.doc('priority_missions/m_ok').set({
+        id: 'm_ok',
+        orderId: 'm_ok',
+        merchantId: 'vendor_ok',
+        fee: 1,
+        status: 'en_attente',
+      })
+    );
+
+    // Seed delivery + priority_mission + private OTP as backend Admin SDK
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('deliveries/m_ok').set({
+        id: 'm_ok',
+        merchantId: 'vendor_ok',
+        clientName: 'Client A',
+        clientPhone: '+22997001122',
+        deliveryFee: 2500,
+        itemValueCOD: 15000,
+        totalCustomerPayable: 17500,
+        status: 'en_attente',
+        otpRequired: true,
+      });
+      await context.firestore().doc('priority_missions/m_ok').set({
+        id: 'm_ok',
+        orderId: 'm_ok',
+        merchantId: 'vendor_ok',
+        fee: 2500,
+        cod: 15000,
+        status: 'en_attente',
+      });
+    });
+
+    // Vendor CANNOT directly tamper with deliveryFee, itemValueCOD, totalCustomerPayable, or mission fee via client SDK
+    await assertFails(
+      vendorDb.doc('deliveries/m_ok').update({
+        deliveryFee: 100,
+        totalCustomerPayable: 15100,
+      })
+    );
+    await assertFails(
+      vendorDb.doc('priority_missions/m_ok').update({
+        fee: 100,
+      })
+    );
+
+    // Vendor CAN still read/update non-financial private OTP doc
     await assertSucceeds(
       vendorDb.doc('deliveries/m_ok/private/otp').set({
         otpCode: '4821',
         merchantId: 'vendor_ok',
         generatedAt: Date.now(),
-      })
-    );
-
-    await assertSucceeds(
-      vendorDb.doc('priority_missions/m_ok').set({
-        id: 'm_ok',
-        orderId: 'm_ok',
-        merchantId: 'vendor_ok',
-        fee: 2500,
-        status: 'en_attente',
       })
     );
 

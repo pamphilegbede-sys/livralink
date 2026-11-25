@@ -365,9 +365,7 @@ service cloud.firestore {
               newData.status == oldData.status &&
               diffKeys.hasOnly([
                 'clientName', 'clientPhone', 'clientNote', 'itemDescription',
-                'itemWeightKg', 'itemFormat', 'isFragile',
-                'itemValueCOD', 'deliveryFee', 'totalCustomerPayable',
-                'pickupLocation', 'dropoffLocation', 'statusNote', 'updatedAt',
+                'statusNote', 'updatedAt',
                 'dispatchMode', 'dispatchState', 'preferredCourierId', 'preferredCourierName',
                 'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
                 'candidateQueue', 'rejectedCourierIds', 'expiredCourierIds',
@@ -482,28 +480,9 @@ service cloud.firestore {
         (isClientFast() && 'clientId' in resource.data && resource.data.clientId == request.auth.uid)
       );
 
-      allow create: if isValidId(deliveryId) &&
-                    hasVerifiedEmail() &&
-                    isValidDelivery(incoming()) &&
-                    ((incoming().merchantId == request.auth.uid && isVendeurFast()) || isAdminFast()) &&
-                    incoming().status == 'en_attente' &&
-                    noCourierAssigned(incoming()) &&
-                    !('podData' in incoming()) &&
-                    !('deliveredAt' in incoming()) &&
-                    incoming().keys().hasOnly([
-                      'id', 'orderId', 'merchantId', 'merchantEmail', 'merchantStoreName',
-                      'clientId', 'clientName', 'clientPhone', 'clientNote', 'channel',
-                      'pickupLocation', 'dropoffLocation', 'itemDescription', 'itemWeightKg',
-                      'itemFormat', 'isFragile', 'itemValueCOD', 'deliveryFee',
-                      'totalCustomerPayable', 'status', 'statusNote', 'createdAt',
-                      'updatedAt', 'estimatedArrival', 'otpRequired', 'timeline',
-                      'dispatchMode', 'dispatchState', 'preferredCourierId', 'preferredCourierName',
-                      'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
-                      'candidateQueue', 'rejectedCourierIds', 'expiredCourierIds',
-                      'offerAttempt', 'offerTimeoutSeconds', 'offerStartedAt', 'offerExpiresAt',
-                      'dispatchFailureReason', 'distanceKm', 'deliveryType', 'vehicleCategory',
-                      'promoCode', 'promoDiscountFCFA', 'pricingSnapshot', 'remunerationSnapshot', 'commissionSnapshot'
-                    ]);
+      // Les livraisons DOIVENT être créées côté serveur (POST /api/deliveries via Admin SDK)
+      // pour garantir le calcul autoritaire des distances, tarifs, remises et totaux.
+      allow create: if isAdmin();
 
       allow update: if isValidId(deliveryId) &&
                     hasVerifiedEmail() &&
@@ -696,8 +675,7 @@ service cloud.firestore {
           noCourierAssigned(newData) &&
           newData.status == oldData.status &&
           diffKeys.hasOnly([
-            'fee', 'cod', 'pickupCommune', 'dropoffCommune', 'itemDescription',
-            'storeName', 'urgency',
+            'itemDescription', 'storeName', 'urgency',
             'dispatchMode', 'dispatchState', 'preferredCourierId', 'preferredCourierName',
             'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
             'offerAttempt', 'offerTimeoutSeconds', 'offerStartedAt', 'offerExpiresAt',
@@ -766,20 +744,8 @@ service cloud.firestore {
         (isVendeurFast() && resource.data.merchantId == request.auth.uid)
       );
 
-      allow create: if isValidId(missionId) &&
-                    hasVerifiedEmail() &&
-                    isValidPriorityMission(incoming()) &&
-                    incoming().status == 'en_attente' &&
-                    noCourierAssigned(incoming()) &&
-                    ((incoming().merchantId == request.auth.uid && isVendeurFast()) || isAdminFast()) &&
-                    incoming().keys().hasOnly([
-                      'id', 'orderId', 'merchantId', 'storeName', 'pickupCommune',
-                      'dropoffCommune', 'fee', 'cod', 'itemDescription', 'urgency',
-                      'dispatchMode', 'dispatchState', 'preferredCourierId', 'preferredCourierName',
-                      'targetCourierId', 'targetCourierName', 'targetCourierDistanceKm', 'targetIsPreferred',
-                      'offerAttempt', 'offerTimeoutSeconds', 'offerStartedAt', 'offerExpiresAt',
-                      'status', 'createdAt', 'updatedAt'
-                    ]);
+      // Les missions prioritaires sont créées atomiquement côté serveur (POST /api/deliveries).
+      allow create: if isAdmin();
 
       allow update: if isValidId(missionId) &&
                     hasVerifiedEmail() &&

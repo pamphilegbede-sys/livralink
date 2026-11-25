@@ -46,6 +46,7 @@ export const VendeurNewDelivery: React.FC = () => {
 
   // Active Wizard Step: 1 = Client, 2 = Colis & Trajet, 3 = Attribution Coursier
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Step 1: Destinataire (TOUS VIDES par défaut à la demande du vendeur)
   const [clientName, setClientName] = useState('');
@@ -429,7 +430,8 @@ export const VendeurNewDelivery: React.FC = () => {
     }
   };
 
-  const handleConfirmAssignment = (forceAuto = true) => {
+  const handleConfirmAssignment = async (forceAuto = true) => {
+    if (isSubmitting) return;
     if (!featureFlags.allowNewOrders) {
       showToast("La création de nouvelles livraisons est temporairement suspendue par l'administrateur.", 'error');
       return;
@@ -455,51 +457,62 @@ export const VendeurNewDelivery: React.FC = () => {
 
     const trimmedClientEmail = clientEmail.trim();
     const effectiveDeliveryType = featureFlags.allowPriorityDeliveries ? deliveryType : 'standard';
-    const newOrder = createDelivery({
-      clientName: clientName.trim(),
-      clientPhone: clientPhone.trim(),
-      clientNote: clientNote.trim(),
-      channel: 'WhatsApp',
-      pickupLocation: {
-        name: pickupStoreName.trim() || 'Boutique Vendeur',
-        address: pickupAddress.trim() || (pickupCommune || 'Haie Vive, Cotonou'),
-        commune: pickupCommune || 'Cotonou - Haie Vive',
-        coordinates: [effectiveOrigin.lat, effectiveOrigin.lng]
-      },
-      dropoffLocation: {
-        name: clientName.trim() || 'Destinataire',
-        address: dropoffAddress.trim() || dropoffCommune,
-        commune: dropoffCommune,
-        coordinates: [effectiveDestination.lat, effectiveDestination.lng]
-      },
-      itemDescription: itemDescription.trim() || 'Colis Marchandise',
-      itemWeightKg: typeof itemWeight === 'number' ? itemWeight : undefined,
-      itemFormat,
-      isFragile,
-      deliveryType: effectiveDeliveryType,
-      vehicleCategory,
-      promoCode: featureFlags.allowPromotions && promoCode.trim() ? promoCode.trim() : undefined,
-      distanceKm,
-      itemValueCOD: numericCod,
-      deliveryFee,
-      courier: assignedDriver,
-      status: assignedDriver ? 'assignee' : 'en_attente',
-      statusNote: assignedDriver
-        ? `Assignée au livreur (${assignedDriver.name})`
-        : 'Recherche automatique du livreur le plus proche en cours...'
-    }, {
-      ...(trimmedClientEmail ? { clientEmail: trimmedClientEmail } : {}),
-      dispatchMode: isDirect ? 'direct' : 'auto',
-      preferredCourierId: isDirect ? null : (preferredCourierId || null),
-      offerTimeoutSeconds,
-    });
 
-    if (assignedDriver) {
-      showToast(`Course ${newOrder.id} assignée au livreur ${assignedDriver.name}.`, 'success');
+    setIsSubmitting(true);
+    try {
+      const newOrder = await createDelivery({
+        clientName: clientName.trim(),
+        clientPhone: clientPhone.trim(),
+        clientNote: clientNote.trim(),
+        channel: 'WhatsApp',
+        pickupLocation: {
+          name: pickupStoreName.trim() || 'Boutique Vendeur',
+          address: pickupAddress.trim() || (pickupCommune || 'Haie Vive, Cotonou'),
+          commune: pickupCommune || 'Cotonou - Haie Vive',
+          coordinates: [effectiveOrigin.lat, effectiveOrigin.lng]
+        },
+        dropoffLocation: {
+          name: clientName.trim() || 'Destinataire',
+          address: dropoffAddress.trim() || dropoffCommune,
+          commune: dropoffCommune,
+          coordinates: [effectiveDestination.lat, effectiveDestination.lng]
+        },
+        itemDescription: itemDescription.trim() || 'Colis Marchandise',
+        itemWeightKg: typeof itemWeight === 'number' ? itemWeight : undefined,
+        itemFormat,
+        isFragile,
+        deliveryType: effectiveDeliveryType,
+        vehicleCategory,
+        promoCode: featureFlags.allowPromotions && promoCode.trim() ? promoCode.trim() : undefined,
+        itemValueCOD: numericCod,
+        courier: assignedDriver,
+        status: assignedDriver ? 'assignee' : 'en_attente',
+        statusNote: assignedDriver
+          ? `Assignée au livreur (${assignedDriver.name})`
+          : 'Recherche automatique du livreur le plus proche en cours...'
+      }, {
+        ...(trimmedClientEmail ? { clientEmail: trimmedClientEmail } : {}),
+        dispatchMode: isDirect ? 'direct' : 'auto',
+        preferredCourierId: isDirect ? null : (preferredCourierId || null),
+        offerTimeoutSeconds,
+      });
+
+      if (!newOrder) {
+        return;
+      }
+
+      if (assignedDriver) {
+        showToast(
+          `Course ${newOrder.id} assignée à ${assignedDriver.name} (${newOrder.deliveryFee.toLocaleString('fr-FR')} FCFA).`,
+          'success'
+        );
+      }
+
+      // Redirect to tracking page
+      setCurrentView('vendeur_tracking');
+    } finally {
+      setIsSubmitting(false);
     }
-
-    // Redirect to tracking page
-    setCurrentView('vendeur_tracking');
   };
 
   return (
@@ -1826,22 +1839,25 @@ export const VendeurNewDelivery: React.FC = () => {
                   {dispatchMode === 'auto' ? (
                     <button
                       type="button"
-                      onClick={() => handleConfirmAssignment(true)}
-                      className="min-h-[44px] flex-1 py-3.5 px-6 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-emerald-600/30 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer text-center"
+                      disabled={isSubmitting}
+                      onClick={() => void handleConfirmAssignment(true)}
+                      className="min-h-[44px] flex-1 py-3.5 px-6 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-emerald-600/30 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer text-center"
                     >
-                      <span className="material-symbols-outlined text-lg">radar</span>
-                      <span className="hidden sm:inline">Publier &amp; Lancer l&apos;attribution GPS</span>
-                      <span className="sm:hidden">Lancer l&apos;attribution GPS</span>
+                      <span className="material-symbols-outlined text-lg">{isSubmitting ? 'progress_activity' : 'radar'}</span>
+                      <span className="hidden sm:inline">{isSubmitting ? 'Enregistrement sécurisé...' : "Publier & Lancer l'attribution GPS"}</span>
+                      <span className="sm:hidden">{isSubmitting ? 'Enregistrement...' : "Lancer l'attribution GPS"}</span>
                     </button>
                   ) : (
                     <button
                       type="button"
-                      disabled={!currentSelectedDriver}
-                      onClick={() => handleConfirmAssignment(false)}
+                      disabled={!currentSelectedDriver || isSubmitting}
+                      onClick={() => void handleConfirmAssignment(false)}
                       className="min-h-[44px] flex-1 py-3.5 px-6 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-blue-600/30 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer text-center"
                     >
-                      <span className="material-symbols-outlined text-lg">person_check</span>
-                      <span className="truncate">Attribuer à {currentSelectedDriver?.name || 'Aucun livreur disponible'}</span>
+                      <span className="material-symbols-outlined text-lg">{isSubmitting ? 'progress_activity' : 'person_check'}</span>
+                      <span className="truncate">
+                        {isSubmitting ? 'Enregistrement sécurisé...' : `Attribuer à ${currentSelectedDriver?.name || 'Aucun livreur disponible'}`}
+                      </span>
                     </button>
                   )}
                 </div>

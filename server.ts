@@ -86,7 +86,11 @@ import {
   saveEmailTemplate,
   savePlatformConfigSection,
 } from './src/server/platformConfigService';
-import { computeAuthoritativeOrderFinancials } from './src/server/pricingEngine';
+import {
+  computeAuthoritativeOrderFinancials,
+  resolveAuthoritativeRouteDistance,
+  ServerRouteValidationError,
+} from './src/server/pricingEngine';
 import {
   AccountLifecycleStatus,
   AdminPermission,
@@ -6182,16 +6186,701 @@ app.post('/api/platform/config', requireAdminAuthorization as any, async (req: A
 });
 
 // =========================================================================
-// AUTHORITATIVE PRICING QUOTE & IMMUTABLE SNAPSHOT LOCKING
+// AUTHORITATIVE DELIVERY CREATION, UPDATE & PRICING SNAPSHOT LOCKING
 // =========================================================================
+app.post('/api/deliveries', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) {
+      return res.status(503).json({ success: false, code: 'FIRESTORE_UNAVAILABLE', error: 'Firestore Admin SDK indisponible.' });
+    }
+
+    const callerUid = req.user!.uid;
+    const isAdmin = await checkCallerIsAdmin(req.user);
+    const body = req.body || {};
+
+    const callerSnap = await activeDb.collection('users').doc(callerUid).get();
+    const callerData = callerSnap.exists ? callerSnap.data() || {} : {};
+    if (!isAdmin) {
+      if (!callerSnap.exists || callerData.role !== 'vendeur') {
+        return res.status(403).json({
+          success: false,
+          code: 'VENDOR_ROLE_REQUIRED',
+          error: 'Seul un compte vendeur vérifié peut créer une livraison.',
+        });
+      }
+      if (
+        callerData.accountStatus === 'suspendu' ||
+        callerData.accountStatus === 'bloque' ||
+        callerData.status === 'suspendu'
+      ) {
+        return res.status(403).json({
+          success: false,
+          code: 'ACCOUNT_SUSPENDED',
+          error: 'Votre compte est actuellement suspendu ou bloqué.',
+        });
+      }
+    }
+
+    const targetMerchantId =
+      isAdmin && typeof body.merchantId === 'string' && body.merchantId.trim()
+        ? body.merchantId.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128)
+        : callerUid;
+
+    if (!targetMerchantId) {
+      return res.status(400).json({ success: false, error: 'Identifiant vendeur invalide.' });
+    }
+
+    const cfg = await loadPlatformConfigBundle(activeDb);
+    if (!cfg.bundle.featureFlags.allowNewOrders && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        code: 'NEW_ORDERS_DISABLED',
+        error: 'La création de nouvelles commandes est temporairement suspendue par l’administrateur.',
+      });
+    }
+
+    const clientName = typeof body.clientName === 'string' ? body.clientName.trim().slice(0, 128) : '';
+    const clientPhone = typeof body.clientPhone === 'string' ? body.clientPhone.trim().slice(0, 32) : '';
+    const clientNote = typeof body.clientNote === 'string' ? body.clientNote.trim().slice(0, 500) : '';
+    const itemDescription = typeof body.itemDescription === 'string' ? body.itemDescription.trim().slice(0, 300) : 'Colis';
+    const itemFormat =
+      body.itemFormat === 'S' || body.itemFormat === 'L' || body.itemFormat === 'XL' ? body.itemFormat : 'M';
+    const channel =
+      body.channel === 'Instagram' || body.channel === 'TikTok' || body.channel === 'Site Web'
+        ? body.channel
+        : 'WhatsApp';
+
+    if (!clientName || clientPhone.length < 6) {
+      return res.status(400).json({
+        success: false,
+        code: 'INVALID_CLIENT_INFO',
+        error: 'Nom et numéro de téléphone valides du destinataire requis.',
+      });
+    }
+
+    if (body.deliveryFee !== undefined && (!Number.isFinite(Number(body.deliveryFee)) || Number(body.deliveryFee) < 0)) {
+      return res.status(400).json({ success: false, error: 'Montant de livraison invalide.' });
+    }
+    if (body.promoDiscountFCFA !== undefined && (!Number.isFinite(Number(body.promoDiscountFCFA)) || Number(body.promoDiscountFCFA) < 0)) {
+      return res.status(400).json({ success: false, error: 'Montant de réduction invalide.' });
+    }
+
+    const rawCod = body.itemValueCOD === undefined || body.itemValueCOD === null ? 0 : Number(body.itemValueCOD);
+    if (!Number.isFinite(rawCod) || !Number.isInteger(rawCod) || rawCod < 0 || rawCod > 10_000_000) {
+      return res.status(400).json({
+        success: false,
+        code: 'INVALID_COD_AMOUNT',
+        error: 'Le montant à encaisser (COD) doit être un entier compris entre 0 et 10 000 000 FCFA.',
+      });
+    }
+
+    const rawWeight = body.itemWeightKg === undefined || body.itemWeightKg === null ? 1 : Number(body.itemWeightKg);
+    if (!Number.isFinite(rawWeight) || rawWeight < 0.1 || rawWeight > 500) {
+      return res.status(400).json({
+        success: false,
+        code: 'INVALID_WEIGHT',
+        error: 'Le poids du colis doit être compris entre 0,1 kg et 500 kg.',
+      });
+    }
+
+    const deliveryType =
+      body.deliveryType === 'express' || body.deliveryType === 'urgent' ? body.deliveryType : 'standard';
+    if (deliveryType !== 'standard' && !cfg.bundle.featureFlags.allowPriorityDeliveries && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        code: 'PRIORITY_DELIVERIES_DISABLED',
+        error: 'Les livraisons express et prioritaires sont temporairement désactivées.',
+      });
+    }
+
+    const vehicleCategory =
+      body.vehicleCategory === 'tricycle' || body.vehicleCategory === 'voiture' || body.vehicleCategory === 'camionnette'
+        ? body.vehicleCategory
+        : 'moto';
+
+    let merchantData = callerData;
+    if (targetMerchantId !== callerUid) {
+      const mSnap = await activeDb.collection('users').doc(targetMerchantId).get();
+      merchantData = mSnap.exists ? mSnap.data() || {} : {};
+    }
+    const resolvedStoreName = String(
+      body.pickupLocation?.name || merchantData.storeName || callerData.storeName || 'Ma Boutique'
+    )
+      .trim()
+      .slice(0, 128);
+
+    let validatedRoute;
+    try {
+      validatedRoute = resolveAuthoritativeRouteDistance({
+        pickupLocation: body.pickupLocation,
+        dropoffLocation: body.dropoffLocation,
+        defaultPickupName: resolvedStoreName,
+        defaultDropoffName: clientName,
+      });
+    } catch (routeErr: any) {
+      if (routeErr instanceof ServerRouteValidationError) {
+        return res.status(routeErr.statusCode).json({
+          success: false,
+          code: routeErr.code,
+          error: routeErr.message,
+        });
+      }
+      throw routeErr;
+    }
+
+    const requestedCourierId =
+      typeof body.courierId === 'string' && body.courierId.trim()
+        ? body.courierId.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128)
+        : undefined;
+
+    let validatedCourierData: Record<string, any> | null = null;
+    if (requestedCourierId) {
+      const cSnap = await activeDb.collection('users').doc(requestedCourierId).get();
+      if (!cSnap.exists) {
+        return res.status(404).json({ success: false, error: 'Livreur sélectionné introuvable.' });
+      }
+      const cData = cSnap.data() || {};
+      if (cData.role !== 'livreur' || (!cData.isKycVerified && cData.kycStatus !== 'valide')) {
+        return res.status(403).json({
+          success: false,
+          code: 'COURIER_KYC_REQUIRED',
+          error: 'Le livreur sélectionné doit être accrédité KYC.',
+        });
+      }
+      if (cData.accountStatus === 'suspendu' || cData.accountStatus === 'bloque' || cData.status === 'suspendu') {
+        return res.status(403).json({
+          success: false,
+          code: 'COURIER_SUSPENDED',
+          error: 'Le livreur sélectionné est actuellement suspendu ou bloqué.',
+        });
+      }
+      validatedCourierData = cData;
+    }
+
+    const promoCode =
+      typeof body.promoCode === 'string' && cfg.bundle.featureFlags.allowPromotions
+        ? body.promoCode.trim().slice(0, 64)
+        : undefined;
+
+    const financials = await computeAuthoritativeOrderFinancials(activeDb, {
+      distanceKm: validatedRoute.distanceKm,
+      isFragile: Boolean(body.isFragile),
+      itemWeightKg: rawWeight,
+      deliveryType,
+      vehicleCategory,
+      promoCode,
+      isPeakPeriod: Boolean(body.isPeakPeriod),
+      merchantId: targetMerchantId,
+      courierId: requestedCourierId,
+    });
+
+    if (financials.featureBlocked && !isAdmin) {
+      return res.status(403).json({ success: false, code: 'NEW_ORDERS_DISABLED', error: financials.featureBlocked });
+    }
+
+    let finalFee = financials.pricingSnapshot.finalDeliveryFeeFCFA;
+    const isAdminManualOverride =
+      isAdmin &&
+      body.manualDeliveryFeeOverride !== undefined &&
+      Number.isFinite(Number(body.manualDeliveryFeeOverride));
+
+    if (isAdminManualOverride) {
+      const adminOverrideFee = Math.round(Number(body.manualDeliveryFeeOverride));
+      if (adminOverrideFee < 100 || adminOverrideFee > 500_000) {
+        return res.status(400).json({ success: false, error: 'Tarif administratif hors bornes (100 - 500 000 FCFA).' });
+      }
+      finalFee = adminOverrideFee;
+    } else if (!isAdmin && typeof body.deliveryFee === 'number' && Math.abs(body.deliveryFee - finalFee) > 50) {
+      recordSecurityAnomaly(
+        getClientIp(req),
+        'PRICE_TAMPER_ATTEMPT',
+        `Écart tarifaire ignoré à la création par ${callerUid} (client=${body.deliveryFee} vs serveur=${finalFee})`
+      );
+    }
+
+    const totalCustomerPayable = rawCod + finalFee;
+    const randPart = crypto.randomInt(1000, 10000);
+    const timePart = Date.now().toString(36).toUpperCase().slice(-4);
+    const orderId = `#LL-${timePart}${randPart}`;
+    const cleanDocId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
+    const otpCode = crypto.randomInt(1000, 10000).toString();
+    const nowEpoch = Date.now();
+    const nowIso = new Date(nowEpoch).toISOString();
+    const nowTime = new Date(nowEpoch).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+    const resolvedDispatchMode: 'auto' | 'direct' =
+      requestedCourierId || body.dispatchMode === 'direct' ? 'direct' : 'auto';
+    const rawPreferredId =
+      typeof body.preferredCourierId === 'string' && body.preferredCourierId.trim()
+        ? body.preferredCourierId.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128)
+        : null;
+    const resolvedPreferredCourierId =
+      resolvedDispatchMode === 'auto' ? (rawPreferredId ?? merchantData.preferredCourierId ?? null) : null;
+    let resolvedPreferredCourierName =
+      typeof body.preferredCourierName === 'string' ? body.preferredCourierName.trim().slice(0, 128) : (merchantData.preferredCourierName || null);
+    if (resolvedPreferredCourierId && !resolvedPreferredCourierName) {
+      const prefSnap = await activeDb.collection('users').doc(resolvedPreferredCourierId).get().catch(() => null);
+      if (prefSnap?.exists) {
+        resolvedPreferredCourierName = String(prefSnap.data()?.fullName || prefSnap.data()?.name || '').trim() || null;
+      }
+    }
+
+    const rawTimeout = Number(body.offerTimeoutSeconds ?? merchantData.dispatchOfferTimeoutSeconds ?? 30);
+    const resolvedTimeoutSec = Number.isFinite(rawTimeout)
+      ? Math.min(180, Math.max(15, Math.round(rawTimeout)))
+      : 30;
+
+    let courierSummary: Record<string, any> | undefined;
+    if (requestedCourierId && validatedCourierData) {
+      const courierName = String(validatedCourierData.fullName || validatedCourierData.name || 'Coursier LivraLink').trim().slice(0, 128);
+      courierSummary = {
+        id: requestedCourierId,
+        name: courierName,
+        phone: String(validatedCourierData.phone || ''),
+        email: String(validatedCourierData.email || ''),
+        avatarInitials: courierName.slice(0, 2).toUpperCase() || 'CR',
+        rating: Number(validatedCourierData.rating || 5),
+        totalDeliveries: Number(validatedCourierData.totalDeliveries || 0),
+        vehicle: String(validatedCourierData.vehicleType || 'Moto'),
+        zone: String(validatedCourierData.locationCommune || 'Cotonou'),
+        distanceKm: validatedRoute.distanceKm,
+        etaMinutes: Math.max(5, Math.round((validatedRoute.distanceKm / 26) * 60 + 3)),
+        status: 'en_course',
+        priceFCFA: finalFee,
+        commissionFCFA: financials.commissionSnapshot.platformCommissionFCFA,
+        netEarningFCFA: financials.remunerationSnapshot.netCourierEarningFCFA,
+        isKycVerified: true,
+      };
+    }
+
+    const initialStatus = courierSummary ? 'assignee' : 'en_attente';
+    const statusNote = courierSummary
+      ? `Assignée au livreur (${courierSummary.name})`
+      : 'Recherche intelligente du livreur le plus proche en cours...';
+    const merchantEmail = String(merchantData.email || req.user?.email || '').trim().toLowerCase();
+
+    const deliveryDoc: Record<string, any> = {
+      id: orderId,
+      orderId,
+      merchantId: targetMerchantId,
+      merchantEmail,
+      merchantStoreName: resolvedStoreName,
+      clientName,
+      clientPhone,
+      clientNote,
+      isClientVerified: Boolean(clientPhone),
+      channel,
+      pickupLocation: validatedRoute.pickupLocation,
+      dropoffLocation: validatedRoute.dropoffLocation,
+      itemDescription,
+      itemWeightKg: rawWeight,
+      itemFormat,
+      isFragile: Boolean(body.isFragile),
+      itemValueCOD: rawCod,
+      deliveryFee: finalFee,
+      totalCustomerPayable,
+      distanceKm: validatedRoute.distanceKm,
+      deliveryType,
+      vehicleCategory,
+      ...(promoCode ? { promoCode } : {}),
+      promoDiscountFCFA: financials.pricingSnapshot.promoDiscountFCFA,
+      pricingSnapshot: {
+        ...financials.pricingSnapshot,
+        finalDeliveryFeeFCFA: finalFee,
+        ...(isAdminManualOverride ? { adminManualOverride: true } : {}),
+      },
+      remunerationSnapshot: financials.remunerationSnapshot,
+      commissionSnapshot: financials.commissionSnapshot,
+      ...(courierSummary
+        ? {
+            courierId: courierSummary.id,
+            courierName: courierSummary.name,
+            courier: courierSummary,
+            assignedAt: nowEpoch,
+          }
+        : {}),
+      status: initialStatus,
+      dispatchMode: resolvedDispatchMode,
+      dispatchState: courierSummary ? 'assigned' : 'searching',
+      preferredCourierId: resolvedPreferredCourierId,
+      preferredCourierName: resolvedPreferredCourierName,
+      offerTimeoutSeconds: resolvedTimeoutSec,
+      rejectedCourierIds: [],
+      expiredCourierIds: [],
+      offerAttempt: 0,
+      statusNote,
+      createdAt: nowEpoch,
+      createdAtIso: nowIso,
+      updatedAt: nowEpoch,
+      otpRequired: true,
+      otpGeneratedAt: nowTime,
+      estimatedArrival: `Dans ~${Math.max(10, Math.round((validatedRoute.distanceKm / 25) * 60 + 5))} min`,
+      timeline: [
+        { id: 't1', stepNumber: 1, title: 'Commande créée', description: 'Enregistrée avec succès (tarif certifié serveur)', timestamp: 'Maintenant', status: 'completed' },
+        {
+          id: 't2',
+          stepNumber: 2,
+          title: courierSummary ? 'Livreur assigné' : 'Attribution intelligente GPS',
+          description: courierSummary
+            ? `Attribuée à ${courierSummary.name}`
+            : 'Recherche du livreur préféré ou du coursier actif le plus proche du point de collecte',
+          timestamp: 'Maintenant',
+          status: 'completed',
+        },
+        {
+          id: 't3',
+          stepNumber: 3,
+          title: courierSummary ? 'Mission acceptée' : 'Proposition séquentielle en cours',
+          description: courierSummary ? 'En attente de prise en charge' : 'En attente de réponse du livreur ciblé',
+          status: 'active',
+        },
+        { id: 't4', stepNumber: 4, title: 'Colis récupéré', description: 'Point de collecte boutique', status: 'pending' },
+        { id: 't5', stepNumber: 5, title: 'En cours de livraison', description: 'En transit vers client', status: 'pending' },
+        { id: 't6', stepNumber: 6, title: 'Preuve de livraison (POD)', description: 'Validation obligatoire : Code OTP + Photo en direct + Signature tactile', status: 'pending' },
+      ],
+    };
+
+    const batch = activeDb.batch();
+    const deliveryRef = activeDb.collection('deliveries').doc(cleanDocId);
+    batch.set(deliveryRef, deliveryDoc);
+    batch.set(deliveryRef.collection('private').doc('otp'), {
+      otpCode,
+      merchantId: targetMerchantId,
+      generatedAt: nowEpoch,
+    });
+
+    if (!courierSummary) {
+      batch.set(activeDb.collection('priority_missions').doc(cleanDocId), {
+        id: orderId,
+        orderId,
+        merchantId: targetMerchantId,
+        storeName: resolvedStoreName,
+        pickupCommune: validatedRoute.pickupLocation.commune,
+        dropoffCommune: validatedRoute.dropoffLocation.commune,
+        fee: finalFee,
+        cod: rawCod,
+        itemDescription,
+        status: 'en_attente',
+        dispatchMode: resolvedDispatchMode,
+        dispatchState: 'searching',
+        preferredCourierId: resolvedPreferredCourierId,
+        preferredCourierName: resolvedPreferredCourierName,
+        offerTimeoutSeconds: resolvedTimeoutSec,
+        createdAt: nowEpoch,
+        urgency: 'high',
+      });
+    }
+
+    const notifId = `notif_order_${cleanDocId}_${nowEpoch}`.replace(/[^a-zA-Z0-9_-]/g, '');
+    batch.set(activeDb.collection('notifications').doc(notifId), {
+      id: notifId,
+      senderId: 'system_backend',
+      recipientId: targetMerchantId,
+      type: 'order_created',
+      title: `📦 Nouvelle livraison ${orderId} créée`,
+      message: `Destination : ${validatedRoute.dropoffLocation.commune} (${clientName}). Tarif certifié : ${finalFee.toLocaleString('fr-FR')} FCFA.`,
+      orderId,
+      orderDocId: cleanDocId,
+      actionView: 'vendeur_tracking',
+      isRead: false,
+      read: false,
+      createdAt: nowEpoch,
+      timestamp: nowTime,
+    });
+
+    await batch.commit();
+
+    if (isAdminManualOverride && req.adminContext) {
+      await recordAdminAuditLog(activeDb, {
+        adminUid: req.adminContext.uid,
+        adminEmail: req.adminContext.email,
+        adminRole: req.adminContext.roleId || 'admin',
+        category: 'pricing',
+        action: 'ADMIN_ORDER_MANUAL_FEE',
+        targetType: 'delivery',
+        targetId: cleanDocId,
+        oldValue: { computedFee: financials.pricingSnapshot.finalDeliveryFeeFCFA },
+        newValue: { manualFee: finalFee },
+      }).catch(() => {});
+    }
+
+    return res.status(201).json({
+      success: true,
+      delivery: deliveryDoc,
+      otpCode,
+    });
+  } catch (err: any) {
+    if (isFirestoreIamDeniedError(err)) {
+      return res.status(503).json({
+        success: false,
+        code: 'IAM_PERMISSION_DENIED',
+        error: 'Permissions IAM Firestore insuffisantes pour créer la livraison côté serveur.',
+      });
+    }
+    console.error('[CREATE DELIVERY ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la création sécurisée de la livraison.' });
+  }
+});
+
+app.patch('/api/deliveries/:orderId', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) {
+      return res.status(503).json({ success: false, code: 'FIRESTORE_UNAVAILABLE', error: 'Firestore Admin SDK indisponible.' });
+    }
+    const cleanDocId = String(req.params.orderId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!cleanDocId) {
+      return res.status(400).json({ success: false, error: 'Identifiant de livraison invalide.' });
+    }
+
+    const deliveryRef = activeDb.collection('deliveries').doc(cleanDocId);
+    const snap = await deliveryRef.get();
+    if (!snap.exists) {
+      return res.status(404).json({ success: false, error: 'Livraison introuvable.' });
+    }
+
+    const orderData = snap.data() || {};
+    const callerUid = req.user!.uid;
+    const isAdmin = await checkCallerIsAdmin(req.user);
+    const body = req.body || {};
+
+    if (!isAdmin) {
+      if (orderData.merchantId !== callerUid) {
+        return res.status(403).json({ success: false, error: 'Accès refusé : vous ne pouvez modifier que vos propres commandes.' });
+      }
+      if (orderData.status !== 'en_attente' || getAssignedCourierIdFromOrder(orderData)) {
+        return res.status(409).json({ success: false, error: 'Modification verrouillée : cette course a déjà été prise en charge.' });
+      }
+      if (
+        body.deliveryFee !== undefined ||
+        body.promoDiscountFCFA !== undefined ||
+        body.totalCustomerPayable !== undefined ||
+        body.pricingSnapshot !== undefined ||
+        body.distanceKm !== undefined ||
+        body.status !== undefined
+      ) {
+        recordSecurityAnomaly(
+          getClientIp(req),
+          'PRICE_TAMPER_ATTEMPT',
+          `Tentative de modification directe de champs financiers/statut sur ${cleanDocId} par ${callerUid}`
+        );
+        return res.status(403).json({
+          success: false,
+          code: 'PRICE_OVERRIDE_FORBIDDEN',
+          error: 'Les montants financiers, la distance et le statut ne peuvent pas être modifiés directement.',
+        });
+      }
+    }
+
+    const nextClientName =
+      typeof body.clientName === 'string' && body.clientName.trim()
+        ? body.clientName.trim().slice(0, 128)
+        : String(orderData.clientName || 'Client');
+    const nextClientPhone =
+      typeof body.clientPhone === 'string' && body.clientPhone.trim()
+        ? body.clientPhone.trim().slice(0, 32)
+        : String(orderData.clientPhone || '');
+    const nextItemDesc =
+      typeof body.itemDescription === 'string' && body.itemDescription.trim()
+        ? body.itemDescription.trim().slice(0, 300)
+        : String(orderData.itemDescription || 'Colis');
+
+    let nextCod = Number(orderData.itemValueCOD || 0);
+    if (body.itemValueCOD !== undefined) {
+      const parsedCod = Number(body.itemValueCOD);
+      if (!Number.isFinite(parsedCod) || !Number.isInteger(parsedCod) || parsedCod < 0 || parsedCod > 10_000_000) {
+        return res.status(400).json({ success: false, error: 'Montant COD invalide (entier 0 à 10 000 000 FCFA).' });
+      }
+      nextCod = parsedCod;
+    }
+
+    let nextWeight = Number(orderData.itemWeightKg || 1);
+    if (body.itemWeightKg !== undefined) {
+      const parsedWeight = Number(body.itemWeightKg);
+      if (!Number.isFinite(parsedWeight) || parsedWeight < 0.1 || parsedWeight > 500) {
+        return res.status(400).json({ success: false, error: 'Poids du colis invalide (0,1 à 500 kg).' });
+      }
+      nextWeight = parsedWeight;
+    }
+
+    const pickupInput = body.pickupLocation ?? orderData.pickupLocation;
+    const dropoffInput = body.dropoffLocation ?? orderData.dropoffLocation;
+    let validatedRoute;
+    try {
+      validatedRoute = resolveAuthoritativeRouteDistance({
+        pickupLocation: pickupInput,
+        dropoffLocation: dropoffInput,
+        defaultPickupName: String(orderData.merchantStoreName || 'Boutique Vendeur'),
+        defaultDropoffName: nextClientName,
+      });
+    } catch (routeErr: any) {
+      if (routeErr instanceof ServerRouteValidationError) {
+        return res.status(routeErr.statusCode).json({
+          success: false,
+          code: routeErr.code,
+          error: routeErr.message,
+        });
+      }
+      throw routeErr;
+    }
+
+    const nextDeliveryType =
+      body.deliveryType === 'express' || body.deliveryType === 'urgent'
+        ? body.deliveryType
+        : orderData.deliveryType === 'express' || orderData.deliveryType === 'urgent'
+        ? orderData.deliveryType
+        : 'standard';
+    const nextVehicleCategory =
+      body.vehicleCategory === 'tricycle' || body.vehicleCategory === 'voiture' || body.vehicleCategory === 'camionnette'
+        ? body.vehicleCategory
+        : orderData.vehicleCategory || 'moto';
+    const nextIsFragile = body.isFragile !== undefined ? Boolean(body.isFragile) : Boolean(orderData.isFragile);
+    const nextPromoCode =
+      typeof body.promoCode === 'string' ? body.promoCode.trim().slice(0, 64) : orderData.promoCode;
+
+    const financials = await computeAuthoritativeOrderFinancials(activeDb, {
+      distanceKm: validatedRoute.distanceKm,
+      isFragile: nextIsFragile,
+      itemWeightKg: nextWeight,
+      deliveryType: nextDeliveryType,
+      vehicleCategory: nextVehicleCategory,
+      promoCode: nextPromoCode,
+      merchantId: String(orderData.merchantId || callerUid),
+      courierId: orderData.courierId ? String(orderData.courierId) : undefined,
+    });
+
+    let finalFee = financials.pricingSnapshot.finalDeliveryFeeFCFA;
+    let adminManualFeeApplied = false;
+    if (isAdmin && body.deliveryFee !== undefined) {
+      const parsedFee = Math.round(Number(body.deliveryFee));
+      if (!Number.isFinite(parsedFee) || parsedFee < 100 || parsedFee > 500_000) {
+        return res.status(400).json({ success: false, error: 'Tarif administratif invalide (100 - 500 000 FCFA).' });
+      }
+      finalFee = parsedFee;
+      adminManualFeeApplied = true;
+    }
+
+    const totalCustomerPayable = nextCod + finalFee;
+    const nowEpoch = Date.now();
+    const patch: Record<string, any> = {
+      clientName: nextClientName,
+      clientPhone: nextClientPhone,
+      itemDescription: nextItemDesc,
+      pickupLocation: validatedRoute.pickupLocation,
+      dropoffLocation: validatedRoute.dropoffLocation,
+      distanceKm: validatedRoute.distanceKm,
+      itemWeightKg: nextWeight,
+      isFragile: nextIsFragile,
+      itemValueCOD: nextCod,
+      deliveryFee: finalFee,
+      totalCustomerPayable,
+      deliveryType: nextDeliveryType,
+      vehicleCategory: nextVehicleCategory,
+      promoDiscountFCFA: financials.pricingSnapshot.promoDiscountFCFA,
+      pricingSnapshot: {
+        ...financials.pricingSnapshot,
+        finalDeliveryFeeFCFA: finalFee,
+        ...(adminManualFeeApplied ? { adminManualOverride: true } : {}),
+      },
+      remunerationSnapshot: financials.remunerationSnapshot,
+      commissionSnapshot: financials.commissionSnapshot,
+      updatedAt: nowEpoch,
+    };
+    if (isAdmin && typeof body.status === 'string' && ['en_attente', 'assignee', 'acceptee', 'colis_recupere', 'en_cours', 'livree', 'echec'].includes(body.status)) {
+      patch.status = body.status;
+    }
+    if (isAdmin && typeof body.statusNote === 'string') {
+      patch.statusNote = body.statusNote.trim().slice(0, 300);
+    }
+
+    const batch = activeDb.batch();
+    batch.set(deliveryRef, patch, { merge: true });
+    const missionRef = activeDb.collection('priority_missions').doc(cleanDocId);
+    const missionSnap = await missionRef.get();
+    if (missionSnap.exists) {
+      batch.set(
+        missionRef,
+        {
+          pickupCommune: validatedRoute.pickupLocation.commune,
+          dropoffCommune: validatedRoute.dropoffLocation.commune,
+          itemDescription: nextItemDesc,
+          fee: finalFee,
+          cod: nextCod,
+          ...(patch.status ? { status: patch.status } : {}),
+          updatedAt: nowEpoch,
+        },
+        { merge: true }
+      );
+    }
+    await batch.commit();
+
+    if (adminManualFeeApplied && req.adminContext) {
+      await recordAdminAuditLog(activeDb, {
+        adminUid: req.adminContext.uid,
+        adminEmail: req.adminContext.email,
+        adminRole: req.adminContext.roleId || 'admin',
+        category: 'pricing',
+        action: 'ADMIN_DELIVERY_FEE_UPDATED',
+        targetType: 'delivery',
+        targetId: cleanDocId,
+        oldValue: { deliveryFee: orderData.deliveryFee },
+        newValue: { deliveryFee: finalFee },
+      }).catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      delivery: { ...orderData, ...patch },
+    });
+  } catch (err: any) {
+    if (isFirestoreIamDeniedError(err)) {
+      return res.status(503).json({
+        success: false,
+        code: 'IAM_PERMISSION_DENIED',
+        error: 'Permissions IAM Firestore insuffisantes.',
+      });
+    }
+    console.error('[UPDATE DELIVERY ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la mise à jour sécurisée de la livraison.' });
+  }
+});
+
 app.post('/api/deliveries/calculate-quote', requireVerifiedUser as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const activeDb = getActiveDb();
     const body = req.body || {};
-    const distanceKm = Number(body.distanceKm);
-    if (!Number.isFinite(distanceKm) || distanceKm <= 0 || distanceKm > 1000) {
-      return res.status(400).json({ success: false, error: 'Distance kilométrique valide requise.' });
+
+    let distanceKm: number;
+    if (body.pickupLocation && body.dropoffLocation) {
+      try {
+        const route = resolveAuthoritativeRouteDistance({
+          pickupLocation: body.pickupLocation,
+          dropoffLocation: body.dropoffLocation,
+        });
+        distanceKm = route.distanceKm;
+      } catch (routeErr: any) {
+        if (routeErr instanceof ServerRouteValidationError) {
+          return res.status(routeErr.statusCode).json({
+            success: false,
+            code: routeErr.code,
+            error: routeErr.message,
+          });
+        }
+        throw routeErr;
+      }
+    } else {
+      distanceKm = Number(body.distanceKm);
+      if (!Number.isFinite(distanceKm) || distanceKm <= 0 || distanceKm > 1000) {
+        return res.status(400).json({ success: false, error: 'Distance kilométrique valide requise.' });
+      }
     }
+
+    const itemWeightKg = body.itemWeightKg === undefined ? 1 : Number(body.itemWeightKg);
+    if (!Number.isFinite(itemWeightKg) || itemWeightKg < 0.1 || itemWeightKg > 500) {
+      return res.status(400).json({ success: false, error: 'Poids invalide (0,1 à 500 kg).' });
+    }
+
     const deliveryType =
       body.deliveryType === 'express' || body.deliveryType === 'urgent' ? body.deliveryType : 'standard';
     const vehicleCategory =
@@ -6211,7 +6900,7 @@ app.post('/api/deliveries/calculate-quote', requireVerifiedUser as any, async (r
     const result = await computeAuthoritativeOrderFinancials(activeDb, {
       distanceKm,
       isFragile: Boolean(body.isFragile),
-      itemWeightKg: typeof body.itemWeightKg === 'number' ? body.itemWeightKg : 1,
+      itemWeightKg,
       deliveryType,
       vehicleCategory,
       promoCode: typeof body.promoCode === 'string' ? body.promoCode : undefined,
@@ -6226,6 +6915,7 @@ app.post('/api/deliveries/calculate-quote', requireVerifiedUser as any, async (r
 
     return res.json({
       success: true,
+      distanceKm,
       deliveryFee: result.pricingSnapshot.finalDeliveryFeeFCFA,
       pricingSnapshot: result.pricingSnapshot,
       remunerationSnapshot: result.remunerationSnapshot,
@@ -6271,23 +6961,41 @@ app.post('/api/deliveries/:orderId/finalize-pricing', requireVerifiedUser as any
     }
 
     const body = req.body || {};
-    const distanceKm = Number(body.distanceKm ?? orderData.distanceKm ?? 1);
+    let distanceKm = Number(orderData.distanceKm ?? body.distanceKm ?? 1);
+    if (orderData.pickupLocation && orderData.dropoffLocation) {
+      try {
+        const route = resolveAuthoritativeRouteDistance({
+          pickupLocation: orderData.pickupLocation,
+          dropoffLocation: orderData.dropoffLocation,
+        });
+        distanceKm = route.distanceKm;
+      } catch (routeErr: any) {
+        if (routeErr instanceof ServerRouteValidationError) {
+          return res.status(routeErr.statusCode).json({
+            success: false,
+            code: routeErr.code,
+            error: routeErr.message,
+          });
+        }
+        throw routeErr;
+      }
+    }
+
     const deliveryType =
-      body.deliveryType === 'express' || body.deliveryType === 'urgent'
-        ? body.deliveryType
-        : orderData.deliveryType === 'express' || orderData.deliveryType === 'urgent'
+      orderData.deliveryType === 'express' || orderData.deliveryType === 'urgent'
         ? orderData.deliveryType
+        : body.deliveryType === 'express' || body.deliveryType === 'urgent'
+        ? body.deliveryType
         : 'standard';
-    const vehicleCategory =
-      body.vehicleCategory || orderData.vehicleCategory || 'moto';
+    const vehicleCategory = orderData.vehicleCategory || body.vehicleCategory || 'moto';
 
     const financials = await computeAuthoritativeOrderFinancials(activeDb, {
-      distanceKm: Number.isFinite(distanceKm) && distanceKm > 0 ? distanceKm : 1,
+      distanceKm: Number.isFinite(distanceKm) && distanceKm > 0 ? Math.min(1000, distanceKm) : 1,
       isFragile: Boolean(orderData.isFragile),
-      itemWeightKg: Number(orderData.itemWeightKg || 1),
+      itemWeightKg: Math.min(500, Math.max(0.1, Number(orderData.itemWeightKg || 1))),
       deliveryType,
       vehicleCategory,
-      promoCode: typeof body.promoCode === 'string' ? body.promoCode : orderData.promoCode,
+      promoCode: typeof orderData.promoCode === 'string' ? orderData.promoCode : typeof body.promoCode === 'string' ? body.promoCode : undefined,
       merchantId: String(orderData.merchantId || req.user!.uid),
       courierId: orderData.courierId ? String(orderData.courierId) : undefined,
     });
@@ -6297,7 +7005,7 @@ app.post('/api/deliveries/:orderId/finalize-pricing', requireVerifiedUser as any
     }
 
     const finalFee = financials.pricingSnapshot.finalDeliveryFeeFCFA;
-    const cod = Number(orderData.itemValueCOD || 0);
+    const cod = Math.max(0, Math.round(Number(orderData.itemValueCOD || 0)));
     await deliveryRef.set(
       {
         distanceKm: financials.pricingSnapshot.distanceKm,
