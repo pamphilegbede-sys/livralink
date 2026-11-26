@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
@@ -8,6 +8,7 @@ import { EmptyState } from '../common/EmptyState';
 import { PaginationControls } from '../common/PaginationControls';
 import { GoogleMapDelivery } from '../maps/GoogleMapDelivery';
 import { GoogleMapsGroundingAssistant } from '../maps/GoogleMapsGroundingAssistant';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import {
   calculateDistanceKm,
   estimateFallbackDurationMinutes,
@@ -45,19 +46,24 @@ export const LivreurMissions: React.FC = () => {
   const activeUid = userProfile?.uid || firebaseUser?.uid || '';
   const isSupervisory = isAdminAuthenticated && isUserMasterAdmin;
 
-  const isolatedDeliveries = deliveries.filter((d) => {
-    if (isSupervisory) return true;
-    const isTargetedOffer =
-      d.status === 'en_attente' &&
-      !d.courier &&
-      !d.courierId &&
-      Boolean(activeUid && d.targetCourierId === activeUid);
-    if (isTargetedOffer) return true;
-    return Boolean(activeUid && (d.courier?.id === activeUid || d.courierId === activeUid));
-  });
+  const isolatedDeliveries = useMemo(
+    () =>
+      deliveries.filter((d) => {
+        if (isSupervisory) return true;
+        const isTargetedOffer =
+          d.status === 'en_attente' &&
+          !d.courier &&
+          !d.courierId &&
+          Boolean(activeUid && d.targetCourierId === activeUid);
+        if (isTargetedOffer) return true;
+        return Boolean(activeUid && (d.courier?.id === activeUid || d.courierId === activeUid));
+      }),
+    [deliveries, isSupervisory, activeUid]
+  );
 
   const [activeTab, setActiveTab] = useState<'all' | 'en_cours' | 'en_attente' | 'livree'>(courierMissionsFilter || 'all');
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebouncedValue(searchTerm, 200);
   const [currentPage, setCurrentPage] = useState(1);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [expandedMapOrderId, setExpandedMapOrderId] = useState<string | null>(null);
@@ -66,8 +72,9 @@ export const LivreurMissions: React.FC = () => {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const itemsPerPage = 5;
 
-  const hasTimedOffer = isolatedDeliveries.some(
-    (d) => d.status === 'en_attente' && !d.courier && Boolean(d.offerExpiresAt)
+  const hasTimedOffer = useMemo(
+    () => isolatedDeliveries.some((d) => d.status === 'en_attente' && !d.courier && Boolean(d.offerExpiresAt)),
+    [isolatedDeliveries]
   );
   React.useEffect(() => {
     if (!hasTimedOffer) return;
@@ -81,26 +88,28 @@ export const LivreurMissions: React.FC = () => {
     setCurrentPage(1);
   }, [courierMissionsFilter]);
 
-  const filteredOrders = isolatedDeliveries.filter((d) => {
-    if (activeTab === 'en_cours' && !(d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere')) return false;
-    if (activeTab === 'en_attente' && !(d.status === 'en_attente' && !d.courier && !d.courierId)) return false;
-    if (activeTab === 'livree' && d.status !== 'livree') return false;
+  const filteredOrders = useMemo(() => {
+    const q = debouncedSearchTerm.trim().toLowerCase();
+    return isolatedDeliveries.filter((d) => {
+      if (activeTab === 'en_cours' && !(d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere')) return false;
+      if (activeTab === 'en_attente' && !(d.status === 'en_attente' && !d.courier && !d.courierId)) return false;
+      if (activeTab === 'livree' && d.status !== 'livree') return false;
 
-    if (searchTerm.trim()) {
-      const q = searchTerm.toLowerCase();
-      return (
-        d.id.toLowerCase().includes(q) ||
-        d.clientName.toLowerCase().includes(q) ||
-        d.dropoffLocation.commune.toLowerCase().includes(q) ||
-        d.itemDescription.toLowerCase().includes(q)
-      );
-    }
-    return true;
-  });
+      if (q) {
+        return (
+          d.id.toLowerCase().includes(q) ||
+          d.clientName.toLowerCase().includes(q) ||
+          d.dropoffLocation.commune.toLowerCase().includes(q) ||
+          d.itemDescription.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [isolatedDeliveries, activeTab, debouncedSearchTerm]);
 
-  const paginatedOrders = filteredOrders.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
+  const paginatedOrders = useMemo(
+    () => filteredOrders.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage),
+    [filteredOrders, currentPage, itemsPerPage]
   );
 
   React.useEffect(() => {

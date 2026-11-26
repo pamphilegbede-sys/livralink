@@ -863,9 +863,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const markNotificationAsRead = (id: string) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
-    );
+    let previousNotifications: AppNotification[] = [];
+    setNotifications((prev) => {
+      previousNotifications = prev;
+      return prev.map((n) => (n.id === id ? { ...n, isRead: true } : n));
+    });
     if (auth.currentUser && auth.currentUser.emailVerified) {
       const cleanId = id.replace(/[^a-zA-Z0-9_-]/g, '');
       if (cleanId) {
@@ -874,7 +876,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           read: true,
           readAt: Date.now(),
           updatedAt: Date.now(),
-        }).catch(() => {});
+        }).catch(() => {
+          // Rollback optimistic state if remote persistence failed
+          setNotifications(previousNotifications);
+        });
       }
     }
   };
@@ -900,11 +905,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteNotification = (id: string) => {
-    setNotifications((prev) => prev.filter((n) => n.id !== id));
+    let previousNotifications: AppNotification[] = [];
+    setNotifications((prev) => {
+      previousNotifications = prev;
+      return prev.filter((n) => n.id !== id);
+    });
     if (auth.currentUser && auth.currentUser.emailVerified) {
       const cleanId = id.replace(/[^a-zA-Z0-9_-]/g, '');
       if (cleanId) {
-        deleteDoc(doc(db, 'notifications', cleanId)).catch(() => {});
+        deleteDoc(doc(db, 'notifications', cleanId)).catch(() => {
+          setNotifications(previousNotifications);
+          showToast('Impossible de supprimer la notification pour le moment.', 'error');
+        });
       }
     }
   };
@@ -1107,7 +1119,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const msgUnsubs = new Map<string, () => void>();
     const convQuery = query(
       collection(db, 'conversations'),
-      where('participantIds', 'array-contains', currentUid)
+      where('participantIds', 'array-contains', currentUid),
+      limit(40)
     );
 
     const unsubConvs = onSnapshot(
@@ -2075,11 +2088,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         const deliveriesQuery = query(
           collection(db, 'deliveries'),
-          where('merchantId', '==', resolvedVendorUid)
+          where('merchantId', '==', resolvedVendorUid),
+          limit(150)
         );
         const missionsQuery = query(
           collection(db, 'priority_missions'),
-          where('merchantId', '==', resolvedVendorUid)
+          where('merchantId', '==', resolvedVendorUid),
+          limit(150)
         );
 
         const [deliveriesSnap, missionsSnap] = await Promise.all([
@@ -2138,8 +2153,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return [];
       }
       try {
-        const qTargeted = query(collection(db, 'deliveries'), where('targetCourierId', '==', activeAuthUser.uid));
-        const qMine = query(collection(db, 'deliveries'), where('courierId', '==', activeAuthUser.uid));
+        const qTargeted = query(collection(db, 'deliveries'), where('targetCourierId', '==', activeAuthUser.uid), limit(120));
+        const qMine = query(collection(db, 'deliveries'), where('courierId', '==', activeAuthUser.uid), limit(120));
         const [targetedSnap, mineSnap] = await Promise.all([getDocs(qTargeted), getDocs(qMine)]);
         const merged = new Map<string, DeliveryOrder>();
         targetedSnap.docs.forEach((d) => {
@@ -2233,11 +2248,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         const qDeliveries = query(
           collection(db, 'deliveries'),
-          where('merchantId', '==', targetVendorUid)
+          where('merchantId', '==', targetVendorUid),
+          limit(150)
         );
         const qMissions = query(
           collection(db, 'priority_missions'),
-          where('merchantId', '==', targetVendorUid)
+          where('merchantId', '==', targetVendorUid),
+          limit(150)
         );
 
         unsubs.push(
@@ -2305,8 +2322,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
 
       try {
-        const qTargeted = query(collection(db, 'deliveries'), where('targetCourierId', '==', currentUid));
-        const qMine = query(collection(db, 'deliveries'), where('courierId', '==', currentUid));
+        const qTargeted = query(collection(db, 'deliveries'), where('targetCourierId', '==', currentUid), limit(120));
+        const qMine = query(collection(db, 'deliveries'), where('courierId', '==', currentUid), limit(120));
         unsubs.push(
           onSnapshot(
             qTargeted,
@@ -2362,7 +2379,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const seenServerIds = new Set<string>();
     const qNotifs = query(
       collection(db, 'notifications'),
-      where('recipientId', '==', firebaseUser.uid)
+      where('recipientId', '==', firebaseUser.uid),
+      limit(80)
     );
     const unsub = onSnapshot(
       qNotifs,
@@ -2596,8 +2614,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       const activeMissionsQuery = isAdminAuthenticated
-        ? query(collection(db, 'priority_missions'), where('status', '==', 'en_attente'))
-        : query(collection(db, 'priority_missions'), where('targetCourierId', '==', firebaseUser.uid));
+        ? query(collection(db, 'priority_missions'), where('status', '==', 'en_attente'), limit(40))
+        : query(collection(db, 'priority_missions'), where('targetCourierId', '==', firebaseUser.uid), limit(40));
 
       const unsubscribe = onSnapshot(activeMissionsQuery, (snapshot) => {
         snapshot.docChanges().forEach((change) => {
@@ -4693,6 +4711,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setGpsTrackingStatus('idle');
     }
 
+    const previousAvailability = courierSettings.isAvailable;
     setCourierSettings((prev) => {
       const updated = {
         ...prev,
@@ -4712,6 +4731,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (auth.currentUser && auth.currentUser.emailVerified) {
       const uid = auth.currentUser.uid;
       let syncedViaBackend = false;
+      let explicitServerRejection = false;
       try {
         const token = await auth.currentUser.getIdToken();
         const res = await fetch('/api/couriers/availability', {
@@ -4732,25 +4752,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               : {}),
           }),
         });
-        if (res.ok) syncedViaBackend = true;
+        if (res.ok) {
+          syncedViaBackend = true;
+        } else if (res.status >= 400 && res.status < 500) {
+          explicitServerRejection = true;
+        }
       } catch {}
 
-      if (!syncedViaBackend) {
+      if (!syncedViaBackend && !explicitServerRejection) {
         const nowIso = new Date().toISOString();
-        await updateDoc(doc(db, 'users', uid), {
-          isAvailable: turningOn,
-          status: turningOn ? 'en_ligne' : 'hors_ligne',
-          ...(capturedCoords
-            ? {
-                locationLat: capturedCoords.lat,
-                locationLng: capturedCoords.lng,
-                locationUpdatedAt: nowIso,
-                locationSource: 'browser_gps',
-                locationAccuracyMeters: capturedCoords.accuracyMeters,
-              }
-            : {}),
-          updatedAt: nowIso,
-        }).catch(() => {});
+        try {
+          await updateDoc(doc(db, 'users', uid), {
+            isAvailable: turningOn,
+            status: turningOn ? 'en_ligne' : 'hors_ligne',
+            ...(capturedCoords
+              ? {
+                  locationLat: capturedCoords.lat,
+                  locationLng: capturedCoords.lng,
+                  locationUpdatedAt: nowIso,
+                  locationSource: 'browser_gps',
+                  locationAccuracyMeters: capturedCoords.accuracyMeters,
+                }
+              : {}),
+            updatedAt: nowIso,
+          });
+          syncedViaBackend = true;
+        } catch {}
+      }
+
+      if (!syncedViaBackend && explicitServerRejection) {
+        // Optimistic UI Rollback when server rejects transition (e.g., KYC/account lock)
+        setCourierSettings((prev) => {
+          const rolledBack = { ...prev, isAvailable: previousAvailability };
+          if (activeUid) {
+            try {
+              localStorage.setItem(`livralink_courier_settings_${activeUid}`, JSON.stringify(rolledBack));
+            } catch {}
+          }
+          return rolledBack;
+        });
+        showToast('Impossible de modifier votre disponibilité pour le moment (vérifiez votre statut KYC).', 'error');
+        return;
       }
     }
 
@@ -5877,45 +5919,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const delta = Math.abs(Math.round(amount));
     if (!delta) return;
 
-    if (auth.currentUser && isAdminAuthenticated) {
-      try {
-        const token = await auth.currentUser.getIdToken();
-        const res = await fetch('/api/admin/wallet/adjust', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ targetUid: id, amount: delta, type, note }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success) {
-          showToast(data.error || 'Échec de l\'ajustement portefeuille côté serveur.', 'error');
-          return;
-        }
-        setCouriers(prev =>
-          prev.map(c => (c.id === id ? { ...c, walletBalanceFCFA: data.balanceAfter } : c))
-        );
-        const opLabel = type === 'credit' ? `+${delta.toLocaleString('fr-FR')} FCFA` : `-${delta.toLocaleString('fr-FR')} FCFA`;
-        addAuditLog('system', `Portefeuille #${id} : ${opLabel}`, note || `Ajustement admin (${type})`);
-        showToast(`Portefeuille mis à jour : ${opLabel} (Solde : ${Number(data.balanceAfter).toLocaleString('fr-FR')} FCFA)`, 'success');
-        return;
-      } catch (err: any) {
-        showToast(err?.message || 'Erreur réseau lors de l\'ajustement portefeuille.', 'error');
-        return;
-      }
+    if (!auth.currentUser || !isAdminAuthenticated) {
+      showToast('Authentification administrateur requise pour ajuster un portefeuille.', 'error');
+      return;
     }
 
-    setCouriers(prev =>
-      prev.map(c => {
-        if (c.id === id) {
-          const currentBal = c.walletBalanceFCFA || 0;
-          const newBal = type === 'credit' ? currentBal + delta : Math.max(0, currentBal - delta);
-          const opLabel = type === 'credit' ? `+${delta.toLocaleString('fr-FR')} FCFA` : `-${delta.toLocaleString('fr-FR')} FCFA`;
-          addAuditLog('system', `Portefeuille #${id} : ${opLabel}`, note || `Ajustement admin (${type})`);
-          showToast(`Portefeuille de ${c.name} : ${opLabel}`, 'success');
-          return { ...c, walletBalanceFCFA: newBal };
-        }
-        return c;
-      })
-    );
+    try {
+      const token = await auth.currentUser.getIdToken();
+      const res = await fetch('/api/admin/wallet/adjust', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ targetUid: id, amount: delta, type, note }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        showToast(data.error || 'Échec de l\'ajustement portefeuille côté serveur.', 'error');
+        return;
+      }
+      setCouriers(prev =>
+        prev.map(c => (c.id === id ? { ...c, walletBalanceFCFA: data.balanceAfter } : c))
+      );
+      const opLabel = type === 'credit' ? `+${delta.toLocaleString('fr-FR')} FCFA` : `-${delta.toLocaleString('fr-FR')} FCFA`;
+      addAuditLog('system', `Portefeuille #${id} : ${opLabel}`, note || `Ajustement admin (${type})`);
+      showToast(`Portefeuille mis à jour : ${opLabel} (Solde : ${Number(data.balanceAfter).toLocaleString('fr-FR')} FCFA)`, 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Erreur réseau lors de l\'ajustement portefeuille.', 'error');
+    }
   };
 
   const deleteCourier = async (id: string) => {

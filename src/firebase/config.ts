@@ -1,6 +1,15 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
-import { initializeFirestore, getFirestore, Firestore, setLogLevel, doc, getDocFromServer } from 'firebase/firestore';
+import {
+  initializeFirestore,
+  getFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  Firestore,
+  setLogLevel,
+  doc,
+  getDocFromServer,
+} from 'firebase/firestore';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
 import appletConfig from '../../firebase-applet-config.json';
 
@@ -36,8 +45,9 @@ if (!getApps().length) {
 export const app = firebaseApp;
 export const auth: Auth = getAuth(app);
 
-// Initialize Firestore with experimentalForceLongPolling to ensure resilient connection across iframe/sandbox proxies
+// Initialize Firestore with persistent IndexedDB cache (multi-tab) + long-polling resilience
 const firestoreDbId = (appletConfig as any)?.firestoreDatabaseId;
+const targetDbId = firestoreDbId && firestoreDbId !== '(default)' ? firestoreDbId : undefined;
 let firestoreDb: Firestore;
 
 try {
@@ -45,14 +55,24 @@ try {
     app,
     {
       experimentalForceLongPolling: true,
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
     },
-    firestoreDbId && firestoreDbId !== '(default)' ? firestoreDbId : undefined
+    targetDbId
   );
 } catch {
-  firestoreDb = getFirestore(
-    app,
-    firestoreDbId && firestoreDbId !== '(default)' ? firestoreDbId : undefined
-  );
+  try {
+    firestoreDb = initializeFirestore(
+      app,
+      {
+        experimentalForceLongPolling: true,
+      },
+      targetDbId
+    );
+  } catch {
+    firestoreDb = getFirestore(app, targetDbId);
+  }
 }
 
 export const db: Firestore = firestoreDb;

@@ -27,15 +27,41 @@ export function validateFileSize(file: File, maxMB: number = MAX_ALLOWED_FILE_SI
   return { valid: true };
 }
 
+let cachedWebpSupport: boolean | null = null;
+
+export function supportsWebpEncoding(): boolean {
+  if (cachedWebpSupport !== null) return cachedWebpSupport;
+  if (typeof document === 'undefined') {
+    cachedWebpSupport = false;
+    return false;
+  }
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    cachedWebpSupport = canvas.toDataURL('image/webp').startsWith('data:image/webp');
+  } catch {
+    cachedWebpSupport = false;
+  }
+  return cachedWebpSupport;
+}
+
+export function resolvePreferredImageMimeType(preferWebp: boolean = true): { mimeType: 'image/webp' | 'image/jpeg'; extension: 'webp' | 'jpg' } {
+  if (preferWebp && supportsWebpEncoding()) {
+    return { mimeType: 'image/webp', extension: 'webp' };
+  }
+  return { mimeType: 'image/jpeg', extension: 'jpg' };
+}
+
 /**
  * Compresses an image file client-side before sending or storing
- * Scales down dimensions and recompresses as JPEG
+ * Scales down dimensions and recompresses as WebP (when supported) or JPEG
  */
 export async function compressImageFile(
   file: File,
-  options: CompressionOptions = {}
+  options: CompressionOptions & { preferWebp?: boolean } = {}
 ): Promise<{ file: File; blob: Blob; originalSize: number; compressedSize: number; compressionRatio: number }> {
-  const { maxWidth = 1200, maxHeight = 1200, quality = 0.75 } = options;
+  const { maxWidth = 1200, maxHeight = 1200, quality = 0.78, preferWebp = true } = options;
 
   // If not an image, return as-is
   if (!file.type.startsWith('image/')) {
@@ -84,29 +110,38 @@ export async function compressImageFile(
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
 
+        const { mimeType, extension } = resolvePreferredImageMimeType(preferWebp);
+        const finalizeBlob = (blob: Blob | null, finalMime: string, finalExt: string) => {
+          if (!blob) {
+            reject(new Error('Échec de la génération du blob compressé.'));
+            return;
+          }
+
+          const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, '') + `.${finalExt}`, {
+            type: finalMime,
+            lastModified: Date.now()
+          });
+
+          const ratio = Math.max(0, Math.round(((file.size - blob.size) / file.size) * 100));
+
+          resolve({
+            file: compressedFile,
+            blob,
+            originalSize: file.size,
+            compressedSize: blob.size,
+            compressionRatio: ratio
+          });
+        };
+
         canvas.toBlob(
           (blob) => {
-            if (!blob) {
-              reject(new Error('Échec de la génération du blob compressé.'));
+            if (!blob && mimeType === 'image/webp') {
+              canvas.toBlob((fallbackBlob) => finalizeBlob(fallbackBlob, 'image/jpeg', 'jpg'), 'image/jpeg', quality);
               return;
             }
-
-            const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, '') + '.jpg', {
-              type: 'image/jpeg',
-              lastModified: Date.now()
-            });
-
-            const ratio = Math.max(0, Math.round(((file.size - blob.size) / file.size) * 100));
-
-            resolve({
-              file: compressedFile,
-              blob,
-              originalSize: file.size,
-              compressedSize: blob.size,
-              compressionRatio: ratio
-            });
+            finalizeBlob(blob, mimeType, extension);
           },
-          'image/jpeg',
+          mimeType,
           quality
         );
       };

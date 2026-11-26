@@ -547,11 +547,11 @@ describe('Real Firestore & Auth Emulator P0 Security + Multi-Instance Integratio
 
     const instanceA = await spawnServerInstance({
       port: 34111,
-      envOverrides: { OTP_SECRET_SALT: SHARED_SECRET_32 },
+      envOverrides: { NODE_ENV: 'development', OTP_SECRET_SALT: SHARED_SECRET_32 },
     });
     const instanceB = await spawnServerInstance({
       port: 34112,
-      envOverrides: { OTP_SECRET_SALT: SHARED_SECRET_32 },
+      envOverrides: { NODE_ENV: 'development', OTP_SECRET_SALT: SHARED_SECRET_32 },
     });
 
     try {
@@ -718,6 +718,7 @@ describe('Real Firestore & Auth Emulator P0 Security + Multi-Instance Integratio
         assert.equal(auditRes.status, 200);
         const auditBody = await auditRes.json();
         assert.equal(auditBody.protections.authIntegrity.hmacSecretConfigured, false);
+        assert.equal(auditBody.readiness?.simulatorForbiddenInProduction, true);
       }
     } finally {
       await Promise.all([missingSecretServer.stop(), shortSecretServer.stop()]);
@@ -1110,11 +1111,11 @@ describe('Real Firestore & Auth Emulator P0 Security + Multi-Instance Integratio
 
     const instanceA = await spawnServerInstance({
       port: 34122,
-      envOverrides: { OTP_SECRET_SALT: SHARED_SECRET_32 },
+      envOverrides: { NODE_ENV: 'development', OTP_SECRET_SALT: SHARED_SECRET_32 },
     });
     const instanceB = await spawnServerInstance({
       port: 34123,
-      envOverrides: { OTP_SECRET_SALT: SHARED_SECRET_32 },
+      envOverrides: { NODE_ENV: 'development', OTP_SECRET_SALT: SHARED_SECRET_32 },
     });
 
     try {

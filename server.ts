@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import compression from 'compression';
+import zlib from 'zlib';
 import path from 'path';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
@@ -60,8 +61,14 @@ import {
 } from './src/server/systemBackupService';
 import {
   evaluatePayoutProviderConfig,
+  isSimulatedProviderReference,
+  MobileMoneyHttpGetter,
   resolvePayoutProviderAdapter,
 } from './src/server/mobileMoneyProvider';
+import {
+  confirmOrderPaymentFromServerCheck,
+  handleMobileMoneyWebhook,
+} from './src/server/paymentService';
 import {
   ADMIN_ROLE_LABELS,
   ADMIN_ROLE_PERMISSIONS,
@@ -80,12 +87,17 @@ import {
 import {
   ALL_EMAIL_TEMPLATE_IDS,
   extractPublicPlatformConfig,
+  getPlatformConfigCacheStats,
   loadEmailTemplates,
   loadPlatformConfigBundle,
   renderEmailTemplate,
   saveEmailTemplate,
   savePlatformConfigSection,
 } from './src/server/platformConfigService';
+import {
+  serverApiResponseCache,
+  serverObservability,
+} from './src/server/performanceCache';
 import {
   computeAuthoritativeOrderFinancials,
   resolveAuthoritativeRouteDistance,
@@ -126,8 +138,97 @@ if (portArg) {
 }
 const PORT = cliPort || (process.env.DEFAULT_APP_PORT ? parseInt(process.env.DEFAULT_APP_PORT, 10) : parseInt(process.env.PORT || process.env.APP_PORT || '3000', 10));
 
-// Enable high-speed gzip / deflate compression on all HTTP responses
-app.use(compression());
+// Enable high-speed Brotli (for compatible clients) + Gzip / Deflate fallback compression
+const gzipCompression = compression({ threshold: 1024 });
+const isCompressibleContentType = (contentType: unknown): boolean => {
+  const ct = String(contentType || '').toLowerCase();
+  if (!ct) return true;
+  return (
+    ct.includes('application/json') ||
+    ct.includes('text/') ||
+    ct.includes('application/javascript') ||
+    ct.includes('application/xml') ||
+    ct.includes('image/svg+xml')
+  );
+};
+
+app.use((req, res, next) => {
+  if (req.method === 'HEAD' || req.headers['x-no-compression']) {
+    return next();
+  }
+  const acceptEncoding = String(req.headers['accept-encoding'] || '');
+  if (!acceptEncoding.includes('br')) {
+    return gzipCompression(req, res, next);
+  }
+
+  // Fast streaming-free Brotli compression for buffered Express responses (JSON/HTML/Text)
+  const originalSend = res.send.bind(res);
+  res.send = ((body?: any) => {
+    try {
+      if (res.headersSent || res.getHeader('Content-Encoding')) {
+        return originalSend(body);
+      }
+      const contentType = res.getHeader('Content-Type');
+      if (!isCompressibleContentType(contentType)) {
+        return originalSend(body);
+      }
+      const buf = Buffer.isBuffer(body)
+        ? body
+        : typeof body === 'string'
+        ? Buffer.from(body, 'utf8')
+        : null;
+      if (!buf || buf.length < 1024) {
+        return originalSend(body);
+      }
+      const compressed = zlib.brotliCompressSync(buf, {
+        params: {
+          [zlib.constants.BROTLI_PARAM_QUALITY]: 4,
+          [zlib.constants.BROTLI_PARAM_SIZE_HINT]: buf.length,
+        },
+      });
+      res.setHeader('Content-Encoding', 'br');
+      res.setHeader('Vary', 'Accept-Encoding');
+      res.removeHeader('Content-Length');
+      return originalSend(compressed);
+    } catch {
+      return originalSend(body);
+    }
+  }) as any;
+
+  return next();
+});
+
+// Lightweight OpenTelemetry-style API timing & Server-Timing instrumentation
+app.use('/api', (req, res, next) => {
+  const startNs = process.hrtime.bigint();
+  const originalWriteHead = res.writeHead.bind(res);
+  let timingHeaderApplied = false;
+
+  res.writeHead = ((statusCode: number, ...args: any[]) => {
+    if (!timingHeaderApplied && !res.headersSent) {
+      timingHeaderApplied = true;
+      const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1_000_000;
+      const cfgStats = getPlatformConfigCacheStats();
+      res.setHeader(
+        'Server-Timing',
+        `app;dur=${elapsedMs.toFixed(2)}, cfgcache;desc="hits:${cfgStats.hits}/misses:${cfgStats.misses}"`
+      );
+    }
+    return originalWriteHead(statusCode, ...args);
+  }) as any;
+
+  res.on('finish', () => {
+    const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1_000_000;
+    serverObservability.recordRequest({
+      route: req.originalUrl || req.path,
+      method: req.method,
+      statusCode: res.statusCode,
+      durationMs: elapsedMs,
+    });
+  });
+
+  next();
+});
 
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -145,10 +246,15 @@ app.use((req, res, next) => {
 
 // Defense against large payload DOS: enforce strict 10kb limit on standard JSON bodies
 // and permit up to 22mb solely on authenticated, participant-checked media upload routes.
+// Mobile Money webhooks MUST receive untouched raw bytes for cryptographic HMAC verification.
 const standardJsonParser = express.json({ limit: '10kb' });
 const backupJsonParser = express.json({ limit: '512kb' });
 const mediaUploadJsonParser = express.json({ limit: '22mb' });
+const webhookRawBodyParser = express.raw({ type: '*/*', limit: '64kb' });
 app.use((req, res, next) => {
+  if (req.method === 'POST' && req.path === '/api/webhooks/mobile-money') {
+    return webhookRawBodyParser(req, res, next);
+  }
   if (
     req.method === 'POST' &&
     (req.path === '/api/pod/upload' ||
@@ -781,6 +887,15 @@ const getP0Security = (req?: Request): P0SecurityService | null => {
   if (process.env.NODE_ENV === 'test' && testP0SecurityOverride) {
     return testP0SecurityOverride;
   }
+  if (process.env.NODE_ENV === 'test' && testFirestoreOverride) {
+    return createP0SecurityService(testFirestoreOverride as unknown as P0FirestoreLike, {
+      getSecretSalt: () => evaluateHmacSecretConfig().secret,
+      payoutProvider: (payoutReq) => resolvePayoutProviderAdapter()(payoutReq),
+      onAnomaly: (type, details) => {
+        recordSecurityAnomaly(req ? getClientIp(req) : 'internal', type, details);
+      },
+    });
+  }
   if (!firestoreAdmin) return null;
   if (!cachedP0Security) {
     cachedP0Security = createP0SecurityService(firestoreAdmin as unknown as P0FirestoreLike, {
@@ -795,6 +910,13 @@ const getP0Security = (req?: Request): P0SecurityService | null => {
 };
 
 export type { SentEmailRecord };
+
+let testPaymentHttpGetterOverride: MobileMoneyHttpGetter | null = null;
+export function setPaymentHttpGetterForTests(getter: MobileMoneyHttpGetter | null): void {
+  if (process.env.NODE_ENV === 'test') {
+    testPaymentHttpGetterOverride = getter;
+  }
+}
 
 let cachedP1EmailService: P1EmailAndConfigService | null = null;
 let testP1EmailServiceOverride: P1EmailAndConfigService | null = null;
@@ -2710,6 +2832,8 @@ app.get('/api/security/audit', requireAdminAuthorization as any, async (_req: Re
       payoutProviderMode: payoutReadiness.mode,
       liveMobileMoneyConfigured: payoutReadiness.liveConfigured,
       payoutProviderReady: payoutReadiness.ready,
+      simulatorForbiddenInProduction: payoutReadiness.simulatorForbiddenInProduction,
+      webhookEndpointProtected: true,
       payoutMissingEnvVars: payoutReadiness.missingEnvVars,
     },
     protections: {
@@ -2743,7 +2867,9 @@ app.get('/api/security/audit', requireAdminAuthorization as any, async (_req: Re
         payoutProviderMode: payoutReadiness.liveConfigured
           ? `LIVE_PSP_${payoutReadiness.mode.toUpperCase()}`
           : payoutReadiness.isSimulated
-            ? 'SIMULATOR_DEFAULT_NO_LIVE_AGGREGATOR'
+            ? String(process.env.NODE_ENV || '').toLowerCase() === 'production'
+              ? 'SIMULATOR_FORBIDDEN_IN_PRODUCTION'
+              : 'SIMULATOR_DEV_TEST_ONLY'
             : `LIVE_PSP_${payoutReadiness.mode.toUpperCase()}_UNCONFIGURED`,
         rateLimitPerEmailSeconds: 60,
         maxVerifyAttempts: 3,
@@ -3400,6 +3526,27 @@ app.post('/api/admin/wallet/reconcile-payout', requireAdminPermission('finance.m
       return res.status(result.status).json({ success: false, error: result.error });
     }
 
+    const activeDb = getActiveDb();
+    if (activeDb) {
+      await recordAdminAuditLog(activeDb, {
+        adminUid: req.user!.uid,
+        adminEmail: req.user?.email || 'admin',
+        adminRole: req.adminContext?.roleId || 'admin',
+        category: 'finance',
+        action: 'WALLET_PAYOUT_RECONCILED',
+        targetType: 'user',
+        targetId: targetUid.trim(),
+        newValue: {
+          idempotencyKey: idempotencyKey.trim(),
+          resolution,
+          statusAfter: result.statusAfter,
+          restoredBalance: result.restoredBalance,
+          providerReference: result.providerReference,
+        },
+        reason: typeof reason === 'string' ? reason.trim().slice(0, 256) : undefined,
+      }).catch(() => {});
+    }
+
     return res.json({
       success: true,
       statusAfter: result.statusAfter,
@@ -3411,6 +3558,111 @@ app.post('/api/admin/wallet/reconcile-payout', requireAdminPermission('finance.m
     return res.status(500).json({ success: false, error: 'Erreur lors de la réconciliation administrative.' });
   }
 });
+
+// =========================================================================
+// FAILLE #6 : WEBHOOK MOBILE MONEY SIGNÉ + ANTI-CONFIANCE CLIENT
+// =========================================================================
+app.post('/api/webhooks/mobile-money', async (req: Request, res: Response) => {
+  try {
+    const activeDb = getActiveDb();
+    if (!activeDb) {
+      return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+    }
+
+    const rawBody: Buffer | string = Buffer.isBuffer(req.body)
+      ? req.body
+      : typeof req.body === 'string'
+        ? req.body
+        : JSON.stringify(req.body || {});
+
+    const result = await handleMobileMoneyWebhook(activeDb as unknown as P0FirestoreLike, {
+      rawBody,
+      headers: req.headers as Record<string, string | string[] | undefined>,
+      env: process.env,
+      httpGet: process.env.NODE_ENV === 'test' && testPaymentHttpGetterOverride ? testPaymentHttpGetterOverride : undefined,
+      onAnomaly: (type, details) => recordSecurityAnomaly(getClientIp(req), type, details),
+    });
+
+    if (!result.ok) {
+      return res.status(result.status).json({
+        success: false,
+        code: result.code,
+        error: result.error,
+      });
+    }
+
+    return res.status(result.status).json({
+      success: true,
+      duplicate: Boolean(result.duplicate),
+      alreadyTerminal: Boolean(result.alreadyTerminal),
+      type: result.type,
+      orderDocId: result.orderDocId,
+      paymentId: result.paymentId,
+      paymentStatus: result.paymentStatus,
+      payoutStatus: result.payoutStatus,
+      provider: result.provider,
+      providerReference: result.providerReference,
+    });
+  } catch (err: any) {
+    console.error('[MOBILE MONEY WEBHOOK ERROR]:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Erreur lors du traitement sécurisé du webhook Mobile Money.' });
+  }
+});
+
+app.post(
+  ['/api/payments/confirm', '/api/payments/:orderId/confirm'],
+  requireVerifiedUser as any,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const activeDb = getActiveDb();
+      if (!activeDb) {
+        return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
+      }
+
+      const body = req.body || {};
+      const orderIdInput = String(req.params.orderId || body.orderDocId || body.orderId || '').trim();
+      const isAdmin = await resolveAndAttachAdminContext(req);
+
+      const result = await confirmOrderPaymentFromServerCheck(activeDb as unknown as P0FirestoreLike, {
+        callerUid: req.user!.uid,
+        isAdmin,
+        orderIdInput,
+        providerReference:
+          typeof body.providerReference === 'string'
+            ? body.providerReference
+            : typeof body.transactionRef === 'string'
+              ? body.transactionRef
+              : typeof body.reference === 'string'
+                ? body.reference
+                : undefined,
+        clientClaimedStatus: body.paymentStatus ?? body.status,
+        env: process.env,
+        httpGet: process.env.NODE_ENV === 'test' && testPaymentHttpGetterOverride ? testPaymentHttpGetterOverride : undefined,
+        onAnomaly: (type, details) => recordSecurityAnomaly(getClientIp(req), type, details),
+      });
+
+      if (!result.ok) {
+        return res.status(result.status).json({
+          success: false,
+          code: result.code,
+          error: result.error,
+        });
+      }
+
+      return res.status(result.status).json({
+        success: true,
+        duplicate: Boolean(result.duplicate),
+        orderDocId: result.orderDocId,
+        paymentId: result.paymentId,
+        paymentStatus: result.paymentStatus,
+        providerReference: result.providerReference,
+      });
+    } catch (err: any) {
+      console.error('[PAYMENT CONFIRM ERROR]:', err?.message || err);
+      return res.status(500).json({ success: false, error: 'Erreur lors de la vérification serveur du paiement.' });
+    }
+  }
+);
 
 // =========================================================================
 // POINT 18: JOURNAL D'AUDIT CENTRALISÉ DES ERREURS
@@ -3468,6 +3720,56 @@ app.get('/api/monitoring/status', requireAdminAuthorization as any, (_req: Reque
     systemUptime: process.uptime(),
     memoryUsageMB: Math.round(process.memoryUsage().rss / (1024 * 1024)),
     nodeEnv: process.env.NODE_ENV || 'development',
+  });
+});
+
+// Silent Real-User Monitoring (RUM) Core Web Vitals ingestion
+app.post('/api/telemetry/rum', (req: Request, res: Response) => {
+  try {
+    const body = req.body || {};
+    const allowedMetrics = new Set(['LCP', 'INP', 'CLS', 'FCP', 'TTFB']);
+    const allowedRatings = new Set(['good', 'needs-improvement', 'poor']);
+    const name = String(body.name || '').toUpperCase();
+    const value = Number(body.value);
+    const rating = String(body.rating || 'good').toLowerCase();
+
+    if (!allowedMetrics.has(name) || !Number.isFinite(value) || value < 0 || value > 120_000) {
+      return res.status(400).json({ success: false, error: 'Métrique Web Vitals invalide.' });
+    }
+
+    serverObservability.recordRumSample({
+      name: name as 'LCP' | 'INP' | 'CLS' | 'FCP' | 'TTFB',
+      value: Math.round(value * 1000) / 1000,
+      rating: (allowedRatings.has(rating) ? rating : 'good') as 'good' | 'needs-improvement' | 'poor',
+      view: typeof body.view === 'string' ? body.view.slice(0, 48) : undefined,
+      connectionType: typeof body.connectionType === 'string' ? body.connectionType.slice(0, 24) : undefined,
+    });
+
+    return res.status(202).json({ success: true });
+  } catch {
+    return res.status(400).json({ success: false });
+  }
+});
+
+// Admin-only real-time server performance, cache hit rate & RUM observability snapshot
+app.get('/api/admin/performance/metrics', requireAdminPermission('overview.view') as any, (_req: AuthenticatedRequest, res: Response) => {
+  const cfgStats = getPlatformConfigCacheStats();
+  const apiCacheStats = serverApiResponseCache.getStats();
+  const summary = serverObservability.getSummary([
+    {
+      name: cfgStats.name,
+      size: 1,
+      maxEntries: 1,
+      hits: cfgStats.hits,
+      misses: cfgStats.misses,
+      evictions: 0,
+      hitRatePercent: cfgStats.hitRatePercent,
+    },
+    apiCacheStats,
+  ]);
+  return res.json({
+    success: true,
+    ...summary,
   });
 });
 
@@ -3692,113 +3994,110 @@ app.get('/api/admin/sync-overview', requireAdminAuthorization as any, async (_re
 
     const activeDb = process.env.NODE_ENV === 'test' && testFirestoreOverride ? testFirestoreOverride : firestoreAdmin;
 
-    if (activeDb) {
-      // 1. Read Firestore users
-      try {
-        const usersSnap = await activeDb.collection('users').get();
-        usersSnap.forEach((docSnap: any) => {
-          const data = docSnap.data() || {};
-          usersById.set(docSnap.id, {
-            id: docSnap.id,
-            uid: data.uid || docSnap.id,
-            ...data,
-          });
-        });
-      } catch (e: any) {
-        classifyAdminError('users', e);
-      }
+    const [usersResult, deliveriesResult, missionsResult, kycResult, authResult] = await Promise.allSettled([
+      activeDb ? activeDb.collection('users').get() : Promise.resolve(null),
+      activeDb ? activeDb.collection('deliveries').get() : Promise.resolve(null),
+      activeDb ? activeDb.collection('priority_missions').get() : Promise.resolve(null),
+      activeDb ? activeDb.collection('kyc').get() : Promise.resolve(null),
+      firebaseAdminApp ? getAuth(firebaseAdminApp).listUsers(1000) : Promise.resolve(null),
+    ]);
 
-      // 2. Read Firestore deliveries
-      try {
-        const deliveriesSnap = await activeDb.collection('deliveries').get();
-        deliveriesSnap.forEach((docSnap: any) => {
-          const data = docSnap.data() || {};
-          deliveriesList.push({
-            id: data.id || docSnap.id,
-            ...data,
-          });
-        });
-      } catch (e: any) {
-        classifyAdminError('deliveries', e);
-      }
-
-      // 3. Read Firestore priority_missions
-      try {
-        const missionsSnap = await activeDb.collection('priority_missions').get();
-        missionsSnap.forEach((docSnap: any) => {
-          const data = docSnap.data() || {};
-          priorityMissionsList.push({
-            id: data.id || docSnap.id,
-            ...data,
-          });
-        });
-      } catch (e: any) {
-        classifyAdminError('priority_missions', e);
-      }
-
-      // 4. Read Firestore kyc
-      try {
-        const kycSnap = await activeDb.collection('kyc').get();
-        kycSnap.forEach((docSnap: any) => {
-          const data = docSnap.data() || {};
-          kycList.push({
-            id: data.id || docSnap.id,
-            ...data,
-          });
-        });
-      } catch (e: any) {
-        classifyAdminError('kyc', e);
-      }
-    } else {
+    if (!activeDb) {
       warnings.push('Firestore Admin non initialisé');
     }
 
+    if (usersResult.status === 'fulfilled' && usersResult.value) {
+      usersResult.value.forEach((docSnap: any) => {
+        const data = docSnap.data() || {};
+        usersById.set(docSnap.id, {
+          id: docSnap.id,
+          uid: data.uid || docSnap.id,
+          ...data,
+        });
+      });
+    } else if (usersResult.status === 'rejected') {
+      classifyAdminError('users', usersResult.reason);
+    }
+
+    if (deliveriesResult.status === 'fulfilled' && deliveriesResult.value) {
+      deliveriesResult.value.forEach((docSnap: any) => {
+        const data = docSnap.data() || {};
+        deliveriesList.push({
+          id: data.id || docSnap.id,
+          ...data,
+        });
+      });
+    } else if (deliveriesResult.status === 'rejected') {
+      classifyAdminError('deliveries', deliveriesResult.reason);
+    }
+
+    if (missionsResult.status === 'fulfilled' && missionsResult.value) {
+      missionsResult.value.forEach((docSnap: any) => {
+        const data = docSnap.data() || {};
+        priorityMissionsList.push({
+          id: data.id || docSnap.id,
+          ...data,
+        });
+      });
+    } else if (missionsResult.status === 'rejected') {
+      classifyAdminError('priority_missions', missionsResult.reason);
+    }
+
+    if (kycResult.status === 'fulfilled' && kycResult.value) {
+      kycResult.value.forEach((docSnap: any) => {
+        const data = docSnap.data() || {};
+        kycList.push({
+          id: data.id || docSnap.id,
+          ...data,
+        });
+      });
+    } else if (kycResult.status === 'rejected') {
+      classifyAdminError('kyc', kycResult.reason);
+    }
+
     // 5. Discover all Firebase Auth accounts (no fictitious fallback users)
-    if (firebaseAdminApp) {
-      try {
-        const authResult = await getAuth(firebaseAdminApp).listUsers(1000);
-        for (const authUser of authResult.users) {
-          const email = (authUser.email || '').toLowerCase().trim();
-          if (!email) continue;
-          const isSuperAdmin = email === 'pamphile.gbede@gmail.com';
-          if (isSuperAdmin) continue;
+    if (authResult.status === 'fulfilled' && authResult.value) {
+      for (const authUser of authResult.value.users) {
+        const email = (authUser.email || '').toLowerCase().trim();
+        if (!email) continue;
+        const isSuperAdmin = email === 'pamphile.gbede@gmail.com';
+        if (isSuperAdmin) continue;
 
-          if (!usersById.has(authUser.uid)) {
-            const inferredRole = email.includes('livreur') ? 'livreur' : 'vendeur';
-            const displayName = (authUser.displayName || email.split('@')[0] || 'Vendeur LivraLink').trim();
-            const backfilledUser: Record<string, any> = {
-              uid: authUser.uid,
-              id: authUser.uid,
-              email,
-              fullName: displayName,
-              phone: authUser.phoneNumber || '',
-              role: inferredRole,
-              isKycVerified: false,
-              kycStatus: 'non_soumis',
-              createdAt: authUser.metadata?.creationTime || new Date().toISOString(),
-              syncedFromAuth: true,
-            };
-            if (inferredRole === 'vendeur') {
-              backfilledUser.storeName = `Boutique ${displayName}`;
-            } else {
-              backfilledUser.vehicleType = 'Moto 125cc';
-            }
-
-            usersById.set(authUser.uid, backfilledUser);
-
-            if (activeDb) {
-              activeDb.collection('users').doc(authUser.uid).set(backfilledUser, { merge: true }).catch(() => {});
-            }
+        if (!usersById.has(authUser.uid)) {
+          const inferredRole = email.includes('livreur') ? 'livreur' : 'vendeur';
+          const displayName = (authUser.displayName || email.split('@')[0] || 'Vendeur LivraLink').trim();
+          const backfilledUser: Record<string, any> = {
+            uid: authUser.uid,
+            id: authUser.uid,
+            email,
+            fullName: displayName,
+            phone: authUser.phoneNumber || '',
+            role: inferredRole,
+            isKycVerified: false,
+            kycStatus: 'non_soumis',
+            createdAt: authUser.metadata?.creationTime || new Date().toISOString(),
+            syncedFromAuth: true,
+          };
+          if (inferredRole === 'vendeur') {
+            backfilledUser.storeName = `Boutique ${displayName}`;
           } else {
-            const existing = usersById.get(authUser.uid);
-            if (!existing.createdAt && authUser.metadata?.creationTime) {
-              existing.createdAt = authUser.metadata.creationTime;
-            }
+            backfilledUser.vehicleType = 'Moto 125cc';
+          }
+
+          usersById.set(authUser.uid, backfilledUser);
+
+          if (activeDb) {
+            activeDb.collection('users').doc(authUser.uid).set(backfilledUser, { merge: true }).catch(() => {});
+          }
+        } else {
+          const existing = usersById.get(authUser.uid);
+          if (!existing.createdAt && authUser.metadata?.creationTime) {
+            existing.createdAt = authUser.metadata.creationTime;
           }
         }
-      } catch (authListErr: any) {
-        classifyAdminError('auth.listUsers', authListErr);
       }
+    } else if (authResult.status === 'rejected') {
+      classifyAdminError('auth.listUsers', authResult.reason);
     }
 
     const users = Array.from(usersById.values());
@@ -5467,10 +5766,11 @@ app.get('/api/chat/media', requireVerifiedUser as any, async (req: Authenticated
 
 app.post('/api/admin/wallet/adjust', requireAdminPermission('finance.manage') as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (!firestoreAdmin) {
+    const activeDb = getActiveDb();
+    if (!activeDb) {
       return res.status(503).json({ success: false, error: 'Firestore Admin SDK indisponible.' });
     }
-    const { targetUid, amount, type, note } = req.body || {};
+    const { targetUid, amount, type, note, idempotencyKey } = req.body || {};
     const cleanUid = String(targetUid || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
     if (!cleanUid) {
       return res.status(400).json({ success: false, error: 'Identifiant utilisateur requis.' });
@@ -5478,14 +5778,36 @@ app.post('/api/admin/wallet/adjust', requireAdminPermission('finance.manage') as
     if (type !== 'credit' && type !== 'debit') {
       return res.status(400).json({ success: false, error: 'Type d\'opération invalide ("credit" ou "debit").' });
     }
-    const numericAmount = Math.round(Number(amount));
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0 || numericAmount > 50_000_000) {
-      return res.status(400).json({ success: false, error: 'Montant invalide.' });
+    const rawNum = Number(amount);
+    if (!Number.isFinite(rawNum) || !Number.isInteger(rawNum) || rawNum <= 0 || rawNum > 50_000_000) {
+      return res.status(400).json({ success: false, error: 'Montant invalide (entier > 0 requis).' });
     }
+    const numericAmount = rawNum;
     const cleanNote = String(note || `Ajustement administratif (${type === 'credit' ? 'Crédit' : 'Débit'})`).trim().slice(0, 256);
+    const cleanIdemKey =
+      typeof idempotencyKey === 'string' && idempotencyKey.trim().length >= 6
+        ? idempotencyKey.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 96)
+        : '';
 
-    const userRef = firestoreAdmin.collection('users').doc(cleanUid);
-    const txResult = await firestoreAdmin.runTransaction(async (tx) => {
+    const userRef = activeDb.collection('users').doc(cleanUid);
+    const idemTxId = cleanIdemKey ? `wtx_adm_${crypto.createHash('sha256').update(`${cleanUid}:${cleanIdemKey}`).digest('hex').slice(0, 28)}` : '';
+    const txResult = await activeDb.runTransaction(async (tx: any) => {
+      if (idemTxId) {
+        const existingTxSnap = await tx.get(activeDb.collection('wallet_transactions').doc(idemTxId));
+        if (existingTxSnap.exists) {
+          const existingData = existingTxSnap.data() || {};
+          return {
+            ok: true as const,
+            duplicate: true as const,
+            txId: idemTxId,
+            balanceBefore: Number(existingData.balanceBefore ?? 0),
+            balanceAfter: Number(existingData.balanceAfter ?? 0),
+            email: '',
+            fullName: '',
+          };
+        }
+      }
+
       const snap = await tx.get(userRef);
       if (!snap.exists) {
         return { ok: false as const, status: 404, error: 'Compte utilisateur introuvable.' };
@@ -5505,14 +5827,14 @@ app.post('/api/admin/wallet/adjust', requireAdminPermission('finance.manage') as
 
       const newBalance = type === 'credit' ? currentBalance + numericAmount : currentBalance - numericAmount;
       const nowIso = new Date().toISOString();
-      const txId = `wtx_adm_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+      const txId = idemTxId || `wtx_adm_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
 
       tx.update(userRef, {
         walletBalanceFCFA: newBalance,
         updatedAt: nowIso,
       });
 
-      tx.set(firestoreAdmin!.collection('wallet_transactions').doc(txId), {
+      tx.set(activeDb.collection('wallet_transactions').doc(txId), {
         id: txId,
         uid: cleanUid,
         type: type === 'credit' ? 'admin_credit' : 'admin_debit',
@@ -5521,6 +5843,7 @@ app.post('/api/admin/wallet/adjust', requireAdminPermission('finance.manage') as
         balanceBefore: currentBalance,
         balanceAfter: newBalance,
         note: cleanNote,
+        ...(cleanIdemKey ? { idempotencyKey: cleanIdemKey } : {}),
         adminUid: req.user!.uid,
         adminEmail: req.user?.email || 'admin',
         createdAt: Date.now(),
@@ -5528,7 +5851,7 @@ app.post('/api/admin/wallet/adjust', requireAdminPermission('finance.manage') as
       });
 
       const notifId = `notif_wtx_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-      tx.set(firestoreAdmin!.collection('notifications').doc(notifId), {
+      tx.set(activeDb.collection('notifications').doc(notifId), {
         id: notifId,
         senderId: req.user!.uid,
         recipientId: cleanUid,
@@ -5543,6 +5866,7 @@ app.post('/api/admin/wallet/adjust', requireAdminPermission('finance.manage') as
 
       return {
         ok: true as const,
+        duplicate: false as const,
         txId,
         balanceBefore: currentBalance,
         balanceAfter: newBalance,
@@ -5553,6 +5877,21 @@ app.post('/api/admin/wallet/adjust', requireAdminPermission('finance.manage') as
 
     if (!txResult.ok) {
       return res.status(txResult.status).json({ success: false, error: txResult.error });
+    }
+
+    if (!txResult.duplicate) {
+      await recordAdminAuditLog(activeDb, {
+        adminUid: req.user!.uid,
+        adminEmail: req.user?.email || 'admin',
+        adminRole: req.adminContext?.roleId || 'admin',
+        category: 'finance',
+        action: type === 'credit' ? 'WALLET_ADMIN_CREDIT' : 'WALLET_ADMIN_DEBIT',
+        targetType: 'user',
+        targetId: cleanUid,
+        oldValue: { balanceBefore: txResult.balanceBefore },
+        newValue: { amountFCFA: numericAmount, balanceAfter: txResult.balanceAfter, txId: txResult.txId },
+        reason: cleanNote,
+      }).catch(() => {});
     }
 
     if (txResult.email) {
@@ -5570,6 +5909,7 @@ app.post('/api/admin/wallet/adjust', requireAdminPermission('finance.manage') as
 
     return res.json({
       success: true,
+      duplicate: txResult.duplicate,
       txId: txResult.txId,
       balanceBefore: txResult.balanceBefore,
       balanceAfter: txResult.balanceAfter,
@@ -6050,6 +6390,7 @@ app.get('/api/public/config', async (_req: Request, res: Response) => {
   const activeDb = getActiveDb();
   try {
     const { bundle, source } = await loadPlatformConfigBundle(activeDb);
+    res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
     return res.json({
       success: true,
       source,
@@ -6059,6 +6400,7 @@ app.get('/api/public/config', async (_req: Request, res: Response) => {
   } catch (err: any) {
     if (isFirestoreIamDeniedError(err)) {
       const { bundle } = await loadPlatformConfigBundle(null);
+      res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
       return res.json({
         success: true,
         source: 'defaults_iam_fallback',
@@ -6265,6 +6607,30 @@ app.post('/api/deliveries', requireVerifiedUser as any, async (req: Authenticate
         success: false,
         code: 'INVALID_CLIENT_INFO',
         error: 'Nom et numéro de téléphone valides du destinataire requis.',
+      });
+    }
+
+    if (!isAdmin && (
+      body.paymentStatus !== undefined ||
+      body.paidAt !== undefined ||
+      body.paidAmountFCFA !== undefined ||
+      body.paymentProvider !== undefined ||
+      body.paymentProviderRef !== undefined ||
+      body.paymentId !== undefined ||
+      body.refundedAmountFCFA !== undefined ||
+      body.refundStatus !== undefined ||
+      isSimulatedProviderReference(body.transactionRef) ||
+      isSimulatedProviderReference(body.providerReference)
+    )) {
+      recordSecurityAnomaly(
+        getClientIp(req),
+        'CLIENT_PAYMENT_SPOOF_ATTEMPT',
+        `Tentative de déclaration de paiement client à la création de commande par ${callerUid}`
+      );
+      return res.status(403).json({
+        success: false,
+        code: 'CLIENT_PAYMENT_SPOOF_FORBIDDEN',
+        error: 'Le statut de paiement ne peut jamais être défini par le client lors de la création de commande.',
       });
     }
 
@@ -6510,6 +6876,10 @@ app.post('/api/deliveries', requireVerifiedUser as any, async (req: Authenticate
           }
         : {}),
       status: initialStatus,
+      paymentStatus: 'unpaid',
+      paymentCurrency: 'XOF',
+      refundedAmountFCFA: 0,
+      refundStatus: 'none',
       dispatchMode: resolvedDispatchMode,
       dispatchState: courierSummary ? 'assigned' : 'searching',
       preferredCourierId: resolvedPreferredCourierId,
@@ -6672,17 +7042,28 @@ app.patch('/api/deliveries/:orderId', requireVerifiedUser as any, async (req: Au
         body.status !== undefined ||
         body.merchantId !== undefined ||
         body.courierId !== undefined ||
-        body.courier !== undefined
+        body.courier !== undefined ||
+        body.paymentStatus !== undefined ||
+        body.paidAt !== undefined ||
+        body.paidAtIso !== undefined ||
+        body.paidAmountFCFA !== undefined ||
+        body.paymentCurrency !== undefined ||
+        body.paymentProvider !== undefined ||
+        body.paymentProviderRef !== undefined ||
+        body.paymentId !== undefined ||
+        body.refundedAmountFCFA !== undefined ||
+        body.refundStatus !== undefined ||
+        body.lastRefundId !== undefined
       ) {
         recordSecurityAnomaly(
           getClientIp(req),
           'PRICE_TAMPER_ATTEMPT',
-          `Tentative de modification directe de champs financiers/statut sur ${cleanDocId} par ${callerUid}`
+          `Tentative de modification directe de champs financiers/paiement/statut sur ${cleanDocId} par ${callerUid}`
         );
         return res.status(403).json({
           success: false,
           code: 'PRICE_OVERRIDE_FORBIDDEN',
-          error: 'Les montants financiers, la distance et le statut ne peuvent pas être modifiés directement.',
+          error: 'Les montants financiers, le statut de paiement, la distance et le statut ne peuvent pas être modifiés directement.',
         });
       }
     }
@@ -8253,54 +8634,198 @@ app.post('/api/admin/refunds', requireAdminPermission('finance.refund') as any, 
 
     const body = req.body || {};
     const targetUid = String(body.targetUid || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
-    const orderId = typeof body.orderId === 'string' ? body.orderId.trim().slice(0, 64) : undefined;
+    const orderIdRaw = typeof body.orderId === 'string' ? body.orderId.trim().slice(0, 64) : '';
+    const orderDocId = orderIdRaw.replace(/[^a-zA-Z0-9_-]/g, '');
     const reason = String(body.reason || '').trim().slice(0, 300);
-    const amountFCFA = Math.round(Number(body.amountFCFA));
+    const rawAmount = Number(body.amountFCFA);
+    const amountFCFA = Number.isInteger(rawAmount) ? rawAmount : Math.round(rawAmount);
     const idempotencyKey = String(body.idempotencyKey || `refund_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`)
       .trim()
       .replace(/[^a-zA-Z0-9_-]/g, '')
       .slice(0, 96);
 
-    if (!targetUid || !Number.isFinite(amountFCFA) || amountFCFA <= 0 || amountFCFA > 50_000_000 || reason.length < 3) {
+    if (!targetUid || !Number.isFinite(rawAmount) || !Number.isInteger(rawAmount) || amountFCFA <= 0 || amountFCFA > 50_000_000 || reason.length < 3) {
       return res.status(400).json({
         success: false,
-        error: 'Bénéficiaire, montant > 0 et motif explicite (min 3 caractères) requis pour le remboursement.',
+        error: 'Bénéficiaire, montant entier > 0 et motif explicite (min 3 caractères) requis pour le remboursement.',
       });
+    }
+
+    if (!orderDocId) {
+      return res.status(400).json({
+        success: false,
+        code: 'ORDER_REQUIRED_FOR_REFUND',
+        error: 'Une référence de commande payée (orderId) est obligatoire pour exécuter un remboursement.',
+      });
+    }
+
+    let resolvedDeliveryDocId = orderDocId;
+    const directDeliverySnap = await activeDb.collection('deliveries').doc(orderDocId).get();
+    if (!directDeliverySnap.exists && orderIdRaw) {
+      const byDisplayId = await activeDb
+        .collection('deliveries')
+        .where('id', '==', orderIdRaw)
+        .limit(1)
+        .get()
+        .catch(() => null);
+      if (byDisplayId && !byDisplayId.empty && byDisplayId.docs[0]?.id) {
+        resolvedDeliveryDocId = byDisplayId.docs[0].id;
+      }
     }
 
     const refundDocId = idempotencyKey;
     const refundRef = activeDb.collection('refunds').doc(refundDocId);
     const userRef = activeDb.collection('users').doc(targetUid);
+    const deliveryRef = activeDb.collection('deliveries').doc(resolvedDeliveryDocId);
+    const isProduction = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
 
     const txRes = await activeDb.runTransaction(async (tx: any) => {
-      const existingRefundSnap = await tx.get(refundRef);
+      const [existingRefundSnap, userSnap, deliverySnap] = await Promise.all([
+        tx.get(refundRef),
+        tx.get(userRef),
+        tx.get(deliveryRef),
+      ]);
+
       if (existingRefundSnap.exists) {
         return { ok: true as const, duplicate: true, refund: existingRefundSnap.data() };
       }
 
-      const userSnap = await tx.get(userRef);
+      if (!deliverySnap.exists) {
+        return {
+          ok: false as const,
+          status: 404,
+          code: 'ORDER_NOT_FOUND',
+          error: 'Commande associée introuvable. Remboursement refusé.',
+        };
+      }
+
+      const dData = deliverySnap.data() || {};
+      const participants = [
+        String(dData.merchantId || ''),
+        String(dData.courierId || ''),
+        String(dData.clientId || ''),
+      ].filter(Boolean);
+
+      if (!participants.includes(targetUid)) {
+        return {
+          ok: false as const,
+          status: 403,
+          code: 'REFUND_TARGET_MISMATCH',
+          error: 'Le bénéficiaire spécifié n’est pas partie prenante à cette commande.',
+        };
+      }
+
+      const paidStatus = String(dData.paymentStatus || '').toLowerCase();
+      if (paidStatus !== 'paid' && paidStatus !== 'partially_refunded') {
+        return {
+          ok: false as const,
+          status: 409,
+          code: 'PAYMENT_NOT_CONFIRMED',
+          error: 'Remboursement refusé : aucun paiement confirmé pour cette commande.',
+        };
+      }
+
+      const paidAmountFCFA = Math.round(Number(dData.paidAmountFCFA ?? 0));
+      if (!Number.isFinite(paidAmountFCFA) || paidAmountFCFA <= 0) {
+        return {
+          ok: false as const,
+          status: 409,
+          code: 'INVALID_CONFIRMED_PAYMENT',
+          error: 'Remboursement refusé : montant encaissé confirmé manquant ou invalide.',
+        };
+      }
+
+      if (isProduction && isSimulatedProviderReference(dData.paymentProviderRef)) {
+        return {
+          ok: false as const,
+          status: 403,
+          code: 'SIMULATED_PAYMENT_REFUND_FORBIDDEN',
+          error: 'Remboursement refusé en production sur une référence simulée.',
+        };
+      }
+
+      if (typeof dData.paymentId === 'string' && dData.paymentId.trim()) {
+        const paySnap = await tx.get(activeDb.collection('payments').doc(dData.paymentId.trim()));
+        if (!paySnap.exists) {
+          return {
+            ok: false as const,
+            status: 409,
+            code: 'PAYMENT_RECORD_MISSING',
+            error: 'Preuve de transaction introuvable dans le grand livre /payments.',
+          };
+        }
+        const payData = paySnap.data() || {};
+        if (payData.status !== 'paid' || payData.currency !== 'XOF' || payData.orderDocId !== resolvedDeliveryDocId) {
+          return {
+            ok: false as const,
+            status: 409,
+            code: 'PAYMENT_RECORD_INVALID',
+            error: 'Enregistrement de paiement incompatible ou non confirmé en XOF.',
+          };
+        }
+      }
+
+      const alreadyRefunded = Math.round(Number(dData.refundedAmountFCFA || 0));
+      if (dData.refundStatus === 'refunded' || alreadyRefunded >= paidAmountFCFA) {
+        return {
+          ok: false as const,
+          status: 409,
+          code: 'DOUBLE_REFUND_BLOCKED',
+          error: 'Double remboursement bloqué : cette commande a déjà été intégralement remboursée.',
+        };
+      }
+
+      const nextRefundedTotal = alreadyRefunded + amountFCFA;
+      if (nextRefundedTotal > paidAmountFCFA) {
+        return {
+          ok: false as const,
+          status: 400,
+          code: 'REFUND_EXCEEDS_PAID_AMOUNT',
+          error: `Le montant demandé (${amountFCFA} FCFA) dépasse le solde remboursable restant (${paidAmountFCFA - alreadyRefunded} FCFA).`,
+        };
+      }
+
       if (!userSnap.exists) {
         return { ok: false as const, status: 404, error: 'Compte bénéficiaire introuvable.' };
       }
+
       const uData = userSnap.data() || {};
       const currentBalance = typeof uData.walletBalanceFCFA === 'number' ? uData.walletBalanceFCFA : 0;
       const newBalance = currentBalance + amountFCFA;
-      const nowIso = new Date().toISOString();
-      const walletTxId = `wtx_ref_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+      const nowEpoch = Date.now();
+      const nowIso = new Date(nowEpoch).toISOString();
+      const walletTxId = `wtx_ref_${nowEpoch}_${crypto.randomBytes(4).toString('hex')}`;
+
+      const isFullyRefunded = nextRefundedTotal >= paidAmountFCFA;
+      const nextRefundStatus = isFullyRefunded ? 'refunded' : 'partial';
+      const nextPaymentStatus = isFullyRefunded ? 'refunded' : 'partially_refunded';
 
       tx.update(userRef, {
         walletBalanceFCFA: newBalance,
         updatedAt: nowIso,
       });
 
+      tx.update(deliveryRef, {
+        refundedAmountFCFA: nextRefundedTotal,
+        refundStatus: nextRefundStatus,
+        paymentStatus: nextPaymentStatus,
+        lastRefundId: refundDocId,
+        lastRefundedAt: nowEpoch,
+        updatedAt: nowEpoch,
+      });
+
       const targetRole = uData.role === 'livreur' ? 'livreur' : uData.role === 'client' ? 'client' : 'vendeur';
       const refundRecord = {
         id: refundDocId,
-        ...(orderId ? { orderId } : {}),
+        orderId: orderIdRaw,
+        orderDocId: resolvedDeliveryDocId,
+        ...(dData.paymentId ? { paymentId: dData.paymentId } : {}),
         targetUid,
         targetName: String(uData.storeName || uData.fullName || 'Utilisateur'),
         targetRole,
         amountFCFA,
+        paidAmountFCFA,
+        refundedTotalAfterFCFA: nextRefundedTotal,
         reason,
         status: 'valide',
         idempotencyKey: refundDocId,
@@ -8319,10 +8844,11 @@ app.post('/api/admin/refunds', requireAdminPermission('finance.refund') as any, 
         amountFCFA,
         balanceBefore: currentBalance,
         balanceAfter: newBalance,
-        note: `Remboursement admin (${orderId || 'sans course'}) : ${reason}`,
+        orderDocId: resolvedDeliveryDocId,
+        note: `Remboursement admin (${orderIdRaw}) : ${reason}`,
         adminUid: req.adminContext!.uid,
         adminEmail: req.adminContext!.email,
-        createdAt: Date.now(),
+        createdAt: nowEpoch,
         createdAtIso: nowIso,
       });
 
@@ -8336,7 +8862,7 @@ app.post('/api/admin/refunds', requireAdminPermission('finance.refund') as any, 
     });
 
     if (!txRes.ok) {
-      return res.status(txRes.status).json({ success: false, error: txRes.error });
+      return res.status(txRes.status).json({ success: false, code: (txRes as any).code, error: txRes.error });
     }
 
     if (!txRes.duplicate) {
@@ -8348,7 +8874,7 @@ app.post('/api/admin/refunds', requireAdminPermission('finance.refund') as any, 
         action: 'REFUND_EXECUTED',
         targetType: 'user',
         targetId: targetUid,
-        newValue: { amountFCFA, orderId, refundId: refundDocId },
+        newValue: { amountFCFA, orderId: orderIdRaw, orderDocId: resolvedDeliveryDocId, refundId: refundDocId },
         reason,
       });
     }

@@ -316,21 +316,78 @@ export function mergePlatformConfigBundle(raw?: Record<string, any> | null): Pla
   };
 }
 
-export async function loadPlatformConfigBundle(db?: DbLike | null): Promise<{
+interface ConfigCacheEntry {
+  bundle: PlatformConfigBundle;
+  source: 'firestore' | 'defaults';
+  expiresAt: number;
+}
+
+const CONFIG_CACHE_TTL_MS = 30_000;
+const platformConfigCacheByDb = new WeakMap<object, ConfigCacheEntry>();
+const platformConfigInFlightByDb = new WeakMap<object, Promise<{ bundle: PlatformConfigBundle; source: 'firestore' | 'defaults' }>>();
+let configCacheHits = 0;
+let configCacheMisses = 0;
+
+export function invalidatePlatformConfigCache(db?: DbLike | null): void {
+  if (db && typeof db === 'object') {
+    platformConfigCacheByDb.delete(db);
+    platformConfigInFlightByDb.delete(db);
+  }
+}
+
+export function getPlatformConfigCacheStats() {
+  const total = configCacheHits + configCacheMisses;
+  return {
+    name: 'platform-config-l1',
+    hits: configCacheHits,
+    misses: configCacheMisses,
+    hitRatePercent: total > 0 ? Math.round((configCacheHits / total) * 1000) / 10 : 0,
+  };
+}
+
+export async function loadPlatformConfigBundle(
+  db?: DbLike | null,
+  options?: { bypassCache?: boolean }
+): Promise<{
   bundle: PlatformConfigBundle;
   source: 'firestore' | 'defaults';
 }> {
   if (!db) {
     return { bundle: DEFAULT_PLATFORM_CONFIG_BUNDLE, source: 'defaults' };
   }
-  const snap = await db.collection('system_config').doc(PLATFORM_SETTINGS_DOC_ID).get();
-  if (!snap.exists) {
-    return { bundle: DEFAULT_PLATFORM_CONFIG_BUNDLE, source: 'defaults' };
+
+  const now = Date.now();
+  if (!options?.bypassCache) {
+    const cached = platformConfigCacheByDb.get(db);
+    if (cached && now < cached.expiresAt) {
+      configCacheHits += 1;
+      return { bundle: cached.bundle, source: cached.source };
+    }
+    const pending = platformConfigInFlightByDb.get(db);
+    if (pending) {
+      configCacheHits += 1;
+      return pending;
+    }
   }
-  return {
-    bundle: mergePlatformConfigBundle(snap.data()),
-    source: 'firestore',
-  };
+
+  configCacheMisses += 1;
+  const loadPromise = (async (): Promise<{ bundle: PlatformConfigBundle; source: 'firestore' | 'defaults' }> => {
+    const snap = await db.collection('system_config').doc(PLATFORM_SETTINGS_DOC_ID).get();
+    const result: { bundle: PlatformConfigBundle; source: 'firestore' | 'defaults' } = !snap.exists
+      ? { bundle: DEFAULT_PLATFORM_CONFIG_BUNDLE, source: 'defaults' }
+      : { bundle: mergePlatformConfigBundle(snap.data()), source: 'firestore' };
+
+    platformConfigCacheByDb.set(db, {
+      ...result,
+      expiresAt: Date.now() + CONFIG_CACHE_TTL_MS,
+    });
+    return result;
+  })().finally(() => {
+    platformConfigInFlightByDb.delete(db);
+  });
+
+  platformConfigInFlightByDb.set(db, loadPromise);
+  return loadPromise;
 }
 
 export async function savePlatformConfigSection(
@@ -338,7 +395,7 @@ export async function savePlatformConfigSection(
   patch: Partial<PlatformConfigBundle> & { pricingRules?: Record<string, any> },
   actorEmail: string
 ): Promise<PlatformConfigBundle> {
-  const current = await loadPlatformConfigBundle(db);
+  const current = await loadPlatformConfigBundle(db, { bypassCache: true });
   const merged = mergePlatformConfigBundle({
     ...current.bundle,
     ...patch,
@@ -369,7 +426,13 @@ export async function savePlatformConfigSection(
   };
 
   await db.collection('system_config').doc(PLATFORM_SETTINGS_DOC_ID).set(payload, { merge: true });
-  return { ...merged, updatedAt: nowIso, updatedBy: actorEmail };
+  const updatedBundle = { ...merged, updatedAt: nowIso, updatedBy: actorEmail };
+  platformConfigCacheByDb.set(db, {
+    bundle: updatedBundle,
+    source: 'firestore',
+    expiresAt: Date.now() + CONFIG_CACHE_TTL_MS,
+  });
+  return updatedBundle;
 }
 
 export function extractPublicPlatformConfig(bundle: PlatformConfigBundle) {
@@ -438,11 +501,34 @@ export function extractPublicPlatformConfig(bundle: PlatformConfigBundle) {
   };
 }
 
-export async function loadEmailTemplates(db?: DbLike | null): Promise<Record<EmailTemplateId, EmailTemplateRecord>> {
+const EMAIL_TEMPLATES_CACHE_TTL_MS = 60_000;
+const emailTemplatesCacheByDb = new WeakMap<object, { templates: Record<EmailTemplateId, EmailTemplateRecord>; expiresAt: number }>();
+
+export function invalidateEmailTemplatesCache(db?: DbLike | null): void {
+  if (db && typeof db === 'object') {
+    emailTemplatesCacheByDb.delete(db);
+  }
+}
+
+export async function loadEmailTemplates(
+  db?: DbLike | null,
+  options?: { bypassCache?: boolean }
+): Promise<Record<EmailTemplateId, EmailTemplateRecord>> {
   const defaults = getDefaultEmailTemplates();
   if (!db) return defaults;
+
+  if (!options?.bypassCache) {
+    const cached = emailTemplatesCacheByDb.get(db);
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached.templates;
+    }
+  }
+
   const snap = await db.collection('system_config').doc(EMAIL_TEMPLATES_DOC_ID).get();
-  if (!snap.exists) return defaults;
+  if (!snap.exists) {
+    emailTemplatesCacheByDb.set(db, { templates: defaults, expiresAt: Date.now() + EMAIL_TEMPLATES_CACHE_TTL_MS });
+    return defaults;
+  }
   const stored = (snap.data()?.templates || {}) as Partial<Record<EmailTemplateId, Partial<EmailTemplateRecord>>>;
   const merged = { ...defaults };
   for (const id of ALL_EMAIL_TEMPLATE_IDS) {
@@ -454,6 +540,7 @@ export async function loadEmailTemplates(db?: DbLike | null): Promise<Record<Ema
       };
     }
   }
+  emailTemplatesCacheByDb.set(db, { templates: merged, expiresAt: Date.now() + EMAIL_TEMPLATES_CACHE_TTL_MS });
   return merged;
 }
 
@@ -463,7 +550,7 @@ export async function saveEmailTemplate(
   patch: Partial<EmailTemplateRecord>,
   actorEmail: string
 ): Promise<EmailTemplateRecord> {
-  const current = await loadEmailTemplates(db);
+  const current = await loadEmailTemplates(db, { bypassCache: true });
   const existing = current[templateId];
   const nowIso = new Date().toISOString();
   const rawHtml = typeof patch.bodyHtml === 'string'
@@ -497,5 +584,6 @@ export async function saveEmailTemplate(
     },
     { merge: true }
   );
+  invalidateEmailTemplatesCache(db);
   return updated;
 }

@@ -1,6 +1,6 @@
 /**
- * In-memory and SessionStorage Cache with TTL
- * Point 16: Caching static or slow-changing data
+ * Bounded LRU + TTL Cache backed by in-memory Map and SessionStorage
+ * Point 16: Caching static or slow-changing data without unbounded memory growth
  */
 
 interface CacheEntry<T> {
@@ -10,12 +10,39 @@ interface CacheEntry<T> {
 
 class CacheManager {
   private memoryCache = new Map<string, CacheEntry<any>>();
+  private inFlight = new Map<string, Promise<any>>();
   private defaultTTL = 15 * 60 * 1000; // 15 minutes default
+  private readonly maxEntries: number;
+
+  constructor(maxEntries = 150) {
+    this.maxEntries = maxEntries;
+  }
+
+  private evictIfNeeded(): void {
+    if (this.memoryCache.size < this.maxEntries) return;
+    const now = Date.now();
+    for (const [k, v] of this.memoryCache.entries()) {
+      if (now >= v.expiresAt) {
+        this.memoryCache.delete(k);
+      }
+    }
+    while (this.memoryCache.size >= this.maxEntries) {
+      const oldestKey = this.memoryCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.memoryCache.delete(oldestKey);
+    }
+  }
 
   /**
-   * Store data in cache with a TTL in milliseconds
+   * Store data in cache with a TTL in milliseconds (LRU promotion)
    */
   set<T>(key: string, data: T, ttlMs: number = this.defaultTTL): void {
+    if (this.memoryCache.has(key)) {
+      this.memoryCache.delete(key);
+    } else {
+      this.evictIfNeeded();
+    }
+
     const entry: CacheEntry<T> = {
       data,
       expiresAt: Date.now() + ttlMs,
@@ -31,7 +58,7 @@ class CacheManager {
   }
 
   /**
-   * Retrieve cached data if not expired
+   * Retrieve cached data if not expired (promotes to MRU)
    */
   get<T>(key: string): T | null {
     const now = Date.now();
@@ -40,6 +67,8 @@ class CacheManager {
     const memEntry = this.memoryCache.get(key);
     if (memEntry) {
       if (now < memEntry.expiresAt) {
+        this.memoryCache.delete(key);
+        this.memoryCache.set(key, memEntry);
         return memEntry.data as T;
       }
       this.memoryCache.delete(key);
@@ -52,6 +81,7 @@ class CacheManager {
         if (stored) {
           const entry: CacheEntry<T> = JSON.parse(stored);
           if (now < entry.expiresAt) {
+            this.evictIfNeeded();
             this.memoryCache.set(key, entry); // Hydrate memory cache
             return entry.data;
           }
@@ -64,16 +94,34 @@ class CacheManager {
   }
 
   /**
-   * Get or compute if missing
+   * Get or compute if missing (with concurrent in-flight deduplication)
    */
   async getOrSet<T>(key: string, fetchFn: () => Promise<T>, ttlMs: number = this.defaultTTL): Promise<T> {
     const cached = this.get<T>(key);
     if (cached !== null) {
       return cached;
     }
-    const fresh = await fetchFn();
-    this.set<T>(key, fresh, ttlMs);
-    return fresh;
+
+    const pending = this.inFlight.get(key);
+    if (pending) {
+      return pending as Promise<T>;
+    }
+
+    const promise = fetchFn()
+      .then((fresh) => {
+        this.set<T>(key, fresh, ttlMs);
+        return fresh;
+      })
+      .finally(() => {
+        this.inFlight.delete(key);
+      });
+
+    this.inFlight.set(key, promise);
+    return promise;
+  }
+
+  size(): number {
+    return this.memoryCache.size;
   }
 
   /**
@@ -81,6 +129,7 @@ class CacheManager {
    */
   delete(key: string): void {
     this.memoryCache.delete(key);
+    this.inFlight.delete(key);
     try {
       if (typeof window !== 'undefined' && window.sessionStorage) {
         window.sessionStorage.removeItem(`livralink_cache_${key}`);
@@ -93,6 +142,7 @@ class CacheManager {
    */
   clear(): void {
     this.memoryCache.clear();
+    this.inFlight.clear();
     try {
       if (typeof window !== 'undefined' && window.sessionStorage) {
         const keysToRemove: string[] = [];
@@ -108,4 +158,5 @@ class CacheManager {
   }
 }
 
-export const appCache = new CacheManager();
+export const appCache = new CacheManager(150);
+export { CacheManager };

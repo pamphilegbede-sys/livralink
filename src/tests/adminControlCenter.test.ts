@@ -295,6 +295,11 @@ test('Admin Control Center E2E integration suite (Vendors, Couriers, Pricing, Co
     itemValueCOD: 10000,
     deliveryFee: 500,
     totalCustomerPayable: 10500,
+    paymentStatus: 'paid',
+    paidAmountFCFA: 10500,
+    paymentCurrency: 'XOF',
+    paymentProvider: 'fedapay',
+    paymentProviderRef: 'FEDA_TEST_1001',
     createdAt: '2026-10-05T10:00:00.000Z',
   });
 

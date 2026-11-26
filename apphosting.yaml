@@ -10,8 +10,6 @@ env:
     value: production
   - variable: FIREBASE_DATABASE_ID
     value: ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6
-  - variable: PAYOUT_PROVIDER_MODE
-    value: simulator
   - variable: SMTP_HOST
     value: smtp.gmail.com
   - variable: SMTP_PORT
@@ -37,4 +35,5 @@ env:
 # - EMAIL_ENCRYPTION_SECRET : recommandé (>= 32 caractères ; sinon dérivé via HKDF depuis OTP_SECRET_SALT)
 # - GMAIL_SMTP_USER / GMAIL_SMTP_PASS : identifiants SMTP réels si la configuration Firestore chiffrée n'est pas utilisée
 # - VITE_GOOGLE_MAPS_API_KEY : clé Google Maps navigateur restreinte par référents HTTP (BUILD/RUNTIME si rebuild)
-# - MOBILE_MONEY_API_BASE_URL / MOBILE_MONEY_API_KEY / MOBILE_MONEY_WEBHOOK_SECRET : uniquement si PAYOUT_PROVIDER_MODE != simulator
+# - PAYOUT_PROVIDER_MODE : fedapay | wave | kkiapay | mtn_momo (mode simulator strictement interdit en production)
+# - MOBILE_MONEY_API_BASE_URL / MOBILE_MONEY_API_KEY / MOBILE_MONEY_WEBHOOK_SECRET : obligatoires pour les paiements/retraits réels en production

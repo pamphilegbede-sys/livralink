@@ -1,8 +1,10 @@
 /**
- * Resilient API Client with Rate Limiting, Circuit Breaker, Retries, and Timeouts
+ * Resilient API Client with Rate Limiting, Circuit Breaker, Retries, Timeouts,
+ * In-Flight GET Request Deduplication, and Optional Response Caching.
  * Points 01, 02, 03, 07, 08, 18
  */
 import { auth } from '../firebase/config';
+import { appCache } from '../utils/cacheManager';
 
 export interface RequestOptions extends RequestInit {
   timeoutMs?: number;
@@ -10,6 +12,8 @@ export interface RequestOptions extends RequestInit {
   retryDelayMs?: number;
   serviceName?: string;
   skipCircuitBreaker?: boolean;
+  deduplicateGet?: boolean;
+  cacheTtlMs?: number;
 }
 
 // Circuit Breaker State per service
@@ -20,6 +24,7 @@ interface CircuitBreakerState {
 }
 
 const circuitBreakers = new Map<string, CircuitBreakerState>();
+const inFlightGetRequests = new Map<string, Promise<{ data: any; error: Error | null; status: number }>>();
 const FAILURE_THRESHOLD = 3;
 const CIRCUIT_RESET_TIMEOUT_MS = 30000; // 30s pause before half-open
 
@@ -94,11 +99,7 @@ export async function logErrorToRemote(payload: {
   }
 }
 
-/**
- * Robust fetch with Timeout (AbortController) and Exponential Backoff Retries
- * Handles network failures, timeouts, and 5xx/429 status codes.
- */
-export async function resilientFetch<T = any>(
+async function executeResilientFetch<T = any>(
   url: string,
   options: RequestOptions = {}
 ): Promise<{ data: T | null; error: Error | null; status: number }> {
@@ -108,6 +109,9 @@ export async function resilientFetch<T = any>(
     retryDelayMs = 400,
     serviceName = 'api',
     skipCircuitBreaker = false,
+    deduplicateGet: _dedup,
+    cacheTtlMs: _ttl,
+    signal: callerSignal,
     ...fetchOptions
   } = options;
 
@@ -122,9 +126,17 @@ export async function resilientFetch<T = any>(
   let lastStatus = 0;
 
   while (attempt <= maxRetries) {
+    if (callerSignal?.aborted) {
+      return { data: null, error: new Error('Requête annulée par le client.'), status: 499 };
+    }
+
     attempt++;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const onCallerAbort = () => controller.abort();
+    if (callerSignal) {
+      callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+    }
 
     try {
       const response = await fetch(url, {
@@ -133,6 +145,7 @@ export async function resilientFetch<T = any>(
       });
 
       clearTimeout(timeoutId);
+      if (callerSignal) callerSignal.removeEventListener('abort', onCallerAbort);
       lastStatus = response.status;
 
       // Handle server error retry condition (429 Too Many Requests, or 502/503/504)
@@ -162,6 +175,12 @@ export async function resilientFetch<T = any>(
 
     } catch (err: any) {
       clearTimeout(timeoutId);
+      if (callerSignal) callerSignal.removeEventListener('abort', onCallerAbort);
+
+      if (callerSignal?.aborted) {
+        return { data: null, error: new Error('Requête annulée par le client.'), status: 499 };
+      }
+
       if (err.name === 'AbortError') {
         lastError = new Error(`Délai d'attente dépassé (${timeoutMs}ms) pour ${url}`);
       } else {
@@ -189,4 +208,51 @@ export async function resilientFetch<T = any>(
     error: lastError || new Error('Échec après plusieurs tentatives'),
     status: lastStatus || 500,
   };
+}
+
+/**
+ * Robust fetch with Timeout (AbortController), Exponential Backoff Retries,
+ * In-flight GET deduplication, and optional TTL response cache.
+ */
+export async function resilientFetch<T = any>(
+  url: string,
+  options: RequestOptions = {}
+): Promise<{ data: T | null; error: Error | null; status: number }> {
+  const method = String(options.method || 'GET').toUpperCase();
+  const isGet = method === 'GET';
+  const shouldDedup = options.deduplicateGet ?? isGet;
+  const cacheTtlMs = options.cacheTtlMs ?? 0;
+  const cacheKey = `http_get_${url}`;
+
+  if (isGet && cacheTtlMs > 0) {
+    const cached = appCache.get<T>(cacheKey);
+    if (cached !== null) {
+      return { data: cached, error: null, status: 200 };
+    }
+  }
+
+  if (isGet && shouldDedup && !options.signal) {
+    const existing = inFlightGetRequests.get(url);
+    if (existing) {
+      return existing as Promise<{ data: T | null; error: Error | null; status: number }>;
+    }
+    const promise = executeResilientFetch<T>(url, options)
+      .then((res) => {
+        if (!res.error && res.data !== null && cacheTtlMs > 0) {
+          appCache.set<T>(cacheKey, res.data, cacheTtlMs);
+        }
+        return res;
+      })
+      .finally(() => {
+        inFlightGetRequests.delete(url);
+      });
+    inFlightGetRequests.set(url, promise);
+    return promise;
+  }
+
+  const result = await executeResilientFetch<T>(url, options);
+  if (isGet && !result.error && result.data !== null && cacheTtlMs > 0) {
+    appCache.set<T>(cacheKey, result.data, cacheTtlMs);
+  }
+  return result;
 }

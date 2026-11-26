@@ -992,6 +992,8 @@ export const PODValidationModal: React.FC = () => {
                   <img
                     src={photoDataUrl}
                     alt="Photo directe du colis certifié"
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full object-cover"
                   />
                   <div className="absolute top-2 left-2 bg-emerald-600/90 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 shadow-md">

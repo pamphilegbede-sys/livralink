@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Sidebar } from '../common/Sidebar';
@@ -10,6 +10,7 @@ import { PaginationControls } from '../common/PaginationControls';
 import { OnboardingGuideModal } from '../modals/OnboardingGuideModal';
 import { VendeurFAQSection } from '../vendeur/VendeurFAQSection';
 import { filterVendorDeliveries, buildVendorDeliveryCsv } from '../../utils/deliveryIsolation';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 
 export const VendeurDashboard: React.FC = () => {
   const {
@@ -42,49 +43,84 @@ export const VendeurDashboard: React.FC = () => {
 
   const [activeFilter, setActiveFilter] = useState<'all' | 'en_attente' | 'en_cours' | 'livree' | 'echec'>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebouncedValue(searchTerm, 200);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 6;
 
   // Isolation stricte des livraisons : chaque compte vendeur voit exclusivement ses propres commandes (par UID)
-  const merchantDeliveries = filterVendorDeliveries(deliveries, {
-    userProfile,
-    firebaseUserUid: firebaseUser?.uid,
-    isAdminAuthenticated,
-    isUserMasterAdmin,
-    isDirectorModeActive,
-    directorTargetId,
-    directorTargetName,
-  });
+  const merchantDeliveries = useMemo(
+    () =>
+      filterVendorDeliveries(deliveries, {
+        userProfile,
+        firebaseUserUid: firebaseUser?.uid,
+        isAdminAuthenticated,
+        isUserMasterAdmin,
+        isDirectorModeActive,
+        directorTargetId,
+        directorTargetName,
+      }),
+    [
+      deliveries,
+      userProfile,
+      firebaseUser?.uid,
+      isAdminAuthenticated,
+      isUserMasterAdmin,
+      isDirectorModeActive,
+      directorTargetId,
+      directorTargetName,
+    ]
+  );
 
-  // Counters basés sur les livraisons propres à ce vendeur
-  const totalCount = merchantDeliveries.length;
-  const pendingCount = merchantDeliveries.filter((d) => d.status === 'en_attente' || d.status === 'assignee').length;
-  const inProgressCount = merchantDeliveries.filter((d) => d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere').length;
-  const deliveredCount = merchantDeliveries.filter((d) => d.status === 'livree').length;
-  const failedCount = merchantDeliveries.filter((d) => d.status === 'echec').length;
-  const liveOrder = merchantDeliveries.find((d) => d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere');
+  // Single-pass status counters & live order discovery
+  const { totalCount, pendingCount, inProgressCount, deliveredCount, failedCount, liveOrder } = useMemo(() => {
+    let pending = 0;
+    let inProgress = 0;
+    let delivered = 0;
+    let failed = 0;
+    let firstLive: DeliveryOrder | undefined;
 
-  // Filtered deliveries
-  const filteredDeliveries = merchantDeliveries.filter((order) => {
-    if (activeFilter === 'en_attente' && !(order.status === 'en_attente' || order.status === 'assignee')) return false;
-    if (activeFilter === 'en_cours' && !(order.status === 'en_cours' || order.status === 'acceptee' || order.status === 'colis_recupere')) return false;
-    if (activeFilter === 'livree' && order.status !== 'livree') return false;
-    if (activeFilter === 'echec' && order.status !== 'echec') return false;
-
-    if (searchTerm.trim()) {
-      const q = searchTerm.toLowerCase();
-      const matchId = order.id.toLowerCase().includes(q);
-      const matchName = order.clientName.toLowerCase().includes(q);
-      const matchPhone = order.clientPhone.includes(q);
-      const matchDestination = order.dropoffLocation.commune.toLowerCase().includes(q) || order.dropoffLocation.address.toLowerCase().includes(q);
-      return matchId || matchName || matchPhone || matchDestination;
+    for (const d of merchantDeliveries) {
+      if (d.status === 'en_attente' || d.status === 'assignee') pending += 1;
+      else if (d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere') {
+        inProgress += 1;
+        if (!firstLive) firstLive = d;
+      } else if (d.status === 'livree') delivered += 1;
+      else if (d.status === 'echec') failed += 1;
     }
-    return true;
-  });
 
-  const paginatedDeliveries = filteredDeliveries.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
+    return {
+      totalCount: merchantDeliveries.length,
+      pendingCount: pending,
+      inProgressCount: inProgress,
+      deliveredCount: delivered,
+      failedCount: failed,
+      liveOrder: firstLive,
+    };
+  }, [merchantDeliveries]);
+
+  // Filtered deliveries (debounced search avoids re-filtering on every keystroke)
+  const filteredDeliveries = useMemo(() => {
+    const q = debouncedSearchTerm.trim().toLowerCase();
+    return merchantDeliveries.filter((order) => {
+      if (activeFilter === 'en_attente' && !(order.status === 'en_attente' || order.status === 'assignee')) return false;
+      if (activeFilter === 'en_cours' && !(order.status === 'en_cours' || order.status === 'acceptee' || order.status === 'colis_recupere')) return false;
+      if (activeFilter === 'livree' && order.status !== 'livree') return false;
+      if (activeFilter === 'echec' && order.status !== 'echec') return false;
+
+      if (q) {
+        const matchId = order.id.toLowerCase().includes(q);
+        const matchName = order.clientName.toLowerCase().includes(q);
+        const matchPhone = order.clientPhone.includes(q);
+        const matchDestination = order.dropoffLocation.commune.toLowerCase().includes(q) || order.dropoffLocation.address.toLowerCase().includes(q);
+        return matchId || matchName || matchPhone || matchDestination;
+      }
+      return true;
+    });
+  }, [merchantDeliveries, activeFilter, debouncedSearchTerm]);
+
+  const paginatedDeliveries = useMemo(
+    () => filteredDeliveries.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage),
+    [filteredDeliveries, currentPage, itemsPerPage]
   );
 
   const handleFilterChange = (filter: 'all' | 'en_attente' | 'en_cours' | 'livree' | 'echec') => {

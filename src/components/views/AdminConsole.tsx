@@ -12,19 +12,21 @@ import { getKycDocumentSlots } from '../../utils/adminReconciliation';
 import { downloadCsvFile } from '../../utils/csvExport';
 import { buildSandboxedEmailPreviewDocument } from '../../utils/htmlSanitizer';
 import { getLocationForCommune } from '../../config/maps';
-import { AdminOverviewDashboard } from './AdminOverviewDashboard';
-import { AdminCommunicationsSection } from '../admin/AdminCommunicationsSection';
-import { AdminMerchantsPanel } from '../admin/AdminMerchantsPanel';
-import { AdminCouriersPanel } from '../admin/AdminCouriersPanel';
-import { AdminClientsPanel } from '../admin/AdminClientsPanel';
-import { AdminDeliveriesDisputesPanel } from '../admin/AdminDeliveriesDisputesPanel';
-import { AdminPricingFinancePanel } from '../admin/AdminPricingFinancePanel';
-import { AdminEmailTemplatesPanel } from '../admin/AdminEmailTemplatesPanel';
-import { AdminContactsPanel } from '../admin/AdminContactsPanel';
-import { AdminGeneralSettingsPanel } from '../admin/AdminGeneralSettingsPanel';
-import { AdminRbacSecurityPanel } from '../admin/AdminRbacSecurityPanel';
-import { AdminAuditLogsPanel } from '../admin/AdminAuditLogsPanel';
+import { TableSkeleton } from '../common/LoadingSkeleton';
 import { ResetUserAccessModal, TargetResetUser } from '../modals/ResetUserAccessModal';
+
+const AdminOverviewDashboard = React.lazy(() => import('./AdminOverviewDashboard').then((m) => ({ default: m.AdminOverviewDashboard })));
+const AdminCommunicationsSection = React.lazy(() => import('../admin/AdminCommunicationsSection').then((m) => ({ default: m.AdminCommunicationsSection })));
+const AdminMerchantsPanel = React.lazy(() => import('../admin/AdminMerchantsPanel').then((m) => ({ default: m.AdminMerchantsPanel })));
+const AdminCouriersPanel = React.lazy(() => import('../admin/AdminCouriersPanel').then((m) => ({ default: m.AdminCouriersPanel })));
+const AdminClientsPanel = React.lazy(() => import('../admin/AdminClientsPanel').then((m) => ({ default: m.AdminClientsPanel })));
+const AdminDeliveriesDisputesPanel = React.lazy(() => import('../admin/AdminDeliveriesDisputesPanel').then((m) => ({ default: m.AdminDeliveriesDisputesPanel })));
+const AdminPricingFinancePanel = React.lazy(() => import('../admin/AdminPricingFinancePanel').then((m) => ({ default: m.AdminPricingFinancePanel })));
+const AdminEmailTemplatesPanel = React.lazy(() => import('../admin/AdminEmailTemplatesPanel').then((m) => ({ default: m.AdminEmailTemplatesPanel })));
+const AdminContactsPanel = React.lazy(() => import('../admin/AdminContactsPanel').then((m) => ({ default: m.AdminContactsPanel })));
+const AdminGeneralSettingsPanel = React.lazy(() => import('../admin/AdminGeneralSettingsPanel').then((m) => ({ default: m.AdminGeneralSettingsPanel })));
+const AdminRbacSecurityPanel = React.lazy(() => import('../admin/AdminRbacSecurityPanel').then((m) => ({ default: m.AdminRbacSecurityPanel })));
+const AdminAuditLogsPanel = React.lazy(() => import('../admin/AdminAuditLogsPanel').then((m) => ({ default: m.AdminAuditLogsPanel })));
 import { AdminPermission } from '../../types';
 import {
   fetchSmtpConfig,
@@ -1688,14 +1690,18 @@ export const AdminConsole: React.FC = () => {
               TAB: COMMUNICATIONS ET ANNONCES
              ========================================================================= */}
           {activeViewTab === 'communications' && (
-            <AdminCommunicationsSection />
+            <React.Suspense fallback={<TableSkeleton rows={6} columns={4} />}>
+              <AdminCommunicationsSection />
+            </React.Suspense>
           )}
 
           {/* =========================================================================
               TAB 1: VUE D'ENSEMBLE (Indicateurs clés + Suivi centralisé de toutes les activités)
              ========================================================================= */}
           {activeViewTab === 'overview' && (
-            <AdminOverviewDashboard onNavigateTab={setActiveViewTab} />
+            <React.Suspense fallback={<TableSkeleton rows={6} columns={4} />}>
+              <AdminOverviewDashboard onNavigateTab={setActiveViewTab} />
+            </React.Suspense>
           )}
 
           {/* =========================================================================
@@ -2462,49 +2468,61 @@ export const AdminConsole: React.FC = () => {
               TAB 2: GESTION COMPLÈTE DES LIVREURS & RÉMUNÉRATION INDIVIDUELLE
              ========================================================================= */}
           {activeViewTab === 'couriers' && (
-            <AdminCouriersPanel onOpenAddCourier={() => setIsAddCourierModalOpen(true)} />
+            <React.Suspense fallback={<TableSkeleton rows={6} columns={5} />}>
+              <AdminCouriersPanel onOpenAddCourier={() => setIsAddCourierModalOpen(true)} />
+            </React.Suspense>
           )}
 
           {/* =========================================================================
               TAB 3: GESTION COMPLÈTE DES VENDEURS / MARCHANDS
              ========================================================================= */}
           {activeViewTab === 'merchants' && (
-            <AdminMerchantsPanel onOpenAddMerchant={() => setIsAddMerchantModalOpen(true)} />
+            <React.Suspense fallback={<TableSkeleton rows={6} columns={5} />}>
+              <AdminMerchantsPanel onOpenAddMerchant={() => setIsAddMerchantModalOpen(true)} />
+            </React.Suspense>
           )}
 
           {/* =========================================================================
               TAB: RÉPERTOIRE CLIENTS & DESTINATAIRES
              ========================================================================= */}
           {activeViewTab === 'clients' && (
-            <AdminClientsPanel />
+            <React.Suspense fallback={<TableSkeleton rows={6} columns={5} />}>
+              <AdminClientsPanel />
+            </React.Suspense>
           )}
 
           {/* =========================================================================
               TAB 4: SUPERVISION DES LIVRAISONS & SNAPSHOTS TARIFAIRES
              ========================================================================= */}
           {activeViewTab === 'deliveries' && (
-            <AdminDeliveriesDisputesPanel
-              mode="deliveries"
-              onOpenNewDelivery={() => setIsAddDeliveryModalOpen(true)}
-              onOpenArbitrateOrder={(id) => setSelectedDisputeOrder(id)}
-            />
+            <React.Suspense fallback={<TableSkeleton rows={6} columns={5} />}>
+              <AdminDeliveriesDisputesPanel
+                mode="deliveries"
+                onOpenNewDelivery={() => setIsAddDeliveryModalOpen(true)}
+                onOpenArbitrateOrder={(id) => setSelectedDisputeOrder(id)}
+              />
+            </React.Suspense>
           )}
 
           {/* =========================================================================
               TAB 5: LITIGES & MODÉRATION
              ========================================================================= */}
           {activeViewTab === 'disputes' && (
-            <AdminDeliveriesDisputesPanel
-              mode="disputes"
-              onOpenArbitrateOrder={(id) => setSelectedDisputeOrder(id)}
-            />
+            <React.Suspense fallback={<TableSkeleton rows={6} columns={5} />}>
+              <AdminDeliveriesDisputesPanel
+                mode="disputes"
+                onOpenArbitrateOrder={(id) => setSelectedDisputeOrder(id)}
+              />
+            </React.Suspense>
           )}
 
           {/* =========================================================================
               TAB 6: MOTEUR TARIFAIRE AU KM & RÉMUNÉRATION GÉNÉRALE
              ========================================================================= */}
           {activeViewTab === 'pricing' && (
-            <AdminPricingFinancePanel mode="pricing" />
+            <React.Suspense fallback={<TableSkeleton rows={6} columns={4} />}>
+              <AdminPricingFinancePanel mode="pricing" />
+            </React.Suspense>
           )}
 
           {/* =========================================================================
@@ -2512,7 +2530,9 @@ export const AdminConsole: React.FC = () => {
              ========================================================================= */}
           {activeViewTab === 'finance' && (
             <div className="space-y-6">
-              <AdminPricingFinancePanel mode="finance" />
+              <React.Suspense fallback={<TableSkeleton rows={6} columns={5} />}>
+                <AdminPricingFinancePanel mode="finance" />
+              </React.Suspense>
 
               {/* Réconciliation Retraits en Attente / Incertains */}
               <div className="p-5 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-3">
@@ -2590,28 +2610,36 @@ export const AdminConsole: React.FC = () => {
               TAB: ADRESSES E-MAIL OFFICIELLES & 14 MODÈLES ÉDITABLES
              ========================================================================= */}
           {activeViewTab === 'email_templates' && (
-            <AdminEmailTemplatesPanel onOpenSmtpSettings={() => setActiveViewTab('email_settings')} />
+            <React.Suspense fallback={<TableSkeleton rows={5} columns={4} />}>
+              <AdminEmailTemplatesPanel onOpenSmtpSettings={() => setActiveViewTab('email_settings')} />
+            </React.Suspense>
           )}
 
           {/* =========================================================================
               TAB: NUMÉROS DE TÉLÉPHONE OFFICIELS & CONTACTS
              ========================================================================= */}
           {activeViewTab === 'contacts' && (
-            <AdminContactsPanel />
+            <React.Suspense fallback={<TableSkeleton rows={5} columns={3} />}>
+              <AdminContactsPanel />
+            </React.Suspense>
           )}
 
           {/* =========================================================================
               TAB: PARAMÈTRES GÉNÉRAUX & CONTRÔLE GLOBAL DES OPÉRATIONS
              ========================================================================= */}
           {activeViewTab === 'general_settings' && (
-            <AdminGeneralSettingsPanel />
+            <React.Suspense fallback={<TableSkeleton rows={5} columns={3} />}>
+              <AdminGeneralSettingsPanel />
+            </React.Suspense>
           )}
 
           {/* =========================================================================
               TAB: ADMINISTRATEURS & 7 RÔLES RBAC
              ========================================================================= */}
           {activeViewTab === 'rbac_admins' && (
-            <AdminRbacSecurityPanel />
+            <React.Suspense fallback={<TableSkeleton rows={5} columns={4} />}>
+              <AdminRbacSecurityPanel />
+            </React.Suspense>
           )}
 
           {/* =========================================================================
@@ -3014,7 +3042,9 @@ export const AdminConsole: React.FC = () => {
               TAB 8: JOURNAL D'AUDIT & SÉCURITÉ
              ========================================================================= */}
           {activeViewTab === 'audit' && (
-            <AdminAuditLogsPanel />
+            <React.Suspense fallback={<TableSkeleton rows={6} columns={5} />}>
+              <AdminAuditLogsPanel />
+            </React.Suspense>
           )}
 
           {/* =========================================================================
@@ -5391,6 +5421,8 @@ export const AdminConsole: React.FC = () => {
                                   <img
                                     src={media.url}
                                     alt={slot.label}
+                                    loading="lazy"
+                                    decoding="async"
                                     className="w-full h-full object-cover"
                                   />
                                 )
@@ -5563,6 +5595,8 @@ export const AdminConsole: React.FC = () => {
                           <img
                             src={zoomedMedia.url}
                             alt={zoomingKycSlot.title}
+                            loading="lazy"
+                            decoding="async"
                             className="w-full h-auto max-h-[60vh] object-contain rounded-xl mx-auto"
                           />
                         )}

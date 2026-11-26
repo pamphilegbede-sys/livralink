@@ -87,6 +87,8 @@ export const AuthorizedMediaImage: React.FC<AuthorizedMediaImageProps> = ({
     <img
       src={resolvedSrc}
       alt={alt}
+      loading="lazy"
+      decoding="async"
       className={className}
       onError={() => setHasError(true)}
     />

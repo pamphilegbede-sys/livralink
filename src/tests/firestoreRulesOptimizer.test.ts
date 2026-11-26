@@ -25,11 +25,23 @@ test('Firestore rules optimization & Mobile Money PSP readiness tests', async (t
       'email_dedup',
       'ai_usage_guards',
       'system_backups',
+      'admin_audit_logs',
+      'refunds',
+      'webhook_events',
     ];
     for (const col of lockedCollections) {
       const pattern = new RegExp(`match /${col}/\\{[^}]+\\}\\s*\\{\\s*allow read, write: if false;\\s*\\}`);
       assert.match(rulesText, pattern, `${col} must deny all direct client read/write`);
     }
+    assert.match(
+      rulesText,
+      /match \/payments\/\{paymentId\}[\s\S]*?allow create, update, delete: if false;/,
+      'payments must deny all direct client writes'
+    );
+    assert.ok(
+      rulesText.includes("'paymentStatus'") && rulesText.includes("'refundedAmountFCFA'"),
+      'firestore.rules must explicitly protect delivery payment and refund fields'
+    );
   });
 
   await t.test('firestore.rules factors delivery/mission update helpers to single callerUserData lookup (well below 1,000-expression limit)', () => {
@@ -82,6 +94,21 @@ test('Firestore rules optimization & Mobile Money PSP readiness tests', async (t
       assert.equal(liveRes.outcome, 'failed');
       assert.equal(liveRes.isSimulatedProvider, false);
     }
+
+    // Simulator mode MUST fail closed in NODE_ENV=production
+    const prodSimEval = evaluatePayoutProviderConfig({
+      NODE_ENV: 'production',
+      PAYOUT_PROVIDER_MODE: 'simulator',
+    } as NodeJS.ProcessEnv);
+    assert.equal(prodSimEval.ready, false);
+    assert.equal(prodSimEval.simulatorForbiddenInProduction, true);
+    const prodSimAdapter = resolvePayoutProviderAdapter({
+      NODE_ENV: 'production',
+      PAYOUT_PROVIDER_MODE: 'simulator',
+    } as NodeJS.ProcessEnv);
+    const prodSimRes = await prodSimAdapter({ uid: 'u1', amount: 5000, idempotencyKey: 'idem_prod_sim' });
+    assert.equal(prodSimRes.outcome, 'failed');
+    assert.equal(prodSimRes.isSimulatedProvider, false);
   });
 
   await t.test('Mobile Money live HTTP adapter maps 200 -> succeeded, 400 -> failed, 503/network -> uncertain & verifies webhook HMAC', async () => {

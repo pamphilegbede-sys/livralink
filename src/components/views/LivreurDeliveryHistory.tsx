@@ -1,8 +1,110 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { AuthorizedMediaImage } from '../common/AuthorizedMediaImage';
+import { VirtualList } from '../common/VirtualList';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { DeliveryOrder } from '../../types';
 import { downloadCsvFile } from '../../utils/csvExport';
+
+const DeliveryHistoryCard = React.memo<{
+  order: DeliveryOrder;
+  onInspectPod: (order: DeliveryOrder) => void;
+}>(({ order, onInspectPod }) => {
+  const netEarning = order.deliveryFee || 0;
+  const podValidatedAt = order.podData?.validatedAt || order.createdAt;
+
+  return (
+    <div className="p-4.5 rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-slate-800/50 hover:bg-slate-50/80 dark:hover:bg-slate-800 transition-all shadow-2xs space-y-3">
+      {/* Top Line: ID, Date badge, Net Earning Badge */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2.5">
+          <span className="font-extrabold text-sm text-blue-700 dark:text-blue-400 font-mono">
+            {order.id}
+          </span>
+          <span className="px-2.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-[11px] font-bold">
+            🕒 {podValidatedAt}
+          </span>
+          <span className="px-2.5 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-[11px] font-bold border border-emerald-200 dark:border-emerald-800">
+            ✓ Preuve POD Validée
+          </span>
+        </div>
+
+        {/* Net Earning Badge */}
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Gain :</span>
+          <span className="px-3 py-1 rounded-xl bg-emerald-600 text-white font-extrabold text-sm shadow-xs">
+            +{netEarning.toLocaleString('fr-FR')} FCFA
+          </span>
+        </div>
+      </div>
+
+      {/* Route & Trajet Details */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/60 dark:border-slate-800 text-xs">
+        <div className="flex items-start gap-2">
+          <span className="material-symbols-outlined text-amber-500 text-base shrink-0 mt-0.5">storefront</span>
+          <div>
+            <p className="text-[10px] font-bold text-slate-400 uppercase">Collecte (Boutique Vendeur)</p>
+            <p className="font-bold text-slate-900 dark:text-white">
+              {order.pickupLocation.name || 'Boutique Vendeur'}
+            </p>
+            <p className="text-slate-500 dark:text-slate-400 truncate">
+              📍 {order.pickupLocation.commune}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-2">
+          <span className="material-symbols-outlined text-blue-500 text-base shrink-0 mt-0.5">location_on</span>
+          <div>
+            <p className="text-[10px] font-bold text-slate-400 uppercase">Livraison (Client Final)</p>
+            <p className="font-bold text-slate-900 dark:text-white">
+              {order.clientName}
+            </p>
+            <p className="text-slate-500 dark:text-slate-400 truncate">
+              📍 {order.dropoffLocation.commune} ({order.dropoffLocation.address})
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Object Description & COD / Rating Status */}
+      <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-semibold border border-slate-200 dark:border-slate-700">
+            📦 {order.itemDescription} ({order.itemWeightKg || 1} kg)
+          </span>
+          {order.itemValueCOD > 0 ? (
+            <span className="px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-bold border border-amber-200 dark:border-amber-800">
+              💵 COD Perçu : {order.itemValueCOD.toLocaleString('fr-FR')} FCFA
+            </span>
+          ) : (
+            <span className="px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold border border-blue-200 dark:border-blue-800">
+              💳 Payé en ligne
+            </span>
+          )}
+
+          {order.courierRating && (
+            <span className="px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-200 font-extrabold flex items-center gap-1 border border-amber-300 dark:border-amber-700">
+              ⭐ {order.courierRating.rating}.0 / 5
+              {order.courierRating.comment && <span className="text-[10px] font-normal italic">("{order.courierRating.comment}")</span>}
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 ml-auto">
+          <button
+            type="button"
+            onClick={() => onInspectPod(order)}
+            className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-sm text-blue-600 dark:text-blue-400">verified</span>
+            <span>Inspecter Preuve POD</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+});
 
 export const LivreurDeliveryHistory: React.FC<{
   className?: string;
@@ -56,12 +158,14 @@ export const LivreurDeliveryHistory: React.FC<{
     });
   }, [deliveries, activeUid, isSupervisory, selectedCourier]);
 
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 200);
+
   // Apply active filters (date, amount, search, sort)
   const filteredDeliveries = useMemo(() => {
+    const q = debouncedSearchQuery.trim().toLowerCase();
     return rawCompleted.filter((d) => {
       // 1. Search Query Filter
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
+      if (q) {
         const matchId = d.id.toLowerCase().includes(q);
         const matchClient = d.clientName.toLowerCase().includes(q);
         const matchPickup = d.pickupLocation.commune.toLowerCase().includes(q) || d.pickupLocation.address.toLowerCase().includes(q);
@@ -80,7 +184,6 @@ export const LivreurDeliveryHistory: React.FC<{
 
       // 3. Period / Date Filter
       if (period === 'aujourdhui') {
-        // Today check (using created/validated timestamp or assumes today if time format)
         if (d.createdAt.includes('-')) {
           const todayIso = new Date().toISOString().split('T')[0];
           if (!d.createdAt.startsWith(todayIso)) return false;
@@ -118,16 +221,30 @@ export const LivreurDeliveryHistory: React.FC<{
       if (sortBy === 'montant_desc') return feeB - feeA;
       if (sortBy === 'montant_asc') return feeA - feeB;
       if (sortBy === 'ancien') return a.id.localeCompare(b.id);
-      // 'recent'
       return b.id.localeCompare(a.id);
     });
-  }, [rawCompleted, searchQuery, amountMin, period, startDate, endDate, sortBy]);
+  }, [rawCompleted, debouncedSearchQuery, amountMin, period, startDate, endDate, sortBy]);
 
-  // Aggregate Metrics for filtered list
-  const totalCount = filteredDeliveries.length;
-  const totalEarnedNet = filteredDeliveries.reduce((sum, d) => sum + (d.deliveryFee || 0), 0);
-  const totalCODCollected = filteredDeliveries.reduce((sum, d) => sum + (d.itemValueCOD || 0), 0);
-  const avgEarning = totalCount > 0 ? Math.round(totalEarnedNet / totalCount) : 0;
+  // Aggregate Metrics for filtered list (single-pass memoized)
+  const { totalCount, totalEarnedNet, totalCODCollected, avgEarning } = useMemo(() => {
+    let earned = 0;
+    let cod = 0;
+    for (const d of filteredDeliveries) {
+      earned += d.deliveryFee || 0;
+      cod += d.itemValueCOD || 0;
+    }
+    const count = filteredDeliveries.length;
+    return {
+      totalCount: count,
+      totalEarnedNet: earned,
+      totalCODCollected: cod,
+      avgEarning: count > 0 ? Math.round(earned / count) : 0,
+    };
+  }, [filteredDeliveries]);
+
+  const handleInspectPodOrder = useCallback((order: DeliveryOrder) => {
+    setInspectPodOrder(order);
+  }, []);
 
   const handleExportCSV = () => {
     if (filteredDeliveries.length === 0) {
@@ -405,111 +522,16 @@ export const LivreurDeliveryHistory: React.FC<{
           </button>
         </div>
       ) : (
-        <div className="space-y-3">
-          {filteredDeliveries.map((order) => {
-            const netEarning = order.deliveryFee || 0;
-            const podValidatedAt = order.podData?.validatedAt || order.createdAt;
-
-            return (
-              <div
-                key={order.id}
-                className="p-4.5 rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-slate-800/50 hover:bg-slate-50/80 dark:hover:bg-slate-800 transition-all shadow-2xs space-y-3"
-              >
-                {/* Top Line: ID, Date badge, Net Earning Badge */}
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div className="flex items-center gap-2.5">
-                    <span className="font-extrabold text-sm text-blue-700 dark:text-blue-400 font-mono">
-                      {order.id}
-                    </span>
-                    <span className="px-2.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-[11px] font-bold">
-                      🕒 {podValidatedAt}
-                    </span>
-                    <span className="px-2.5 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-[11px] font-bold border border-emerald-200 dark:border-emerald-800">
-                      ✓ Preuve POD Validée
-                    </span>
-                  </div>
-
-                  {/* Net Earning Badge */}
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Gain :</span>
-                    <span className="px-3 py-1 rounded-xl bg-emerald-600 text-white font-extrabold text-sm shadow-xs">
-                      +{netEarning.toLocaleString('fr-FR')} FCFA
-                    </span>
-                  </div>
-                </div>
-
-                {/* Route & Trajet Details */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/60 dark:border-slate-800 text-xs">
-                  {/* Departure */}
-                  <div className="flex items-start gap-2">
-                    <span className="material-symbols-outlined text-amber-500 text-base shrink-0 mt-0.5">storefront</span>
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase">Collecte (Boutique Vendeur)</p>
-                      <p className="font-bold text-slate-900 dark:text-white">
-                        {order.pickupLocation.name || 'Boutique Vendeur'}
-                      </p>
-                      <p className="text-slate-500 dark:text-slate-400 truncate">
-                        📍 {order.pickupLocation.commune}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Arrival */}
-                  <div className="flex items-start gap-2">
-                    <span className="material-symbols-outlined text-blue-500 text-base shrink-0 mt-0.5">location_on</span>
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase">Livraison (Client Final)</p>
-                      <p className="font-bold text-slate-900 dark:text-white">
-                        {order.clientName}
-                      </p>
-                      <p className="text-slate-500 dark:text-slate-400 truncate">
-                        📍 {order.dropoffLocation.commune} ({order.dropoffLocation.address})
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Object Description & COD / Rating Status */}
-                <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-semibold border border-slate-200 dark:border-slate-700">
-                      📦 {order.itemDescription} ({order.itemWeightKg || 1} kg)
-                    </span>
-                    {order.itemValueCOD > 0 ? (
-                      <span className="px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-bold border border-amber-200 dark:border-amber-800">
-                        💵 COD Perçu : {order.itemValueCOD.toLocaleString('fr-FR')} FCFA
-                      </span>
-                    ) : (
-                      <span className="px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold border border-blue-200 dark:border-blue-800">
-                        💳 Payé en ligne
-                      </span>
-                    )}
-
-                    {/* Rating badge if review was submitted by merchant */}
-                    {order.courierRating && (
-                      <span className="px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-200 font-extrabold flex items-center gap-1 border border-amber-300 dark:border-amber-700">
-                        ⭐ {order.courierRating.rating}.0 / 5
-                        {order.courierRating.comment && <span className="text-[10px] font-normal italic">("{order.courierRating.comment}")</span>}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Inspection Button */}
-                  <div className="flex items-center gap-2 ml-auto">
-                    <button
-                      type="button"
-                      onClick={() => setInspectPodOrder(order)}
-                      className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-sm text-blue-600 dark:text-blue-400">verified</span>
-                      <span>Inspecter Preuve POD</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <VirtualList
+          items={filteredDeliveries}
+          estimateItemHeight={215}
+          virtualizeThreshold={12}
+          maxHeightClassName="max-h-[680px]"
+          itemKey={(order) => order.id}
+          renderItem={(order) => (
+            <DeliveryHistoryCard order={order} onInspectPod={handleInspectPodOrder} />
+          )}
+        />
       )}
 
       {/* POD Proof Inspection Modal */}

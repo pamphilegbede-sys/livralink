@@ -22,6 +22,7 @@ import {
   MAIN_ROUTER_VIEW_VARIANTS,
   computeViewTransitionContext,
 } from './utils/viewTransitions';
+import { initWebVitalsRum } from './utils/webVitalsRum';
 
 // Lazy-loaded Views with deterministic `.preload()` support for instant Suspense transitions
 const LoginVendeurPage = lazyWithPreload(() => import('./components/views/LoginVendeurPage').then(m => ({ default: m.LoginVendeurPage })));
@@ -137,11 +138,18 @@ const MainAppRouter: React.FC = () => {
 
   const shouldReduceMotion = Boolean(useReducedMotion());
   const previousViewRef = useRef<AppView | null>(null);
+  const currentViewForRumRef = useRef<AppView>(effectiveView);
+  currentViewForRumRef.current = effectiveView;
+
   const transitionContext = computeViewTransitionContext(
     previousViewRef.current,
     effectiveView,
     shouldReduceMotion
   );
+
+  useEffect(() => {
+    return initWebVitalsRum(() => currentViewForRumRef.current);
+  }, []);
 
   useEffect(() => {
     previousViewRef.current = effectiveView;

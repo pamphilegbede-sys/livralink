@@ -880,6 +880,8 @@ export const KYCSubmissionModal: React.FC<KYCSubmissionModalProps> = ({ isOpen, 
                 <img
                   src={slot.previewUrl}
                   alt={slotDef.shortTitle}
+                  loading="lazy"
+                  decoding="async"
                   className="w-full h-full object-contain"
                 />
               </div>

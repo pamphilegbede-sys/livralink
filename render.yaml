@@ -23,7 +23,13 @@ services:
       - key: FIREBASE_DATABASE_ID
         value: ai-studio-livralink-f9d2844b-bf6d-492f-9504-2721bd1820b6
       - key: PAYOUT_PROVIDER_MODE
-        value: simulator
+        sync: false
+      - key: MOBILE_MONEY_API_BASE_URL
+        sync: false
+      - key: MOBILE_MONEY_API_KEY
+        sync: false
+      - key: MOBILE_MONEY_WEBHOOK_SECRET
+        sync: false
       - key: FIREBASE_SERVICE_ACCOUNT_KEY
         sync: false
       - key: GEMINI_API_KEY

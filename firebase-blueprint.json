@@ -57,6 +57,14 @@
         "offerTimeoutSeconds": { "type": "number", "description": "Délai maximal de réponse en secondes" },
         "offerStartedAt": { "type": "number", "description": "Horodatage début d'offre (ms)" },
         "offerExpiresAt": { "type": "number", "description": "Horodatage expiration d'offre (ms)" },
+        "paymentStatus": { "type": "string", "enum": ["unpaid", "pending", "paid", "failed", "partially_refunded", "refunded"], "description": "Statut du paiement Mobile Money (lecture seule client, écrit par le serveur)" },
+        "paidAmountFCFA": { "type": "number", "description": "Montant confirmé encaissé en XOF" },
+        "paymentCurrency": { "type": "string", "enum": ["XOF"], "description": "Devise stricte du paiement" },
+        "paymentProvider": { "type": "string", "maxLength": 64, "description": "Agrégateur Mobile Money vérifié" },
+        "paymentProviderRef": { "type": "string", "maxLength": 128, "description": "Référence transactionnelle du PSP" },
+        "paymentId": { "type": "string", "maxLength": 128, "description": "Référence du document /payments" },
+        "refundStatus": { "type": "string", "enum": ["none", "partial", "refunded"], "description": "Statut de remboursement de la commande" },
+        "refundedAmountFCFA": { "type": "number", "description": "Montant cumulé remboursé en FCFA" },
         "createdAt": { "type": "string", "maxLength": 64, "description": "Date de création de la course" },
         "updatedAt": { "type": "string", "maxLength": 64, "description": "Date de dernière modification" }
       },
@@ -357,6 +365,41 @@
         "status": { "type": "string" }
       },
       "required": ["id", "targetUid", "amountFCFA", "reason", "status"]
+    },
+    "PaymentRecord": {
+      "title": "PaymentRecord",
+      "description": "Grand livre des encaissements Mobile Money certifiés par webhook signé ou vérification S2S PSP (écriture serveur Admin SDK exclusivement).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "orderDocId": { "type": "string", "maxLength": 64 },
+        "orderId": { "type": "string", "maxLength": 64 },
+        "merchantId": { "type": "string", "maxLength": 128 },
+        "clientId": { "type": "string", "maxLength": 128 },
+        "provider": { "type": "string", "maxLength": 64 },
+        "providerReference": { "type": "string", "maxLength": 128 },
+        "amountFCFA": { "type": "number" },
+        "currency": { "type": "string", "enum": ["XOF"] },
+        "status": { "type": "string", "enum": ["pending", "paid", "failed"] },
+        "verifiedAt": { "type": "number" }
+      },
+      "required": ["id", "orderDocId", "provider", "providerReference", "amountFCFA", "currency", "status"]
+    },
+    "WebhookEventRecord": {
+      "title": "WebhookEventRecord",
+      "description": "Registre d'événements webhook Mobile Money dédupliqués anti-rejeu (accès serveur Admin SDK exclusif).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "provider": { "type": "string", "maxLength": 64 },
+        "type": { "type": "string", "enum": ["order_payment", "payout"] },
+        "eventType": { "type": "string", "maxLength": 128 },
+        "eventId": { "type": "string", "maxLength": 128 },
+        "providerReference": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "maxLength": 64 },
+        "processedAt": { "type": "number" }
+      },
+      "required": ["id", "provider", "type", "eventId", "status", "processedAt"]
     }
   },
   "firestore": {
@@ -435,6 +478,14 @@
     "/refunds/{refundId}": {
       "schema": "RefundRecord",
       "description": "Remboursements financiers transactionnels (accès serveur Admin SDK exclusif)."
+    },
+    "/payments/{paymentId}": {
+      "schema": "PaymentRecord",
+      "description": "Grand livre des paiements Mobile Money vérifiés serveur (lecture propriétaire/admin, écriture serveur Admin SDK exclusivement)."
+    },
+    "/webhook_events/{eventId}": {
+      "schema": "WebhookEventRecord",
+      "description": "Registre anti-rejeu des webhooks Mobile Money (accès serveur Admin SDK exclusif)."
     }
   }
 }

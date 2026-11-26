@@ -1922,6 +1922,79 @@ describe('LivraLink Complete Security Rules Test Suite', () => {
       })
     );
   });
+
+  // 40. Direct Firestore client tamper on payments, webhook_events, walletBalanceFCFA, and delivery paymentStatus MUST FAIL
+  test('40. Client cannot forge /payments, /webhook_events, walletBalanceFCFA, or deliveries.paymentStatus', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc('users/vendor_pay_40').set({
+        uid: 'vendor_pay_40',
+        email: 'vp40@test.com',
+        fullName: 'Vendor Pay 40',
+        phone: '+22997000040',
+        role: 'vendeur',
+        walletBalanceFCFA: 1000,
+      });
+      await context.firestore().doc('deliveries/deliv_pay_40').set({
+        id: 'deliv_pay_40',
+        merchantId: 'vendor_pay_40',
+        clientName: 'Client Pay 40',
+        clientPhone: '+22997000041',
+        deliveryFee: 1500,
+        itemValueCOD: 5000,
+        totalCustomerPayable: 6500,
+        paymentStatus: 'unpaid',
+        status: 'en_attente',
+      });
+      await context.firestore().doc('payments/pay_40').set({
+        id: 'pay_40',
+        orderDocId: 'deliv_pay_40',
+        merchantId: 'vendor_pay_40',
+        provider: 'fedapay',
+        providerReference: 'FEDA_REAL_40',
+        amountFCFA: 6500,
+        currency: 'XOF',
+        status: 'paid',
+      });
+    });
+
+    const vendorDb = testEnv.authenticatedContext('vendor_pay_40', {
+      email: 'vp40@test.com',
+      email_verified: true,
+    }).firestore();
+
+    // Vendor can read own /payments doc, but NEVER create/update/delete it
+    await assertSucceeds(vendorDb.doc('payments/pay_40').get());
+    await assertFails(
+      vendorDb.doc('payments/pay_forged_40').set({
+        id: 'pay_forged_40',
+        orderDocId: 'deliv_pay_40',
+        merchantId: 'vendor_pay_40',
+        provider: 'simulator',
+        providerReference: 'SIM_LLP_FAKE',
+        amountFCFA: 6500,
+        currency: 'XOF',
+        status: 'paid',
+      })
+    );
+    await assertFails(vendorDb.doc('payments/pay_40').update({ amountFCFA: 999999 }));
+    await assertFails(vendorDb.doc('webhook_events/evt_40').get());
+    await assertFails(vendorDb.doc('webhook_events/evt_40').set({ id: 'evt_40', status: 'processed' }));
+    await assertFails(vendorDb.doc('users/vendor_pay_40').update({ walletBalanceFCFA: 9999999 }));
+    await assertFails(
+      vendorDb.doc('deliveries/deliv_pay_40').update({
+        paymentStatus: 'paid',
+        paidAmountFCFA: 6500,
+        paymentProviderRef: 'SIM_LLP_FAKE',
+      })
+    );
+    await assertFails(
+      vendorDb.doc('deliveries/deliv_pay_40').update({
+        refundStatus: 'refunded',
+        refundedAmountFCFA: 6500,
+      })
+    );
+  });
 });
+
 
 

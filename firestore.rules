@@ -200,7 +200,12 @@ service cloud.firestore {
              (!('vehicleCategory' in data) || (data.vehicleCategory is string && data.vehicleCategory.size() <= 64)) &&
              (!('promoCode' in data) || data.promoCode == null || (data.promoCode is string && data.promoCode.size() <= 64)) &&
              (!('promoDiscountFCFA' in data) || (data.promoDiscountFCFA is number && data.promoDiscountFCFA >= 0)) &&
-             (!('otpRequired' in data) || data.otpRequired is bool);
+             (!('otpRequired' in data) || data.otpRequired is bool) &&
+             (!('paymentStatus' in data) || data.paymentStatus in ['unpaid', 'pending', 'paid', 'failed', 'partially_refunded', 'refunded']) &&
+             (!('paidAmountFCFA' in data) || (data.paidAmountFCFA is number && data.paidAmountFCFA >= 0)) &&
+             (!('paymentCurrency' in data) || data.paymentCurrency == 'XOF') &&
+             (!('refundStatus' in data) || data.refundStatus in ['none', 'partial', 'refunded']) &&
+             (!('refundedAmountFCFA' in data) || (data.refundedAmountFCFA is number && data.refundedAmountFCFA >= 0));
     }
 
     function isCourierStatusTransition(oldStatus, newStatus) {
@@ -309,6 +314,7 @@ service cloud.firestore {
                ('kycStatus' in oldData && newData.kycStatus == oldData.kycStatus) ||
                (newData.kycStatus == 'en_attente' && (!('kycStatus' in oldData) || oldData.kycStatus in ['non_soumis', 'refuse', '']))
              ) &&
+             !('walletBalanceFCFA' in affected) &&
              affected.hasOnly([
                'uid', 'email', 'role', 'fullName', 'phone', 'channel', 'avatarUrl',
                'storeName', 'storeCommune', 'storeAddress', 'storeCoordinates',
@@ -489,7 +495,14 @@ service cloud.firestore {
                     isValidDelivery(incoming()) &&
                     incoming().id == existing().id &&
                     incoming().merchantId == existing().merchantId &&
-                    (isAdminFast() || canNonAdminUpdateDelivery(existing(), incoming()));
+                    (isAdminFast() || (
+                      !incoming().diff(existing()).affectedKeys().hasAny([
+                        'paymentStatus', 'paidAt', 'paidAtIso', 'paidAmountFCFA',
+                        'paymentCurrency', 'paymentProvider', 'paymentProviderRef', 'paymentId',
+                        'refundedAmountFCFA', 'refundStatus', 'lastRefundId', 'lastRefundedAt'
+                      ]) &&
+                      canNonAdminUpdateDelivery(existing(), incoming())
+                    ));
 
       allow delete: if isAdmin();
 
@@ -828,6 +841,20 @@ service cloud.firestore {
 
     match /disputes/{disputeId} {
       allow read, write: if false;
+    }
+
+    match /webhook_events/{eventId} {
+      allow read, write: if false;
+    }
+
+    // Payment ledger: verified by signed webhook or S2S PSP check, written exclusively by Admin SDK
+    match /payments/{paymentId} {
+      allow get, list: if hasVerifiedEmail() && (
+        isAdminFast() ||
+        resource.data.merchantId == request.auth.uid ||
+        ('clientId' in resource.data && resource.data.clientId == request.auth.uid)
+      );
+      allow create, update, delete: if false;
     }
 
     // Financial audit ledger: written exclusively by Admin SDK transactions

@@ -158,8 +158,8 @@ export const AdminPricingFinancePanel: React.FC<{
 
   const handleExecuteRefund = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!refundForm.targetUid || refundForm.reason.trim().length < 3) {
-      showToast('Sélectionnez un bénéficiaire et précisez le motif du remboursement.', 'error');
+    if (!refundForm.targetUid || !refundForm.orderId.trim() || refundForm.reason.trim().length < 3) {
+      showToast('Sélectionnez un bénéficiaire, une commande payée (#LL-...) et précisez le motif du remboursement.', 'error');
       return;
     }
     setIsRefunding(true);
@@ -383,8 +383,9 @@ export const AdminPricingFinancePanel: React.FC<{
                 />
               </div>
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Référence course (optionnel)</label>
+                <label className="font-bold text-slate-700 block mb-1">Référence course payée *</label>
                 <input
+                  required
                   list="refund-orders-list"
                   value={refundForm.orderId}
                   onChange={(e) => setRefundForm({ ...refundForm, orderId: e.target.value })}

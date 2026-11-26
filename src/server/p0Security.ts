@@ -98,6 +98,8 @@ export const COLLECTIONS = {
   PAYOUT_IDEMPOTENCY: 'payout_idempotency',
   PAYOUT_USER_LOCKS: 'payout_user_locks',
   WALLET_TRANSACTIONS: 'wallet_transactions',
+  PAYMENTS: 'payments',
+  WEBHOOK_EVENTS: 'webhook_events',
   USERS: 'users',
   DELIVERIES: 'deliveries',
   PRIORITY_MISSIONS: 'priority_missions',
@@ -232,9 +234,16 @@ export function verifyPodOtpTokenSignature(
 
 /**
  * Explicit MVP Simulator for Mobile Money payouts when no live Mobile Money
- * aggregator adapter is configured. Does NOT execute any real financial transfer.
+ * aggregator adapter is configured. Strictly forbidden in NODE_ENV=production.
  */
 export const defaultPayoutProvider: PayoutProviderAdapter = async ({ idempotencyKey }) => {
+  if (String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production') {
+    return {
+      outcome: 'failed',
+      isSimulatedProvider: false,
+      error: 'Simulateur Mobile Money strictement interdit en production (NODE_ENV=production).',
+    };
+  }
   const ref = `SIM_LLP_${crypto.createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 14).toUpperCase()}`;
   return { outcome: 'succeeded', providerReference: ref, isSimulatedProvider: true };
 };
@@ -900,6 +909,14 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
       }
   > {
     const { callerUid, idempotencyKey, amount } = params;
+    if (typeof amount !== 'number' || !Number.isInteger(amount) || amount < 1000 || amount > 10_000_000) {
+      return {
+        ok: false as const,
+        status: 400,
+        error: 'Montant de retrait invalide (entier entre 1 000 et 10 000 000 FCFA requis).',
+      };
+    }
+
     const now = nowFn();
     const docKeyId = getPayoutIdempotencyDocId(callerUid, idempotencyKey);
 
@@ -922,7 +939,20 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
         };
       }
 
-      const availableBalance = Number(userSnap.data()?.walletBalanceFCFA ?? 0);
+      const userData = userSnap.data() || {};
+      if (
+        userData.accountStatus === 'suspendu' ||
+        userData.accountStatus === 'bloque' ||
+        userData.status === 'suspendu'
+      ) {
+        return {
+          ok: false as const,
+          status: 403,
+          error: 'Compte suspendu ou bloqué : retrait portefeuille refusé.',
+        };
+      }
+
+      const availableBalance = Number(userData.walletBalanceFCFA ?? 0);
 
       if (idemSnap.exists) {
         const existing = idemSnap.data() || {};
@@ -1132,6 +1162,19 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
         };
       }
 
+      const userData = userSnap.data() || {};
+      if (
+        userData.accountStatus === 'suspendu' ||
+        userData.accountStatus === 'bloque' ||
+        userData.status === 'suspendu'
+      ) {
+        return {
+          proceed: false as const,
+          status: 403,
+          error: 'Compte suspendu ou bloqué : validation du retrait refusée.',
+        };
+      }
+
       // Exclusive execution lease enforcement for 'processing' and 'uncertain' recoveries
       if (idemData.status === 'processing' || idemData.status === 'uncertain') {
         const activeLeaseExpiry = Number(idemData.processingExpiresAt || 0);
@@ -1321,6 +1364,23 @@ export function createP0SecurityService(db: P0FirestoreLike, options: P0Security
       providerRes = {
         outcome: 'uncertain',
         error: providerErr?.message || 'Réponse incertaine ou expiration du prestataire de paiement.',
+      };
+    }
+
+    // Defense-in-depth: never accept simulated references or simulator provider in production
+    if (
+      String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production' &&
+      (providerRes.isSimulatedProvider ||
+        (providerRes.outcome === 'succeeded' && /^SIM_LLP_/i.test(providerRes.providerReference || '')))
+    ) {
+      options.onAnomaly?.(
+        'SIMULATOR_IN_PRODUCTION_BLOCKED',
+        `Référence simulée bloquée en production pour ${callerUid} (${idempotencyKey})`
+      );
+      providerRes = {
+        outcome: 'failed',
+        isSimulatedProvider: false,
+        error: 'Référence simulée SIM_LLP_* strictement interdite en production.',
       };
     }
 

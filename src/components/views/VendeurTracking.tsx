@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { AuthorizedMediaImage } from '../common/AuthorizedMediaImage';
 import { Header } from '../common/Header';
@@ -10,6 +10,7 @@ import { GoogleMapsGroundingAssistant } from '../maps/GoogleMapsGroundingAssista
 import { getLocationForCommune } from '../../config/maps';
 import { filterVendorDeliveries } from '../../utils/deliveryIsolation';
 import { notifyClientDeliveryOtp } from '../../services/emailService';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 
 export const VendeurTracking: React.FC = () => {
   const {
@@ -39,21 +40,35 @@ export const VendeurTracking: React.FC = () => {
   } = useApp();
 
   // Isolation stricte des livraisons pour le suivi vendeur (par UID uniquement)
-  const merchantDeliveries = filterVendorDeliveries(deliveries, {
-    userProfile,
-    firebaseUserUid: firebaseUser?.uid,
-    isAdminAuthenticated,
-    isUserMasterAdmin,
-    isDirectorModeActive,
-    directorTargetId,
-    directorTargetName,
-  });
+  const merchantDeliveries = useMemo(
+    () =>
+      filterVendorDeliveries(deliveries, {
+        userProfile,
+        firebaseUserUid: firebaseUser?.uid,
+        isAdminAuthenticated,
+        isUserMasterAdmin,
+        isDirectorModeActive,
+        directorTargetId,
+        directorTargetName,
+      }),
+    [
+      deliveries,
+      userProfile,
+      firebaseUser?.uid,
+      isAdminAuthenticated,
+      isUserMasterAdmin,
+      isDirectorModeActive,
+      directorTargetId,
+      directorTargetName,
+    ]
+  );
 
   const [activeCourseId, setActiveCourseId] = useState(
     merchantDeliveries.find((d) => d.id === selectedDelivery?.id)?.id || merchantDeliveries[0]?.id || ''
   );
   const [activeFilter, setActiveFilter] = useState<'all' | 'en_attente' | 'en_cours' | 'terminees'>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebouncedValue(searchTerm, 200);
   const [showEmailOtpBox, setShowEmailOtpBox] = useState(false);
   const [otpClientEmail, setOtpClientEmail] = useState('');
   const [sendingEmailOtp, setSendingEmailOtp] = useState(false);
@@ -68,7 +83,10 @@ export const VendeurTracking: React.FC = () => {
     }
   }, [selectedDelivery, merchantDeliveries, activeCourseId]);
 
-  const currentOrder = merchantDeliveries.find((d) => d.id === activeCourseId) || merchantDeliveries[0];
+  const currentOrder = useMemo(
+    () => merchantDeliveries.find((d) => d.id === activeCourseId) || merchantDeliveries[0],
+    [merchantDeliveries, activeCourseId]
+  );
 
   React.useEffect(() => {
     if (currentOrder?.id) {
@@ -83,34 +101,46 @@ export const VendeurTracking: React.FC = () => {
     return () => clearInterval(id);
   }, [currentOrder?.status, currentOrder?.offerExpiresAt]);
 
-  // Calcul dynamique des compteurs de statut pour les onglets
-  const countAll = merchantDeliveries.length;
-  const countPending = merchantDeliveries.filter((d) => d.status === 'en_attente' || d.status === 'assignee').length;
-  const countOngoing = merchantDeliveries.filter((d) => d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere').length;
-  const countCompleted = merchantDeliveries.filter((d) => d.status === 'livree').length;
-
-  const filteredDeliveries = merchantDeliveries.filter((order) => {
-    // Filtres par statut demandés par l'utilisateur : en attente, en cours, terminées
-    if (activeFilter === 'en_attente' && !(order.status === 'en_attente' || order.status === 'assignee')) return false;
-    if (activeFilter === 'en_cours' && !(order.status === 'en_cours' || order.status === 'acceptee' || order.status === 'colis_recupere')) return false;
-    if (activeFilter === 'terminees' && order.status !== 'livree') return false;
-
-    // Barre de recherche textuelle multi-critères
-    if (searchTerm.trim()) {
-      const q = searchTerm.toLowerCase().trim();
-      return (
-        order.id.toLowerCase().includes(q) ||
-        order.clientName.toLowerCase().includes(q) ||
-        order.clientPhone.toLowerCase().includes(q) ||
-        order.dropoffLocation.commune.toLowerCase().includes(q) ||
-        order.dropoffLocation.address.toLowerCase().includes(q) ||
-        order.pickupLocation.commune.toLowerCase().includes(q) ||
-        order.itemDescription.toLowerCase().includes(q) ||
-        (order.courier && order.courier.name.toLowerCase().includes(q))
-      );
+  // Single-pass status counters
+  const { countAll, countPending, countOngoing, countCompleted } = useMemo(() => {
+    let pending = 0;
+    let ongoing = 0;
+    let completed = 0;
+    for (const d of merchantDeliveries) {
+      if (d.status === 'en_attente' || d.status === 'assignee') pending += 1;
+      else if (d.status === 'en_cours' || d.status === 'acceptee' || d.status === 'colis_recupere') ongoing += 1;
+      else if (d.status === 'livree') completed += 1;
     }
-    return true;
-  });
+    return {
+      countAll: merchantDeliveries.length,
+      countPending: pending,
+      countOngoing: ongoing,
+      countCompleted: completed,
+    };
+  }, [merchantDeliveries]);
+
+  const filteredDeliveries = useMemo(() => {
+    const q = debouncedSearchTerm.toLowerCase().trim();
+    return merchantDeliveries.filter((order) => {
+      if (activeFilter === 'en_attente' && !(order.status === 'en_attente' || order.status === 'assignee')) return false;
+      if (activeFilter === 'en_cours' && !(order.status === 'en_cours' || order.status === 'acceptee' || order.status === 'colis_recupere')) return false;
+      if (activeFilter === 'terminees' && order.status !== 'livree') return false;
+
+      if (q) {
+        return (
+          order.id.toLowerCase().includes(q) ||
+          order.clientName.toLowerCase().includes(q) ||
+          order.clientPhone.toLowerCase().includes(q) ||
+          order.dropoffLocation.commune.toLowerCase().includes(q) ||
+          order.dropoffLocation.address.toLowerCase().includes(q) ||
+          order.pickupLocation.commune.toLowerCase().includes(q) ||
+          order.itemDescription.toLowerCase().includes(q) ||
+          (order.courier && order.courier.name.toLowerCase().includes(q))
+        );
+      }
+      return true;
+    });
+  }, [merchantDeliveries, activeFilter, debouncedSearchTerm]);
 
   const handleSelectOrder = (order: DeliveryOrder) => {
     setActiveCourseId(order.id);
